@@ -1,9 +1,10 @@
 import json
 from rich.console import Console
 from rich.table import Table
-from config import CITIES, EDGE_THRESHOLD, SHOW_THRESHOLD, DUTCH_BOOK_THRESHOLD
+from config import CITIES, EDGE_THRESHOLD, SHOW_THRESHOLD, DUTCH_BOOK_THRESHOLD, ALERT_THRESHOLD
 from weather.forecast import get_ensemble_max_temps, get_bucket_prob
 from polymarket.gamma import get_active_weather_markets, parse_bucket
+from alerts.telegram_alert import send_signal_alert
 
 console = Console()
 
@@ -101,6 +102,10 @@ def run_scanner():
                 note,
             )
             signals_found += 1
+
+            # Send Telegram alert on strong edges only
+            if abs(edge) >= ALERT_THRESHOLD:
+                send_signal_alert(q, city_key, model_prob, yes_price, edge, direction)
 
     if signals_found:
         console.print(table)

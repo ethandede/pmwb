@@ -1,3 +1,4 @@
+import os
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -20,3 +21,7 @@ SHOW_THRESHOLD = 0.07       # display threshold (shows interesting edges)
 DUTCH_BOOK_THRESHOLD = 0.975
 GAMMA_BASE = "https://gamma-api.polymarket.com"
 SCAN_LIMIT = 300
+
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+ALERT_THRESHOLD = 0.105   # only alert on |edge| >= 10.5%
