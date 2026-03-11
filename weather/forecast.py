@@ -1,13 +1,14 @@
 import requests
 from typing import List
 
-def get_ensemble_max_temps_f(lat: float, lon: float, days_ahead: int = 1) -> List[float]:
-    """Open-Meteo Ensemble API — correct endpoint + exact 2026 response structure."""
+def get_ensemble_max_temps(lat: float, lon: float, days_ahead: int = 1, unit: str = "f") -> List[float]:
+    """Open-Meteo Ensemble — returns daily max temps in the correct unit (F or C)."""
+    unit_param = "fahrenheit" if unit == "f" else "celsius"
     url = (
         f"https://ensemble-api.open-meteo.com/v1/ensemble"
         f"?latitude={lat}&longitude={lon}"
         f"&daily=temperature_2m_max"
-        f"&temperature_unit=fahrenheit"
+        f"&temperature_unit={unit_param}"
         f"&timezone=auto"
         f"&forecast_days={days_ahead + 2}"
     )
@@ -17,13 +18,12 @@ def get_ensemble_max_temps_f(lat: float, lon: float, days_ahead: int = 1) -> Lis
         r.raise_for_status()
         data = r.json()
 
-        # Official structure: "ensemble" -> list of members -> each has "daily" dict
-        temps_f = []
+        temps = []
         if "ensemble" in data:
             for member in data["ensemble"]:
                 daily_max = member.get("daily", {}).get("temperature_2m_max", [])
                 if len(daily_max) > days_ahead:
-                    temps_f.append(round(float(daily_max[days_ahead]), 1))
+                    temps.append(round(float(daily_max[days_ahead]), 1))
         else:
             # Fallback: member keys like temperature_2m_max_member01
             daily = data.get("daily", {})
@@ -32,26 +32,25 @@ def get_ensemble_max_temps_f(lat: float, lon: float, days_ahead: int = 1) -> Lis
                 for key in member_keys:
                     vals = daily[key]
                     if len(vals) > days_ahead and vals[days_ahead] is not None:
-                        temps_f.append(round(float(vals[days_ahead]), 1))
+                        temps.append(round(float(vals[days_ahead]), 1))
             else:
-                # Single forecast fallback
                 raw = daily.get("temperature_2m_max", [])
                 if len(raw) > days_ahead and raw[days_ahead] is not None:
-                    temps_f = [round(float(raw[days_ahead]), 1)]
+                    temps = [round(float(raw[days_ahead]), 1)]
 
-        return temps_f
+        return temps
 
     except Exception as e:
         print(f"Open-Meteo Ensemble error: {e}")
-        return [55.0] * 31  # safe fallback so scanner never crashes
+        return [20.0] * 31  # safe fallback
 
 
-def get_bucket_prob(temps_f: List[float], low: float, high: float | None = None) -> float:
-    """Empirical probability from ensemble members."""
-    if not temps_f:
+def get_bucket_prob(temps: List[float], low: float, high: float | None = None) -> float:
+    """Empirical probability from ensemble members (works for both F and C)."""
+    if not temps:
         return 0.0
     if high is None:  # >= low
-        count = sum(1 for t in temps_f if t >= low)
+        count = sum(1 for t in temps if t >= low)
     else:
-        count = sum(1 for t in temps_f if low <= t < high)
-    return round(count / len(temps_f), 4)
+        count = sum(1 for t in temps if low <= t < high)
+    return round(count / len(temps), 4)

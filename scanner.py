@@ -1,7 +1,8 @@
+import json
 from rich.console import Console
 from rich.table import Table
 from config import CITIES, EDGE_THRESHOLD, DUTCH_BOOK_THRESHOLD
-from weather.forecast import get_ensemble_max_temps_f, get_bucket_prob
+from weather.forecast import get_ensemble_max_temps, get_bucket_prob
 from polymarket.gamma import get_active_weather_markets, parse_bucket
 
 console = Console()
@@ -31,9 +32,7 @@ def run_scanner():
         q = market["question"]
         outcome_prices = market.get("outcomePrices", "")
 
-        # outcomePrices can be a JSON string like "[\"0.5\",\"0.5\"]" or a list
         if isinstance(outcome_prices, str):
-            import json
             try:
                 outcome_prices = json.loads(outcome_prices)
             except (json.JSONDecodeError, TypeError):
@@ -42,16 +41,19 @@ def run_scanner():
         if not outcome_prices:
             continue
 
-        yes_price = float(outcome_prices[0])  # Yes = the bucket happening
+        yes_price = float(outcome_prices[0])
 
-        # Find city
-        city_key = next(
-            (k for k, v in CITIES.items() if any(kw in q.lower() for kw in v["keywords"])),
-            None,
-        )
+        # Find city with unit support
+        q_lower = q.lower()
+        city_key = None
+        for key, data in CITIES.items():
+            if any(kw in q_lower for kw in data["keywords"]):
+                city_key = key
+                break
         if not city_key:
             continue
         city = CITIES[city_key]
+        unit = city.get("unit", "f")
 
         # Parse bucket from question
         bucket = parse_bucket(q)
@@ -59,17 +61,17 @@ def run_scanner():
             continue
         low, high = bucket
 
-        # Get ensemble forecast
+        # Get ensemble forecast with correct unit
         try:
-            temps_f = get_ensemble_max_temps_f(city["lat"], city["lon"], days_ahead=1)
+            temps = get_ensemble_max_temps(city["lat"], city["lon"], days_ahead=1, unit=unit)
         except Exception as e:
             console.print(f"[red]Forecast error for {city_key}: {e}[/red]")
             continue
 
-        if not temps_f:
+        if not temps:
             continue
 
-        model_prob = get_bucket_prob(temps_f, low, high)
+        model_prob = get_bucket_prob(temps, low, high)
         edge = model_prob - yes_price
 
         # Dutch book quick check
