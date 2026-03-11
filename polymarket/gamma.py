@@ -29,13 +29,28 @@ def get_active_weather_markets() -> List[Dict]:
     return weather
 
 def parse_bucket(question: str) -> Optional[Tuple[float, float | None]]:
-    """Parse common bucket formats: '52-53°F', '>= 60°F', etc."""
-    # Range like 52-53
-    m = re.search(r'(\d+)-(\d+)', question)
+    """Improved parser — handles range buckets, single-temp, 'or higher', 'exactly', etc."""
+    q = question.lower()
+
+    # Range: "84-85", "84 - 85", "84–85"
+    m = re.search(r'(\d{1,3})\s*[-–—]\s*(\d{1,3})', q)
     if m:
         return float(m.group(1)), float(m.group(2))
-    # >= X or >= X
-    m = re.search(r'[≥>]=?\s*(\d+)', question)
+
+    # >= / or higher / above / 85+
+    m = re.search(r'(?:≥|or higher|or above|above|or more|\+)\s*(\d{1,3})', q)
     if m:
         return float(m.group(1)), None
+
+    # "X or higher" where number comes first
+    m = re.search(r'(\d{1,3})\s*(?:or higher|or above|or more|\+)', q)
+    if m:
+        return float(m.group(1)), None
+
+    # Single-temp / "be X°" / exactly X (treat as 1-degree bucket)
+    m = re.search(r'(?:be |exactly |^|\s)(\d{1,3})\s*°[fc]', q)
+    if m:
+        x = float(m.group(1))
+        return x, x + 1
+
     return None

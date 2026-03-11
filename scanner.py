@@ -1,14 +1,14 @@
 import json
 from rich.console import Console
 from rich.table import Table
-from config import CITIES, EDGE_THRESHOLD, DUTCH_BOOK_THRESHOLD
+from config import CITIES, EDGE_THRESHOLD, SHOW_THRESHOLD, DUTCH_BOOK_THRESHOLD
 from weather.forecast import get_ensemble_max_temps, get_bucket_prob
 from polymarket.gamma import get_active_weather_markets, parse_bucket
 
 console = Console()
 
 def run_scanner():
-    console.print("[bold cyan]Polymarket Weather Edge Scanner[/bold cyan]\n")
+    console.print("[bold cyan]Polymarket Weather Edge Scanner — Bidirectional Signals[/bold cyan]\n")
 
     console.print("Fetching weather markets from Gamma API...")
     markets = get_active_weather_markets()
@@ -18,12 +18,13 @@ def run_scanner():
         console.print("[yellow]No weather markets found. Try again later or expand keywords.[/yellow]")
         return
 
-    table = Table(title="Strong Signals (Edge >= 10.5%)")
-    table.add_column("Market", style="cyan", max_width=80)
+    table = Table(title="Signal Opportunities (|edge| >= 7%)")
+    table.add_column("Market", style="cyan", max_width=55)
     table.add_column("City", style="green")
     table.add_column("Model Prob", justify="right")
     table.add_column("Market Prob", justify="right")
-    table.add_column("Edge", style="bold magenta", justify="right")
+    table.add_column("Edge", justify="right", style="bold")
+    table.add_column("Signal", style="bold")
     table.add_column("Note", style="dim")
 
     signals_found = 0
@@ -58,6 +59,7 @@ def run_scanner():
         # Parse bucket from question
         bucket = parse_bucket(q)
         if not bucket:
+            console.print(f"[dim]Skipped (no bucket parse): {q}[/dim]")
             continue
         low, high = bucket
 
@@ -82,15 +84,20 @@ def run_scanner():
         if dutch:
             note = f"DUTCH ({sum_prices:.3f})"
 
-        if edge >= EDGE_THRESHOLD or dutch:
-            edge_str = f"+{edge:.1%}" if edge > 0 else f"{edge:.1%}"
-            display_q = q[:77] + "..." if len(q) > 80 else q
+        if abs(edge) >= SHOW_THRESHOLD or dutch:
+            direction = "BUY YES" if edge > 0 else "SELL YES"
+            arrow = "[green]^ BUY YES[/green]" if edge > 0 else "[red]v SELL YES[/red]"
+            color = "green" if edge > 0 else "red"
+            edge_str = f"[{color}]{edge:+.1%}[/{color}]"
+
+            display_q = q[:52] + "..." if len(q) > 55 else q
             table.add_row(
                 display_q,
-                city_key.capitalize(),
+                city_key.replace("_", " ").title(),
                 f"{model_prob:.1%}",
                 f"{yes_price:.1%}",
-                f"[bold]{edge_str}[/bold]",
+                edge_str,
+                arrow,
                 note,
             )
             signals_found += 1
@@ -98,7 +105,7 @@ def run_scanner():
     if signals_found:
         console.print(table)
     else:
-        console.print("[yellow]No strong signals this scan. Run again in 15 min.[/yellow]")
+        console.print("[yellow]No signals >= 7% edge this scan.[/yellow]")
 
     console.print(f"\n[dim]Scanned {len(markets)} markets, {signals_found} signals found.[/dim]")
-    console.print(f"[dim]Ensemble members: forecasts use ~50 weather model runs for empirical probabilities.[/dim]")
+    console.print(f"[dim]Signals >= 10.5% are trade-worthy. Run every 15 min.[/dim]")
