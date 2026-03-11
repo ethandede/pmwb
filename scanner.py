@@ -5,6 +5,7 @@ from config import CITIES, EDGE_THRESHOLD, SHOW_THRESHOLD, DUTCH_BOOK_THRESHOLD,
 from weather.forecast import get_ensemble_max_temps, get_bucket_prob
 from polymarket.gamma import get_active_weather_markets, parse_bucket
 from alerts.telegram_alert import send_signal_alert
+from trading.trader import execute_signal
 
 console = Console()
 
@@ -103,9 +104,10 @@ def run_scanner():
             )
             signals_found += 1
 
-            # Send Telegram alert on strong edges only
+            # Send Telegram alert + execute on strong edges
             if abs(edge) >= ALERT_THRESHOLD:
                 send_signal_alert(q, city_key, model_prob, yes_price, edge, direction)
+                execute_signal(market, city_key, model_prob, yes_price, edge, direction)
 
     if signals_found:
         console.print(table)

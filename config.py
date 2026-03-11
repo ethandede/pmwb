@@ -25,3 +25,11 @@ SCAN_LIMIT = 300
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 ALERT_THRESHOLD = 0.105   # only alert on |edge| >= 10.5%
+
+PRIVATE_KEY = os.getenv("PRIVATE_KEY")
+FUNDER_ADDRESS = os.getenv("FUNDER_ADDRESS")
+PAPER_MODE = os.getenv("PAPER_MODE", "true").lower() == "true"
+MAX_POSITION_USD = 50.0
+HOST = "https://clob.polymarket.com"
+CHAIN_ID = 137
+SIGNATURE_TYPE = 1  # 1 = most common (email/Magic or EOA)
