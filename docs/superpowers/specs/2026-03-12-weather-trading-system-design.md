@@ -30,9 +30,14 @@ The project is a **production weather prediction market bot** trading live on Ka
 ### Data Sources
 
 - **Existing:** `logs/signals.csv` (all detected signals with timestamps, edges, model probs), `data/bias.db` (forecast vs actual per city/month/model)
-- **New:** `data/trades.db` — SQLite table logging every Kalshi order fill (entry price, exit price, settlement, P&L). Trader already places orders; we capture fills.
+- **New: `data/trades.db`** — SQLite table logging every Kalshi order fill. This is **new functionality** (the trader currently prints/alerts but does not persist fills). Requires:
+  - Schema: `(id, ticker, side, limit_price, fill_price, fill_qty, fill_time, settlement_outcome, pnl)`
+  - Polling Kalshi `/portfolio/orders` endpoint for fill confirmations (limit orders may rest unfilled or partially fill)
+  - Handling partial fills as separate rows
+  - Backfilling recent fills from Kalshi order history API on first run
+- **New: `logging_utils.py` modifications** — Current CSV header is `timestamp, market_question, city, model_prob, market_prob, edge, direction, dutch_book, paper_trade`. Must add columns: `confidence`, `ticker`, `settlement_outcome` (backfilled by resolver). Column `market_prob` (not `market_price`) is the existing price field.
 - **Historical weather:** Open-Meteo Archive API (free, already used in resolver)
-- **Historical market prices:** Start logging snapshots now and build forward. For older signals, use CSV log's `market_price` column.
+- **Historical market prices:** Start logging snapshots now and build forward. For older signals, use CSV log's `market_prob` column.
 
 ### Core Metrics
 
@@ -65,7 +70,7 @@ backtesting/
 
 ### Key Design Decision
 
-The backtester operates on the **existing signal log** for immediate results, but also supports **replay mode** where it re-runs the forecast pipeline against historical weather data for deeper analysis. Replay mode lets you test parameter changes (e.g., "what if edge threshold was 8% instead of 10.5%?").
+The backtester operates on the **existing signal log** for immediate results. **Replay mode** (re-running the forecast pipeline against historical weather data) is deferred to Phase 5 — it requires calling `fuse_forecast()` against Open-Meteo Archive data, which is a materially different code path. Phase 1 focuses on signal-log-based analysis only.
 
 ---
 
@@ -75,12 +80,29 @@ The backtester operates on the **existing signal log** for immediate results, bu
 
 ### Kelly Criterion for Binary Markets
 
+General form: you pay price `c` for a contract that pays $1 if you win. Your believed win probability is `q`.
+
 ```
-f* = (q - p) / (1 - p)    when betting YES
-f* = (p - q) / p           when betting NO
+f* = (q - c) / (1 - c)
 ```
 
-Where `p` = market price, `q` = model probability. **Never bet full Kelly** — use fractional Kelly (0.25x–0.5x).
+**For YES bets:** `c = p` (market YES price), `q` = model probability of YES.
+```
+f* = (q - p) / (1 - p)
+```
+
+**For NO bets:** You're buying the NO side. `c = 1 - p` (NO price), `q` = model probability of NO = `1 - q_yes`.
+```
+f* = ((1 - q_yes) - (1 - p)) / (1 - (1 - p))
+f* = (p - q_yes) / p
+```
+
+**Worked example (NO bet):**
+Market YES price = 0.70 (so NO costs $0.30). Your model says YES probability = 0.55.
+- NO price `c = 0.30`, your NO probability `q = 0.45`
+- `f* = (0.45 - 0.30) / (0.70) = 0.214` → bet 21.4% of bankroll (before fractional scaling)
+
+**Never bet full Kelly** — use fractional Kelly (0.25x–0.5x).
 
 ### Bankroll Tracking
 
@@ -109,7 +131,7 @@ adjusted_f = f_kelly * fractional_kelly * (confidence / 100)
 
 ### Risk Controls
 
-- **Drawdown circuit breaker:** Bankroll drops 15% from peak in rolling 7 days → halve all sizes for 48 hours
+- **Drawdown circuit breaker:** Bankroll drops 15% from its 7-day rolling peak (not all-time peak — resets after recovery) → halve all sizes for 48 hours
 - **Correlation guard:** Total exposure to any single city/day capped regardless of bucket count
 - **Minimum edge filter:** Don't trade if Kelly suggests < $0.50
 - **Daily P&L stop:** Realized + unrealized hits -5% of bankroll → stop scanning until next day
@@ -199,11 +221,14 @@ Precip/snow queries: `"inches of snow" OR "snowing hard"` + neighborhood names.
 
 ### Fusion with Existing Models
 
-X as fourth source with adaptive weighting:
-- No data: 0%
+X as fourth source with adaptive weighting. X weight is allocated **off the top** before the existing three models redistribute among themselves. For example, if X gets 20%, the remaining 80% is split among ensemble/NOAA/HRRR using existing proportional redistribution logic.
+
+- No data: 0% (system behaves exactly as today)
 - Low confidence: 5-10%
 - High confidence (3+ corroborating tweets + volume spike): 15-25%
 - Same-day + strong signal: up to 30% (X's biggest strength)
+
+If X layer is configured but returns zero usable tweets for a scan, weight stays at 0% and a `x_data_gap` event is logged for monitoring. If the third-party provider is down entirely, the system gracefully degrades to three-model fusion with no code changes needed (0% weight = no impact).
 
 Confidence scoring: number of independent observations, account quality, consistency, recency (<4 hours ideal).
 
@@ -239,6 +264,8 @@ Confidence scoring: number of independent observations, account quality, consist
 
 Settlement always uses first complete report; revisions ignored. Always check exact market rules page for linked station/report.
 
+**Scope:** Precipitation and snowfall expansion targets US cities only (where Kalshi operates). International cities in `config.py` CITIES list (Buenos Aires, London, Paris, Seoul, Tokyo) are Polymarket-only and remain temperature-only until Polymarket execution is re-enabled in Phase 5.
+
 ### Key Differences from Temperature
 
 | Dimension | Temperature | Precipitation | Snowfall |
@@ -272,7 +299,7 @@ P(0 < precip <= X) = PoP * P(amount <= X | amount > 0)
 
 **"Above X inches" monthly contracts (survival function):**
 ```python
-P(precip > X) = 1 - CDF(X | amount > 0) * PoP
+P(precip > X) = PoP * (1 - CDF(X | amount > 0))
 ```
 
 Trace amounts ("T") always resolve as 0.00. Implement zero-inflated gamma distribution fitter.
@@ -299,7 +326,7 @@ Pull exact station and report link from each market's rules page. Examples:
 - Central Park KNYC for NYC
 - LAX GHCND:USW00023174 for LA rain
 
-Create dynamic loader in `stations_config.py` — this alone can be the biggest settlement arbitrage.
+Station mappings in `stations_config.py` are **manually curated** from each market's rules page (not scraped — Kalshi rules pages are not machine-readable). The config is a Python dict mapping `(city, market_type)` → `{station_id, report_type, measurement_notes}`. Updated manually when new markets appear. A validation check compares config entries against active Kalshi markets each scan and alerts on mismatches. This is high-edge work — knowing exactly what's measured and when is settlement arbitrage.
 
 ### X Signal Value for Precip/Snow (Highest Leverage)
 
@@ -333,8 +360,10 @@ Create dynamic loader in `stations_config.py` — this alone can be the biggest 
 | `backtesting/calibration.py` | Calibration curve + Platt scaling |
 | `backtesting/walk_forward.py` | Expanding-window backtester, no-lookahead |
 | `backtesting/reports.py` | CLI tables (Rich) + matplotlib calibration plots |
-| `kalshi/trader.py` | MODIFY: log every fill to data/trades.db |
-| `data/trades.db` | NEW: SQLite — ticker, side, entry_price, fill_time, settlement, pnl |
+| `kalshi/trader.py` | MODIFY: add fill logging to data/trades.db (new functionality — poll for fills, handle partials) |
+| `kalshi/fill_tracker.py` | NEW: poll `/portfolio/orders` for fill confirmations, write to trades.db |
+| `logging_utils.py` | MODIFY: add confidence, ticker, settlement_outcome columns to CSV |
+| `data/trades.db` | NEW: SQLite — ticker, side, limit_price, fill_price, fill_qty, fill_time, settlement_outcome, pnl |
 
 **Success criteria:**
 - `python -m backtesting.reports` shows Brier score, hit rate by confidence tier, P&L by city
@@ -359,6 +388,8 @@ Create dynamic loader in `stations_config.py` — this alone can be the biggest 
 - Sensible sizing: bigger bets on high-edge, tiny/zero on marginal
 - Circuit breaker tested in backtest simulation
 - Kelly-sized vs flat-sized historical P&L comparison
+
+**Note:** Full Kelly validation requires 30+ days of logged fills from Phase 1. Phase 2 *code* can be built immediately, but the "graduate to 0.5x Kelly" decision is calendar-gated. Start at 0.25x Kelly and use simulated sizing on historical signals for initial validation.
 
 ### Phase 3: X/Twitter Signal Layer
 *Prerequisite: Phase 1 (need calibration to measure X impact)*
@@ -411,7 +442,8 @@ Create dynamic loader in `stations_config.py` — this alone can be the biggest 
 |------|-------------|
 | `x_signals/vision.py` | Snow depth / thermometer photo extraction via Claude API |
 | `x_signals/classifier.py` | MODIFY: Tier 3 LLM extraction |
-| `polymarket/trader.py` | MODIFY: re-enable execution |
+| `backtesting/replay.py` | NEW: replay mode — re-run forecast pipeline against historical weather data for parameter testing |
+| `trading/trader.py` | MODIFY: re-enable Polymarket execution (existing file, currently disabled) |
 | `daemon.py` | MODIFY: unified loop, all market types + X polling |
 | `alerts/telegram_alert.py` | MODIFY: richer alerts with Kelly size, X signal summary |
 | `monitoring/dashboard.py` | NEW: live P&L, positions, model performance, X quota |
