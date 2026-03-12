@@ -38,3 +38,24 @@ def test_walk_forward_respects_edge_threshold(signals_csv):
     results_low = walk_forward_simulate(signals_csv=signals_csv, edge_threshold=0.05)
     results_high = walk_forward_simulate(signals_csv=signals_csv, edge_threshold=0.20)
     assert results_low["signals_traded"] >= results_high["signals_traded"]
+
+
+def test_walk_forward_kelly_mode(signals_csv):
+    """Kelly mode should produce different results than fixed-fraction."""
+    results_fixed = walk_forward_simulate(
+        signals_csv=signals_csv,
+        edge_threshold=0.07,
+        initial_bankroll=1000.0,
+        bet_fraction=0.02,
+    )
+    results_kelly = walk_forward_simulate(
+        signals_csv=signals_csv,
+        edge_threshold=0.07,
+        initial_bankroll=1000.0,
+        kelly_mode=True,
+        fractional_kelly=0.25,
+    )
+    # Both should trade the same signals, but sizing differs
+    assert results_kelly["signals_traded"] == results_fixed["signals_traded"]
+    # Returns will differ because sizing differs
+    assert results_kelly["total_return"] != results_fixed["total_return"]

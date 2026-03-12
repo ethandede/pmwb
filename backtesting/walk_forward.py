@@ -23,6 +23,8 @@ def walk_forward_simulate(
     initial_bankroll: float = 1000.0,
     bet_fraction: float = 0.02,
     max_bet_pct: float = 0.03,
+    kelly_mode: bool = False,
+    fractional_kelly: float = 0.25,
 ) -> dict:
     """Simulate historical trading using signal log.
 
@@ -66,14 +68,29 @@ def walk_forward_simulate(
         day_pnl = 0.0
 
         for _, sig in day_signals.iterrows():
-            # Position size
-            bet_size = min(bankroll * bet_fraction, bankroll * max_bet_pct)
-            if bet_size < 0.50:
-                continue
-
             edge = sig["edge"]
             market_prob = max(0.01, min(0.99, sig["market_prob"]))
             model_prob = sig["model_prob"]
+
+            # Position size
+            if kelly_mode:
+                from risk.kelly import kelly_fraction as kf
+                confidence = sig.get("confidence", 80.0)
+                if pd.isna(confidence):
+                    confidence = 80.0
+                kelly = kf(
+                    model_prob=model_prob,
+                    market_prob=market_prob,
+                    fractional=fractional_kelly,
+                    confidence=confidence,
+                )
+                if kelly["side"] is None:
+                    continue
+                bet_size = min(bankroll * kelly["fraction"], bankroll * max_bet_pct)
+            else:
+                bet_size = min(bankroll * bet_fraction, bankroll * max_bet_pct)
+            if bet_size < 0.50:
+                continue
 
             # Simulate outcome using model_prob as true probability
             # In a real backtest with settlement data, use actual outcomes instead

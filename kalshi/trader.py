@@ -120,27 +120,38 @@ def sell_order(ticker: str, side: str, price_cents: int, count: int) -> dict:
 
 _scan_spent = 0.0  # tracks dollars spent in current scan cycle
 
+from risk.bankroll import BankrollTracker
+from risk.circuit_breaker import CircuitBreaker
+
+_bankroll_tracker = BankrollTracker(initial_bankroll=500.0)
+_circuit_breaker = CircuitBreaker()
+
 
 def reset_scan_budget():
     """Reset per-scan spending tracker. Call at start of each scan."""
     global _scan_spent
     _scan_spent = 0.0
+    # Try to refresh bankroll from API (non-fatal if offline)
+    try:
+        bal = get_balance()
+        _bankroll_tracker.update_from_api(
+            balance_cents=bal.get("balance", 0),
+            portfolio_value_cents=bal.get("portfolio_value", 0),
+        )
+    except Exception:
+        pass  # Use last known or initial bankroll
 
 
 def execute_kalshi_signal(market: dict, city: str, model_prob: float, market_prob: float, edge: float, direction: str, confidence: float = 0):
     """Execute a trade on Kalshi based on a signal."""
     global _scan_spent
-    from config import PAPER_MODE, MAX_ORDER_USD, MAX_SCAN_BUDGET, HIGH_CONFIDENCE_MULTIPLIER
+    from config import PAPER_MODE, FRACTIONAL_KELLY
     from alerts.telegram_alert import send_signal_alert
+    from risk.sizer import compute_size
 
     ticker = market.get("ticker", "")
     if not ticker:
         print("No ticker in market data — skipping")
-        return
-
-    # Check scan budget
-    if _scan_spent >= MAX_SCAN_BUDGET:
-        print(f"\n  BUDGET CAP — ${MAX_SCAN_BUDGET:.0f}/scan reached, skipping {ticker}")
         return
 
     # Determine side: positive edge = buy YES, negative = buy NO
@@ -153,21 +164,33 @@ def execute_kalshi_signal(market: dict, city: str, model_prob: float, market_pro
         price_cents = int((1 - market_prob + abs(edge) * 0.3) * 100)
     price_cents = max(1, min(99, price_cents))
 
-    # Position sizing: cap per order and respect remaining scan budget
-    # Boost size for high-confidence signals
-    size_mult = HIGH_CONFIDENCE_MULTIPLIER if confidence >= 85 else 1.0
-    remaining = MAX_SCAN_BUDGET - _scan_spent
-    order_budget = min(MAX_ORDER_USD * size_mult, remaining)
-    count = max(1, int(order_budget * 100 / max(price_cents, 1)))
-    order_cost = count * price_cents / 100.0
+    # Kelly-based position sizing
+    size_result = compute_size(
+        model_prob=model_prob,
+        market_prob=market_prob,
+        confidence=confidence,
+        price_cents=price_cents,
+        bankroll_tracker=_bankroll_tracker,
+        circuit_breaker=_circuit_breaker,
+        scan_spent=_scan_spent,
+        fractional_kelly=FRACTIONAL_KELLY,
+    )
+
+    if size_result.count == 0:
+        print(f"\n  SKIP {ticker} — {size_result.limit_reason}")
+        return
+
+    count = size_result.count
+    order_cost = size_result.dollar_amount
 
     mode_label = "PAPER" if PAPER_MODE else "LIVE"
     print(f"\n  [{mode_label}] {side.upper()} {count} contracts @ {price_cents}¢ (${order_cost:.2f})")
-    print(f"  Ticker: {ticker} | Edge: {edge:+.1%} | City: {city}")
-    print(f"  Scan budget: ${_scan_spent:.2f}/${MAX_SCAN_BUDGET:.0f} spent")
+    print(f"  Ticker: {ticker} | Edge: {edge:+.1%} | Kelly: {size_result.raw_kelly:.1%} → {size_result.adjusted_kelly:.1%}")
+    print(f"  Scan budget: ${_scan_spent:.2f} spent | {size_result.limit_reason}")
 
     if PAPER_MODE:
         print(f"  PAPER MODE — no order sent.")
+        _scan_spent += order_cost
         return
 
     try:
@@ -175,6 +198,7 @@ def execute_kalshi_signal(market: dict, city: str, model_prob: float, market_pro
         order_id = resp.get("order", {}).get("order_id", "unknown")
         status = resp.get("order", {}).get("status", "unknown")
         _scan_spent += order_cost
+        _bankroll_tracker.record_daily_pnl(-order_cost)  # Track spend for daily stop
         print(f"  Order posted! ID: {order_id} Status: {status}")
 
         # Persist fill for backtesting

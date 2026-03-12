@@ -16,6 +16,8 @@ def main():
     parser.add_argument("--walk-forward", action="store_true", help="Run walk-forward simulation")
     parser.add_argument("--edge-threshold", type=float, default=0.105, help="Edge threshold for walk-forward")
     parser.add_argument("--bankroll", type=float, default=1000.0, help="Initial bankroll for walk-forward")
+    parser.add_argument("--kelly", action="store_true", help="Use Kelly sizing in walk-forward")
+    parser.add_argument("--fractional-kelly", type=float, default=0.25, help="Fractional Kelly multiplier (default 0.25)")
     args = parser.parse_args()
 
     console.print("[bold cyan]Weather Bot — Backtesting Report[/bold cyan]\n")
@@ -36,7 +38,11 @@ def main():
             signals_csv=args.signals,
             edge_threshold=args.edge_threshold,
             initial_bankroll=args.bankroll,
+            kelly_mode=args.kelly,
+            fractional_kelly=args.fractional_kelly,
         )
+        sizing_label = f"Kelly {args.fractional_kelly:.0%}x" if args.kelly else "Fixed 2%"
+        console.print(f"Sizing mode: {sizing_label}")
         console.print(f"Signals traded: {wf['signals_traded']}")
         console.print(f"Final bankroll: ${wf['final_bankroll']:.2f} (started ${args.bankroll:.2f})")
         console.print(f"Total return: {wf['total_return']:.1%}")
