@@ -48,6 +48,50 @@ def get_ensemble_max_temps(lat: float, lon: float, days_ahead: int = 1, unit: st
         return [20.0] * 31  # safe fallback
 
 
+def get_ensemble_min_temps(lat: float, lon: float, days_ahead: int = 1, unit: str = "f") -> List[float]:
+    """Open-Meteo Ensemble — returns daily min temps in the correct unit (F or C)."""
+    unit_param = "fahrenheit" if unit == "f" else "celsius"
+    url = (
+        f"https://ensemble-api.open-meteo.com/v1/ensemble"
+        f"?latitude={lat}&longitude={lon}"
+        f"&daily=temperature_2m_min"
+        f"&temperature_unit={unit_param}"
+        f"&timezone=auto"
+        f"&forecast_days={days_ahead + 2}"
+    )
+
+    try:
+        r = requests.get(url, timeout=15)
+        r.raise_for_status()
+        data = r.json()
+
+        temps = []
+        if "ensemble" in data:
+            for member in data["ensemble"]:
+                daily_min = member.get("daily", {}).get("temperature_2m_min", [])
+                if len(daily_min) > days_ahead:
+                    temps.append(round(float(daily_min[days_ahead]), 1))
+        else:
+            # Fallback: member keys like temperature_2m_min_member01
+            daily = data.get("daily", {})
+            member_keys = sorted(k for k in daily if k.startswith("temperature_2m_min_member"))
+            if member_keys:
+                for key in member_keys:
+                    vals = daily[key]
+                    if len(vals) > days_ahead and vals[days_ahead] is not None:
+                        temps.append(round(float(vals[days_ahead]), 1))
+            else:
+                raw = daily.get("temperature_2m_min", [])
+                if len(raw) > days_ahead and raw[days_ahead] is not None:
+                    temps = [round(float(raw[days_ahead]), 1)]
+
+        return temps
+
+    except Exception as e:
+        print(f"Open-Meteo Ensemble min temp error: {e}")
+        return [20.0] * 31  # safe fallback
+
+
 def get_bucket_prob(temps: List[float], low: float, high: float | None = None) -> float:
     """Empirical probability from ensemble members (works for both F and C)."""
     if not temps:

@@ -16,8 +16,10 @@ import sqlite3
 import requests
 from typing import List, Optional, Tuple
 from weather.forecast import get_ensemble_max_temps, get_ensemble_min_temps, get_bucket_prob
+from weather.forecast import get_ensemble_precip, get_nws_precip_forecast
 from weather import cache as fcache
-from config import BIAS_DB_PATH, FUSION_WEIGHTS
+from weather.precip_model import gamma_precip_prob
+from config import BIAS_DB_PATH, FUSION_WEIGHTS, PRECIP_FUSION_WEIGHTS
 
 
 # ---------------------------------------------------------------------------
@@ -332,6 +334,113 @@ def fuse_forecast(
         confidence += 15
 
     # +10 if NOAA is available (independent confirmation)
+    if noaa_prob is not None:
+        confidence += 10
+
+    confidence = min(100, confidence)
+    details["confidence"] = confidence
+
+    return fused_prob, confidence, details
+
+
+def fuse_precip_forecast(
+    lat: float, lon: float, city: str, month: int,
+    threshold: float, forecast_days: Optional[int] = None,
+) -> Tuple[float, float, dict]:
+    """Precipitation fusion. Returns (fused_prob, confidence, details).
+
+    Same return shape as fuse_forecast() for temperature so the scanner
+    edge-computation logic works identically.
+    """
+    weights = dict(PRECIP_FUSION_WEIGHTS)
+    details = {}
+
+    # --- Model 1: Open-Meteo Ensemble (30-member precip) ---
+    cache_key = (round(lat, 2), round(lon, 2), "precip", forecast_days or 1)
+    ensemble_precip = fcache.get("ensemble_precip", *cache_key)
+    if ensemble_precip is None:
+        ensemble_precip = get_ensemble_precip(lat, lon, forecast_days=forecast_days)
+        if ensemble_precip:
+            fcache.put("ensemble_precip", *cache_key, value=ensemble_precip)
+
+    # Get NWS PoP for blended p_dry
+    nws_pop, nws_qpf = get_nws_precip_forecast(lat, lon)
+
+    # CSGD model (primary)
+    csgd_result = gamma_precip_prob(ensemble_precip, threshold=threshold, nws_pop=nws_pop)
+
+    # Bias correction for ensemble
+    bias_ens, n_ens = get_bias(city, month, "ensemble_precip")
+
+    ensemble_prob = csgd_result.prob_above
+    details["ensemble"] = {
+        "prob": ensemble_prob,
+        "fraction_above": csgd_result.fraction_above,
+        "p_dry": csgd_result.p_dry,
+        "shape": csgd_result.shape,
+        "scale": csgd_result.scale,
+        "method": csgd_result.method,
+        "bias": round(bias_ens, 3),
+        "n": n_ens,
+        "members_count": len(ensemble_precip),
+    }
+
+    # --- Model 2: NWS PoP + QPF ---
+    if threshold <= 0.0:
+        noaa_prob = nws_pop
+    elif nws_qpf > 0:
+        ratio = min(1.0, nws_qpf / max(threshold, 0.01))
+        noaa_prob = nws_pop * ratio
+    else:
+        noaa_prob = nws_pop * 0.3
+
+    noaa_prob = max(0.0, min(1.0, noaa_prob))
+    bias_noaa, n_noaa = get_bias(city, month, "noaa_precip")
+    details["noaa"] = {"prob": noaa_prob, "pop": nws_pop, "qpf": nws_qpf,
+                       "bias": round(bias_noaa, 3), "n": n_noaa}
+
+    # --- Weighted fusion (ensemble + NWS; HRRR slot reserved for future) ---
+    active = {"ensemble": ensemble_prob}
+    if noaa_prob is not None:
+        active["noaa"] = noaa_prob
+
+    total_weight = sum(weights.get(k, 0) for k in active)
+    if total_weight == 0:
+        fused_prob = ensemble_prob
+    else:
+        fused_prob = sum(weights.get(k, 0) * active[k] / total_weight for k in active)
+    fused_prob = round(max(0.0, min(1.0, fused_prob)), 4)
+
+    details["fused_prob"] = fused_prob
+    details["models_used"] = len(active)
+
+    # --- Confidence scoring (0-100, adapted for precip) ---
+    confidence = 0
+
+    # +30 if ensemble and NWS agree
+    if (ensemble_prob > 0.5 and noaa_prob > 0.5) or (ensemble_prob < 0.5 and noaa_prob < 0.5):
+        confidence += 30
+    elif abs(ensemble_prob - noaa_prob) < 0.15:
+        confidence += 15
+
+    # +25 if ensemble has strong agreement
+    fa = csgd_result.fraction_above
+    if fa > 0.85 or fa < 0.15:
+        confidence += 25
+    elif fa > 0.75 or fa < 0.25:
+        confidence += 12
+
+    # +20 if bias data available
+    if any(get_bias(city, month, m)[1] >= 30 for m in ["ensemble_precip", "noaa_precip"]):
+        confidence += 20
+    elif any(get_bias(city, month, m)[1] >= 10 for m in ["ensemble_precip", "noaa_precip"]):
+        confidence += 10
+
+    # +15 if CSGD fit succeeded (not fallback)
+    if csgd_result.method == "csgd":
+        confidence += 15
+
+    # +10 if NWS data available
     if noaa_prob is not None:
         confidence += 10
 
