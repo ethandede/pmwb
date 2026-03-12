@@ -54,3 +54,14 @@ def test_parse_precip_no_match():
     market = {"ticker": "unknown-market", "title": "Something unrelated"}
     result = parse_precip_bucket(market)
     assert result is None
+
+
+from weather.stations_config import get_station
+
+def test_get_station_hit():
+    result = get_station("nyc", "precip")
+    assert result is not None
+    assert result["station"] == "USW00094728"
+
+def test_get_station_miss():
+    assert get_station("unknown_city", "precip") is None

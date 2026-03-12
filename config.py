@@ -49,3 +49,7 @@ KELLY_MAX_FRACTION = 0.03    # max 3% of bankroll per order
 DRAWDOWN_THRESHOLD = 0.15    # 15% drawdown triggers circuit breaker
 DAILY_STOP_PCT = 0.05        # -5% daily P&L stops trading
 CIRCUIT_BREAKER_COOLDOWN_HOURS = 48
+
+# Precipitation fusion weights (Phase 4)
+PRECIP_FUSION_WEIGHTS = {"ensemble": 0.50, "noaa": 0.30, "hrrr": 0.20}
+MAX_ENSEMBLE_HORIZON_DAYS = 16  # Open-Meteo ensemble limit; skip monthly contracts beyond this
