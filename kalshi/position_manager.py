@@ -18,7 +18,11 @@ from rich.console import Console
 from rich.table import Table
 
 from kalshi.trader import get_positions, get_balance, sell_order, _sign_request, _BASE_URL, _load_credentials
-from kalshi.scanner import WEATHER_SERIES, WEATHER_SERIES_LOW, parse_kalshi_bucket
+from kalshi.scanner import WEATHER_SERIES, parse_kalshi_bucket, PRECIP_SERIES
+try:
+    from kalshi.scanner import WEATHER_SERIES_LOW
+except ImportError:
+    WEATHER_SERIES_LOW = {}
 from kalshi.trailing_stop import update_peak, check_trailing_stop, remove_position
 from weather.multi_model import fuse_forecast
 from config import CONFIDENCE_THRESHOLD, PAPER_MODE
@@ -40,15 +44,17 @@ for ticker, info in WEATHER_SERIES.items():
     _ALL_SERIES[ticker] = {**info, "temp_type": "max"}
 for ticker, info in WEATHER_SERIES_LOW.items():
     _ALL_SERIES[ticker] = {**info, "temp_type": "min"}
+for ticker, info in PRECIP_SERIES.items():
+    _ALL_SERIES[ticker] = {**info, "market_type": "precip"}
 
 
 def _parse_position_ticker(ticker: str) -> Optional[dict]:
-    """Extract series info from a position ticker like KXHIGHNY-26MAR12-B55.
+    """Extract series info from a position ticker.
 
-    Returns dict with city, lat, lon, unit, temp_type, or None if unknown series.
+    Returns dict with city, lat, lon, unit, and either temp_type or market_type.
     """
     for series_prefix, info in _ALL_SERIES.items():
-        if ticker.startswith(series_prefix):
+        if ticker.upper().startswith(series_prefix.upper()):
             return dict(info)
     return None
 
@@ -119,37 +125,65 @@ def evaluate_position(ticker: str, qty: float, market_data: dict) -> dict:
 
     current_yes_price = yes_ask / 100.0 if yes_ask > 1 else yes_ask
 
-    # Parse bucket from market data
-    bucket = parse_kalshi_bucket(market_data)
-    if not bucket:
-        return {"action": "hold", "reason": "can't parse bucket"}
-
-    low, high = bucket
-    city = series_info["city"]
-    temp_type = series_info["temp_type"]
     month = datetime.now(timezone.utc).month
 
-    # Calculate days ahead from ticker
-    from weather.forecast_logger import parse_ticker_date
-    target_date = parse_ticker_date(ticker)
-    today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    if target_date and target_date == today_str:
-        days_ahead = 0
-    elif target_date and target_date > today_str:
-        target_dt = datetime.strptime(target_date, "%Y-%m-%d").date()
-        today_dt = datetime.now(timezone.utc).date()
-        days_ahead = (target_dt - today_dt).days
-    else:
-        days_ahead = 0
+    # Check if this is a precip position
+    if series_info.get("market_type") == "precip":
+        from weather.multi_model import fuse_precip_forecast
+        from kalshi.market_types import parse_precip_bucket
+        from weather.forecast import calculate_remaining_month_days
 
-    # Run fresh forecast
-    try:
-        model_prob, confidence, details = fuse_forecast(
-            series_info["lat"], series_info["lon"], city, month,
-            low, high, days_ahead=days_ahead, unit=series_info["unit"], temp_type=temp_type,
-        )
-    except Exception as e:
-        return {"action": "hold", "reason": f"forecast error: {e}"}
+        bucket = parse_precip_bucket(market_data)
+        if not bucket:
+            return {"action": "hold", "reason": "can't parse precip bucket"}
+        threshold = bucket[0]
+        city = series_info["city"]
+        remaining_days = calculate_remaining_month_days()
+
+        try:
+            model_prob, confidence, details = fuse_precip_forecast(
+                series_info["lat"], series_info["lon"], city, month,
+                threshold=threshold, forecast_days=remaining_days,
+            )
+        except Exception as e:
+            return {"action": "hold", "reason": f"precip forecast error: {e}"}
+
+        # For precip positions, set variables needed by decision logic below
+        low, high = threshold, None
+        temp_type = "precip"
+        days_ahead = 0  # Monthly markets don't have a single target day
+
+    else:
+        # Existing temperature path — unchanged
+        bucket = parse_kalshi_bucket(market_data)
+        if not bucket:
+            return {"action": "hold", "reason": "can't parse bucket"}
+
+        low, high = bucket
+        city = series_info["city"]
+        temp_type = series_info["temp_type"]
+
+        # Calculate days ahead from ticker
+        from weather.forecast_logger import parse_ticker_date
+        target_date = parse_ticker_date(ticker)
+        today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        if target_date and target_date == today_str:
+            days_ahead = 0
+        elif target_date and target_date > today_str:
+            target_dt = datetime.strptime(target_date, "%Y-%m-%d").date()
+            today_dt = datetime.now(timezone.utc).date()
+            days_ahead = (target_dt - today_dt).days
+        else:
+            days_ahead = 0
+
+        # Run fresh forecast
+        try:
+            model_prob, confidence, details = fuse_forecast(
+                series_info["lat"], series_info["lon"], city, month,
+                low, high, days_ahead=days_ahead, unit=series_info["unit"], temp_type=temp_type,
+            )
+        except Exception as e:
+            return {"action": "hold", "reason": f"forecast error: {e}"}
 
     # Calculate current edge from our side's perspective
     if side == "yes":
