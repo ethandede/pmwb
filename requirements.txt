@@ -2,3 +2,7 @@ requests
 python-dotenv
 rich
 pandas
+pytest
+matplotlib
+scipy
+numpy
