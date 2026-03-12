@@ -9,9 +9,12 @@ from polymarket.gamma import get_active_weather_markets, parse_bucket
 from alerts.telegram_alert import send_signal_alert
 from logging_utils import log_signal
 from trading.trader import execute_signal
-from kalshi.scanner import get_kalshi_weather_markets, get_kalshi_low_temp_markets, parse_kalshi_bucket
+from kalshi.scanner import get_kalshi_weather_markets, parse_kalshi_bucket, get_kalshi_precip_markets
 from kalshi.trader import execute_kalshi_signal, reset_scan_budget
 from weather.forecast_logger import log_forecast, parse_ticker_date
+from weather.multi_model import fuse_precip_forecast
+from weather.forecast import calculate_remaining_month_days
+from config import MAX_ENSEMBLE_HORIZON_DAYS
 
 console = Console()
 
@@ -133,14 +136,8 @@ def run_scanner():
 
     # --- Kalshi Markets ---
     console.print("\nFetching weather markets from Kalshi API...")
-    kalshi_high_markets = get_kalshi_weather_markets()
-    console.print(f"Found {len(kalshi_high_markets)} Kalshi high-temp markets")
-
-    console.print("Fetching low-temp markets from Kalshi API...")
-    kalshi_low_markets = get_kalshi_low_temp_markets()
-    console.print(f"Found {len(kalshi_low_markets)} Kalshi low-temp markets\n")
-
-    kalshi_markets = kalshi_high_markets + kalshi_low_markets
+    kalshi_markets = get_kalshi_weather_markets()
+    console.print(f"Found {len(kalshi_markets)} Kalshi temp markets\n")
 
     month = datetime.now(timezone.utc).month
     today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -251,11 +248,48 @@ def run_scanner():
                     )
                     execute_kalshi_signal(market, city_key, model_prob, yes_price, edge, direction, confidence)
 
+    # --- Kalshi Precipitation Markets ---
+    precip_markets = get_kalshi_precip_markets()
+    console.print(f"\n  Found {len(precip_markets)} precip markets")
+
+    for market in precip_markets:
+        ticker = market.get("ticker", "")
+        title = market.get("title", ticker)
+        city_key = market.get("_city", "unknown")
+        threshold = market.get("_threshold", 0.0)
+        yes_price = market.get("yes_price", 0) / 100.0 if isinstance(market.get("yes_price"), int) else market.get("yes_price", 0.5)
+
+        # Monthly contracts: check horizon limit
+        remaining_days = calculate_remaining_month_days()
+        if remaining_days > MAX_ENSEMBLE_HORIZON_DAYS:
+            continue  # Skip — beyond ensemble forecast horizon
+
+        month = datetime.now(timezone.utc).month
+
+        try:
+            model_prob, confidence, details = fuse_precip_forecast(
+                market["_lat"], market["_lon"], city_key, month,
+                threshold=threshold, forecast_days=remaining_days,
+            )
+        except Exception as e:
+            console.print(f"[red]Precip fusion error for {city_key}: {e}[/red]")
+            continue
+
+        edge = model_prob - yes_price
+
+        if abs(edge) >= SHOW_THRESHOLD:
+            direction = "BUY YES" if edge > 0 else "SELL YES"
+            log_signal(title, city_key + " (kalshi)", model_prob, yes_price, edge, direction, False, PAPER_MODE, confidence=confidence, ticker=ticker)
+            signals_found += 1
+
+            if abs(edge) >= ALERT_THRESHOLD and confidence >= CONFIDENCE_THRESHOLD:
+                execute_kalshi_signal(market, city_key, model_prob, yes_price, edge, direction, confidence=confidence)
+
     if signals_found:
         console.print(table)
     else:
         console.print("[yellow]No signals >= 7% edge this scan.[/yellow]")
 
-    total_markets = len(markets) + len(kalshi_markets)
-    console.print(f"\n[dim]Scanned {total_markets} markets (Polymarket: {len(markets)}, Kalshi: {len(kalshi_markets)}), {signals_found} signals found.[/dim]")
+    total_markets = len(markets) + len(kalshi_markets) + len(precip_markets)
+    console.print(f"\n[dim]Scanned {total_markets} markets (Polymarket: {len(markets)}, Kalshi temp: {len(kalshi_markets)}, Kalshi precip: {len(precip_markets)}), {signals_found} signals found.[/dim]")
     console.print(f"[dim]Signals >= 10.5% are trade-worthy. Run every 15 min.[/dim]")
