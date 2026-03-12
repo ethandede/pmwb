@@ -31,11 +31,12 @@ The project is a **production weather prediction market bot** trading live on Ka
 
 - **Existing:** `logs/signals.csv` (all detected signals with timestamps, edges, model probs), `data/bias.db` (forecast vs actual per city/month/model)
 - **New: `data/trades.db`** — SQLite table logging every Kalshi order fill. This is **new functionality** (the trader currently prints/alerts but does not persist fills). Requires:
-  - Schema: `(id, ticker, side, limit_price, fill_price, fill_qty, fill_time, settlement_outcome, pnl)`
+  - Schema: `(id, order_id, ticker, side, limit_price, fill_price, fill_qty, fill_time, settlement_outcome, pnl)` — `order_id` required for dedup on re-polls and correlating partial fills
   - Polling Kalshi `/portfolio/orders` endpoint for fill confirmations (limit orders may rest unfilled or partially fill)
   - Handling partial fills as separate rows
   - Backfilling recent fills from Kalshi order history API on first run
-- **New: `logging_utils.py` modifications** — Current CSV header is `timestamp, market_question, city, model_prob, market_prob, edge, direction, dutch_book, paper_trade`. Must add columns: `confidence`, `ticker`, `settlement_outcome` (backfilled by resolver). Column `market_prob` (not `market_price`) is the existing price field.
+- **New: `logging_utils.py` modifications** — Current CSV header is `timestamp, market_question, city, model_prob, market_prob, edge, direction, dutch_book, paper_trade`. Must add columns: `confidence`, `ticker`, `settlement_outcome` (backfilled by resolver). Column `market_prob` (not `market_price`) is the existing price field. Note: `data_loader.py` must handle old CSV rows missing new columns (default to None).
+- **New: `kalshi/trader.py` must persist `order_id`** — Currently `place_order` returns the order ID but discards it after printing. Must store it so `fill_tracker.py` can poll for fill status.
 - **Historical weather:** Open-Meteo Archive API (free, already used in resolver)
 - **Historical market prices:** Start logging snapshots now and build forward. For older signals, use CSV log's `market_prob` column.
 
@@ -119,7 +120,7 @@ Market YES price = 0.70 (so NO costs $0.30). Your model says YES probability = 0
 | Per-scan | $10 flat | 10% of bankroll |
 | Per-city per-day | None | 5% of bankroll |
 | Total exposure | None | 30% of bankroll |
-| Per-market | None | Max 2 contracts on same event |
+| Per-market | None | Max 2 contracts per event (across all buckets of that city/day/type) |
 
 ### Confidence-Adjusted Kelly
 
