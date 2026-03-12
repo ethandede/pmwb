@@ -22,7 +22,13 @@ def init_clob_client():
 
 
 def execute_signal(market: dict, city: str, model_prob: float, market_prob: float, edge: float, direction: str):
+    import json as _json
     token_ids = market.get("clobTokenIds", [])
+    if isinstance(token_ids, str):
+        try:
+            token_ids = _json.loads(token_ids)
+        except (ValueError, TypeError):
+            pass
     if not token_ids:
         print("No clobTokenIds in market data — skipping execution")
         return
