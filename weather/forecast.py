@@ -127,7 +127,7 @@ def get_ensemble_precip(lat: float, lon: float, forecast_days: int | None = None
     If forecast_days is set (monthly contracts): sum daily values per member.
     Otherwise returns single-day values for day 1.
     """
-    days = forecast_days if forecast_days else 2
+    days = forecast_days if forecast_days is not None else 2
     url = (
         f"https://ensemble-api.open-meteo.com/v1/ensemble"
         f"?latitude={lat}&longitude={lon}"

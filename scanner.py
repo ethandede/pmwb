@@ -257,7 +257,11 @@ def run_scanner():
         title = market.get("title", ticker)
         city_key = market.get("_city", "unknown")
         threshold = market.get("_threshold", 0.0)
-        yes_price = market.get("yes_price", 0) / 100.0 if isinstance(market.get("yes_price"), int) else market.get("yes_price", 0.5)
+
+        yes_ask = market.get("yes_ask")
+        if yes_ask is None:
+            continue
+        yes_price = yes_ask / 100.0  # Kalshi prices are in cents
 
         # Monthly contracts: check horizon limit
         remaining_days = calculate_remaining_month_days()
@@ -279,6 +283,12 @@ def run_scanner():
 
         if abs(edge) >= SHOW_THRESHOLD:
             direction = "BUY YES" if edge > 0 else "SELL YES"
+            edge_color = "green" if edge > 0 else "red"
+            table.add_row(
+                title[:40], city_key, f"{model_prob:.0%}", f"{yes_price:.0%}",
+                f"[{edge_color}]{edge:+.1%}[/{edge_color}]",
+                f"[bold]{direction}[/bold]", f"{confidence}%", ticker,
+            )
             log_signal(title, city_key + " (kalshi)", model_prob, yes_price, edge, direction, False, PAPER_MODE, confidence=confidence, ticker=ticker)
             signals_found += 1
 
