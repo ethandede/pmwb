@@ -72,7 +72,7 @@ def walk_forward_simulate(
                 continue
 
             edge = sig["edge"]
-            market_prob = sig["market_prob"]
+            market_prob = max(0.01, min(0.99, sig["market_prob"]))
             model_prob = sig["model_prob"]
 
             # Simulate outcome using model_prob as true probability
