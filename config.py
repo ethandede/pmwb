@@ -31,6 +31,21 @@ PRIVATE_KEY = _pk if _pk.startswith("0x") else f"0x{_pk}" if _pk else None
 FUNDER_ADDRESS = os.getenv("FUNDER_ADDRESS")
 PAPER_MODE = os.getenv("PAPER_MODE", "true").lower() == "true"
 MAX_POSITION_USD = 50.0
+MAX_SCAN_BUDGET = 10.0    # max dollars to deploy per scan cycle
+MAX_ORDER_USD = 2.0       # max dollars per individual order
+
+# Multi-model fusion
+BIAS_DB_PATH = "data/bias.db"
+CONFIDENCE_THRESHOLD = 70
+FUSION_WEIGHTS = {"ensemble": 0.40, "noaa": 0.35, "hrrr": 0.25}
+HIGH_CONFIDENCE_MULTIPLIER = 1.5  # size boost when confidence >= 85
 HOST = "https://clob.polymarket.com"
 CHAIN_ID = 137
-SIGNATURE_TYPE = 2  # 2 = GNOSIS_SAFE (Polymarket web/email accounts)
+SIGNATURE_TYPE = 0  # 0 = EOA (direct wallet signing)
+
+# Risk / Kelly sizing (Phase 2)
+FRACTIONAL_KELLY = 0.25       # start at 25% Kelly
+KELLY_MAX_FRACTION = 0.03    # max 3% of bankroll per order
+DRAWDOWN_THRESHOLD = 0.15    # 15% drawdown triggers circuit breaker
+DAILY_STOP_PCT = 0.05        # -5% daily P&L stops trading
+CIRCUIT_BREAKER_COOLDOWN_HOURS = 48
