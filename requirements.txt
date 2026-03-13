@@ -6,3 +6,5 @@ pytest
 matplotlib
 scipy
 numpy
+fastapi
+uvicorn[standard]
