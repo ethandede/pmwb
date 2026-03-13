@@ -161,12 +161,11 @@ function renderPortfolio(data) {
     const balanceEl = document.getElementById('portfolio-balance');
     if (balanceEl) {
         balanceEl.innerHTML = `
-        <div class="metric-row">
           ${metricCard('Cash', fmtDollar(balance.cash), `${fmtPct(balance.deployed_pct)} deployed`, 'neutral')}
           ${metricCard('Positions', fmtDollar(balance.positions), `${open_positions.length} open`, 'neutral')}
           ${metricCard('Equity', fmtDollar(balance.equity), 'Total value', 'accent')}
           ${metricCard('Deployed', fmtPct(balance.deployed_pct), 'Of total equity', 'neutral')}
-        </div>`.trim();
+        `.trim();
     }
 
     // ── 2. Settled performance row ──────────────────────────────────────
@@ -181,12 +180,11 @@ function renderPortfolio(data) {
             : '—';
 
         settledEl.innerHTML = `
-        <div class="metric-row">
           ${metricCard('Gross P&amp;L', fmtDollar(settled.gross_pnl, true), `${settled.total_settled} settled`, grossPnlVariant)}
           ${metricCard('Fees Paid', fmtDollar(settled.fees), feePct, 'neutral')}
           ${metricCard('Net P&amp;L', fmtDollar(settled.net_pnl, true), 'After fees', netPnlVariant)}
           ${metricCard('Hit Rate', fmtPct(settled.hit_rate), `${settled.wins}W / ${settled.losses}L`, 'neutral')}
-        </div>`.trim();
+        `.trim();
     }
 
     // ── 3. Open positions table ─────────────────────────────────────────

@@ -38,7 +38,8 @@ body {
   font-size: $font-size-base;
   line-height: $line-height-normal;
   color: $text-primary;
-  background-color: $bg-deep;
+  background: linear-gradient(170deg, $bg-deep 0%, #0d1525 40%, #0f1a2e 100%);
+  background-attachment: fixed;
   min-height: 100vh;
 }
 
@@ -204,9 +205,64 @@ hr,
 .we-page {
   max-width: $container-max;
   margin: 0 auto;
-  padding: 0 $sp-6;
+  padding: $sp-6;
 
   @media (max-width: $bp-sm) {
-    padding: 0 $sp-4;
+    padding: $sp-4;
   }
+}
+
+// ------------------------------------
+// Sections
+// ------------------------------------
+section {
+  margin-bottom: $sp-8;
+
+  > h2 {
+    font-size: 18px;
+    font-weight: 900;
+    letter-spacing: -0.01em;
+    border-bottom: 2px solid $brand-primary;
+    padding-bottom: $sp-2;
+    margin-bottom: $sp-4;
+  }
+}
+
+// ------------------------------------
+// Val-amber (confidence 40-59)
+// ------------------------------------
+.val-amber {
+  color: $brand-amber !important;
+  font-weight: 600;
+}
+
+// ------------------------------------
+// Signal badge variants
+// ------------------------------------
+.signal-badge-active {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border-radius: 14px;
+  background: rgba($brand-teal, 0.12);
+  color: $brand-teal;
+  font-family: $font-mono;
+  font-size: $font-size-sm;
+  font-weight: 600;
+  border: 1px solid rgba($brand-teal, 0.3);
+}
+
+.signal-badge-none {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border-radius: 14px;
+  background: rgba($border-subtle, 0.3);
+  color: $text-muted;
+  font-family: $font-mono;
+  font-size: $font-size-sm;
+  font-weight: 600;
+  border: 1px solid $border-subtle;
 }
