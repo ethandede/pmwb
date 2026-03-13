@@ -338,11 +338,7 @@ function confidenceScatter(markets, containerId, labelId) {
     const edgeSpan = maxEdge - minEdge || 1;
     const xPad = edgeSpan * 0.15;
 
-    const minConf = Math.min(...confs);
-    const maxConf = Math.max(...confs);
-    const confSpan = maxConf - minConf || 1;
-    const yPad = confSpan * 0.2;
-
+    // Confidence is produced in [55, 100] — use that as the meaningful range
     const layout = {
         ...PLOTLY_LAYOUT,
         xaxis: {
@@ -354,7 +350,7 @@ function confidenceScatter(markets, containerId, labelId) {
         yaxis: {
             ...PLOTLY_LAYOUT.yaxis,
             title: { text: 'Confidence', font: { color: 'rgba(255,255,255,0.6)', size: 11 } },
-            range: [Math.max(0, minConf - yPad), Math.min(100, maxConf + yPad)],
+            range: [55, 100],
         },
     };
 
