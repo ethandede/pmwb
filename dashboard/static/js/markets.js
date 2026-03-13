@@ -332,9 +332,16 @@ function confidenceScatter(markets, containerId, labelId) {
         hovertemplate: '%{text}<br>Edge: %{x:.1f}%<br>Conf: %{y}<extra></extra>',
     };
 
-    // x-axis: 0 to max, constrained to populated range
+    // Fit axes to actual data range with padding
+    const minEdge = Math.min(...edges);
     const maxEdge = Math.max(...edges);
-    const pad = Math.max(maxEdge * 0.15, 2);
+    const edgeSpan = maxEdge - minEdge || 1;
+    const xPad = edgeSpan * 0.15;
+
+    const minConf = Math.min(...confs);
+    const maxConf = Math.max(...confs);
+    const confSpan = maxConf - minConf || 1;
+    const yPad = confSpan * 0.2;
 
     const layout = {
         ...PLOTLY_LAYOUT,
@@ -342,12 +349,12 @@ function confidenceScatter(markets, containerId, labelId) {
             ...PLOTLY_LAYOUT.xaxis,
             title: { text: 'Edge (%)', font: { color: 'rgba(255,255,255,0.6)', size: 11 } },
             tickformat: '.1f',
-            range: [0, maxEdge + pad],
+            range: [Math.max(0, minEdge - xPad), maxEdge + xPad],
         },
         yaxis: {
             ...PLOTLY_LAYOUT.yaxis,
             title: { text: 'Confidence', font: { color: 'rgba(255,255,255,0.6)', size: 11 } },
-            range: [0, 100],
+            range: [Math.max(0, minConf - yPad), Math.min(100, maxConf + yPad)],
         },
     };
 
