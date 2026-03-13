@@ -5,7 +5,7 @@ import requests
 from datetime import datetime, timezone
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding
-from kalshi.fill_tracker import init_trades_db, record_fill
+from kalshi.fill_tracker import init_trades_db, record_fill, update_fill_data
 
 TRADES_DB_PATH = "data/trades.db"
 
@@ -317,16 +317,12 @@ def poll_and_update_fills():
                 actual_price_cents = int((total_cost / fill_qty) * 100) if fill_qty > 0 else 0
 
                 init_trades_db(TRADES_DB_PATH)
-                record_fill(
+                update_fill_data(
                     db_path=TRADES_DB_PATH,
                     order_id=order_id,
-                    ticker=order.get("ticker", ""),
-                    side=order.get("side", ""),
-                    limit_price=order.get("yes_price") or order.get("no_price") or 0,
                     fill_price=actual_price_cents,
                     fill_qty=fill_qty,
                     fill_time=order.get("last_update_time", datetime.now(timezone.utc).isoformat()),
-                    city="",
                 )
                 updated += 1
                 print(f"  [Poller] Updated fill for {order_id}: {fill_qty} @ {actual_price_cents}¢")

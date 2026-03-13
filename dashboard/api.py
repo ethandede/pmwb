@@ -250,9 +250,34 @@ async def market_history(market_type: str, days: int = Query(30)):
 
 @app.get("/api/performance")
 async def performance():
+    # Read settled trade P&L from trades.db
+    settled_daily = []
+    try:
+        import sqlite3
+        trades_db = Path(__file__).resolve().parent.parent / "data" / "trades.db"
+        if trades_db.exists():
+            conn = sqlite3.connect(str(trades_db))
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                """SELECT DATE(fill_time) as date,
+                          COUNT(*) as trades,
+                          SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) as wins,
+                          SUM(CASE WHEN pnl < 0 THEN 1 ELSE 0 END) as losses,
+                          SUM(pnl) as pnl
+                   FROM trades
+                   WHERE settlement_outcome IS NOT NULL
+                   GROUP BY DATE(fill_time)
+                   ORDER BY date"""
+            ).fetchall()
+            conn.close()
+            settled_daily = [dict(r) for r in rows]
+    except Exception:
+        pass  # trades.db may not exist yet
+
     return {
         "equity_curve": get_equity_curve(),
         "model_accuracy": get_model_outcomes(),
+        "settled_daily": settled_daily,
     }
 
 

@@ -15,10 +15,12 @@ from datetime import datetime, timezone
 
 from rich.console import Console
 from weather import cache as fcache
+from dashboard.equity_db import init_equity_db, record_equity_snapshot
 
 console = Console()
 
 LOOP_INTERVAL = 300  # 5 minutes
+_last_equity_date: str | None = None  # track date to record equity once per day
 
 
 def run_cycle(cycle_num: int):
@@ -56,13 +58,39 @@ def run_cycle(cycle_num: int):
         console.print(f"[red]Settler error: {e}[/red]")
         traceback.print_exc()
 
-    # --- Phase 4: Quick balance check ---
+    # --- Phase 4: Quick balance check + daily equity snapshot ---
+    global _last_equity_date
     try:
-        from kalshi.trader import get_balance
+        from kalshi.trader import get_balance, get_positions
         bal = get_balance()
         cash = bal.get("balance", 0) / 100.0
         portfolio = bal.get("portfolio_value", 0) / 100.0
         console.print(f"\n[bold]Balance: ${cash:.2f} cash + ${portfolio:.2f} positions = ${cash + portfolio:.2f}[/bold]")
+
+        # Record equity snapshot once per day (first cycle of each day)
+        today_str = now.strftime("%Y-%m-%d")
+        if _last_equity_date != today_str:
+            try:
+                settled = get_positions(limit=200, settlement_status="settled")
+                realized_pnl = sum(float(p.get("realized_pnl_dollars", "0")) for p in settled)
+                fees_paid = sum(float(p.get("fees_paid_dollars", "0")) for p in settled)
+                wins = sum(1 for p in settled if float(p.get("realized_pnl_dollars", "0")) > 0)
+                losses = sum(1 for p in settled if float(p.get("realized_pnl_dollars", "0")) < 0)
+                init_equity_db()
+                record_equity_snapshot(
+                    date=today_str,
+                    total_equity=cash + portfolio,
+                    cash=cash,
+                    portfolio_value=portfolio,
+                    realized_pnl=realized_pnl,
+                    fees_paid=fees_paid,
+                    win_count=wins,
+                    loss_count=losses,
+                )
+                _last_equity_date = today_str
+                console.print(f"  [Equity] Recorded daily snapshot for {today_str}")
+            except Exception as e:
+                console.print(f"  [Equity] Snapshot error: {e}")
     except Exception as e:
         console.print(f"[dim]Balance check failed: {e}[/dim]")
 

@@ -39,11 +39,24 @@ def _fetch_market_result(ticker: str) -> dict | None:
         return None
 
 
+def _is_exit_fill(side: str) -> bool:
+    """Return True if the fill side represents an exit (sell/close), not an entry.
+
+    Exit fills: sell_yes, sell_no, yes, no
+    Entry fills: buy_yes, buy_no
+    """
+    return side in ("sell_yes", "sell_no", "yes", "no")
+
+
 def _calculate_pnl(side: str, fill_price: int, fill_qty: int, result: str) -> float:
-    """Calculate P&L in dollars for a settled trade.
+    """Calculate P&L in dollars for an entry position held to settlement.
+
+    Only applies to buy_yes/buy_no fills that were NOT exited before settlement.
+    Exit fills (sell_yes, sell_no) should NOT use this function -- their P&L was
+    already realized at the time of sale.
 
     Args:
-        side: "buy_yes", "buy_no", "sell_yes", "sell_no"
+        side: "buy_yes" or "buy_no" (entry sides only)
         fill_price: price in cents
         fill_qty: number of contracts
         result: "yes" or "no" (market settlement)
@@ -66,18 +79,6 @@ def _calculate_pnl(side: str, fill_price: int, fill_qty: int, result: str) -> fl
             return fill_qty * (100 - price_cents) / 100.0  # win
         else:
             return -fill_qty * price_cents / 100.0  # lose
-
-    elif side == "sell_yes":
-        if result == "no":
-            return fill_qty * price_cents / 100.0  # win (collected premium)
-        else:
-            return -fill_qty * (100 - price_cents) / 100.0  # lose
-
-    elif side == "sell_no":
-        if result == "yes":
-            return fill_qty * price_cents / 100.0  # win
-        else:
-            return -fill_qty * (100 - price_cents) / 100.0  # lose
 
     return 0.0
 
@@ -116,6 +117,13 @@ def run_settler():
         exp_val = settlement.get("expiration_value", "?")
 
         for trade in trades:
+            if _is_exit_fill(trade["side"]):
+                # Exit fills already realized P&L at sale time; mark as exited with $0
+                resolve_trade(TRADES_DB_PATH, trade["order_id"], "exited", 0.0)
+                resolved += 1
+                print(f"  {ticker} {trade['side']} {trade['fill_qty']}x@{trade['fill_price']}¢ → EXITED (P&L already realized)")
+                continue
+
             pnl = _calculate_pnl(
                 side=trade["side"],
                 fill_price=trade["fill_price"],
@@ -139,14 +147,20 @@ def run_settler():
     if resolved > 0:
         print(f"Results: {wins}W / {losses}L | P&L: ${total_pnl:+.2f}")
 
-    # Summary of all-time resolved trades
+    # Summary of all-time resolved trades (only entry positions held to settlement)
     all_trades = get_all_trades(TRADES_DB_PATH)
-    settled = [t for t in all_trades if t["settlement_outcome"] is not None]
+    settled = [
+        t for t in all_trades
+        if t["settlement_outcome"] is not None and t["settlement_outcome"] != "exited"
+    ]
+    exited = [t for t in all_trades if t["settlement_outcome"] == "exited"]
     if settled:
         total = sum(t["pnl"] for t in settled)
         w = sum(1 for t in settled if t["pnl"] > 0)
         l = sum(1 for t in settled if t["pnl"] < 0)
-        print(f"\nAll-time: {w}W / {l}L ({w/(w+l)*100:.0f}% hit rate) | Total P&L: ${total:+.2f}")
+        print(f"\nAll-time (held to settlement): {w}W / {l}L ({w/(w+l)*100:.0f}% hit rate) | Total P&L: ${total:+.2f}")
+    if exited:
+        print(f"Exited before settlement: {len(exited)} fills (P&L realized at exit)")
 
 
 if __name__ == "__main__":

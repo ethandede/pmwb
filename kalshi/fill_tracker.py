@@ -41,7 +41,12 @@ def record_fill(
     settlement_outcome: Optional[str] = None,
     pnl: Optional[float] = None,
 ):
-    """Record a fill. Updates fill data if order already exists (for resting order polling)."""
+    """Record a fill. Updates only fill data if order already exists.
+
+    On conflict (same order_id), only fill_price, fill_qty, and fill_time are
+    updated — side and city are preserved from the original insert so the
+    poller cannot overwrite the canonical values set by execute_kalshi_signal.
+    """
     conn = sqlite3.connect(db_path)
     conn.execute(
         """INSERT INTO trades
@@ -53,6 +58,31 @@ def record_fill(
                fill_time = excluded.fill_time
            WHERE excluded.fill_qty > trades.fill_qty""",
         (order_id, ticker, city, side, limit_price, fill_price, fill_qty, fill_time, settlement_outcome, pnl),
+    )
+    conn.commit()
+    conn.close()
+
+
+def update_fill_data(
+    db_path: str,
+    order_id: str,
+    fill_price: int,
+    fill_qty: int,
+    fill_time: str,
+):
+    """Update only fill data for an existing order. Does NOT insert new rows.
+
+    Used by the fill poller to update fill_price/fill_qty/fill_time without
+    touching side or city. If the order_id doesn't exist yet, this is a no-op.
+    """
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        """UPDATE trades SET
+               fill_price = ?,
+               fill_qty = ?,
+               fill_time = ?
+           WHERE order_id = ? AND ? > fill_qty""",
+        (fill_price, fill_qty, fill_time, order_id, fill_qty),
     )
     conn.commit()
     conn.close()

@@ -175,6 +175,7 @@ def run_scanner():
 
     # --- Phase 1: Score all temp markets, collect tradeable signals ---
     tradeable_temp_signals = []
+    all_displayed_temp_signals = []   # every signal with |edge| >= SHOW_THRESHOLD
 
     for market in kalshi_markets:
         title = market.get("title", "") + " " + market.get("subtitle", "")
@@ -253,6 +254,16 @@ def run_scanner():
             # Log to CSV
             log_signal(title, city_key + " (kalshi)", model_prob, yes_price, edge, direction, False, PAPER_MODE, confidence=confidence, ticker=ticker)
 
+            # Track every displayed signal for cache
+            all_displayed_temp_signals.append({
+                "market": market, "title": title, "city_key": city_key,
+                "model_prob": model_prob, "yes_price": yes_price, "edge": edge,
+                "direction": direction, "confidence": confidence,
+                "n_models": n_models, "ticker": ticker, "target_date": target_date,
+                "temp_type": temp_type, "low": low, "high": high,
+                "is_sameday": (days_ahead == 0),
+            })
+
             # Same-day markets: forecasts are near-locked, use relaxed thresholds
             is_sameday = (days_ahead == 0)
             edge_gate = SAMEDAY_EDGE_THRESHOLD if is_sameday else ALERT_THRESHOLD
@@ -308,6 +319,7 @@ def run_scanner():
 
     # --- Phase 1: Score all precip markets, collect tradeable signals ---
     tradeable_precip_signals = []
+    all_displayed_precip_signals = []  # every signal with |edge| >= SHOW_THRESHOLD
 
     for market in precip_markets:
         ticker = market.get("ticker", "")
@@ -377,6 +389,13 @@ def run_scanner():
             log_signal(title, city_key + " (kalshi)", model_prob, yes_price, edge, direction, False, PAPER_MODE, confidence=confidence, ticker=ticker)
             signals_found += 1
 
+            # Track every displayed signal for cache
+            all_displayed_precip_signals.append({
+                "market": market, "city_key": city_key, "model_prob": model_prob,
+                "yes_price": yes_price, "edge": edge, "direction": direction,
+                "confidence": confidence, "ticker": ticker, "title": title,
+            })
+
             if abs(edge) >= ALERT_THRESHOLD and confidence >= CONFIDENCE_THRESHOLD and _is_liquid(market):
                 rank_score = abs(edge) * confidence
                 tradeable_precip_signals.append({
@@ -395,11 +414,12 @@ def run_scanner():
         execute_kalshi_signal(sig["market"], sig["city_key"], sig["model_prob"], sig["yes_price"], sig["edge"], sig["direction"], confidence=sig["confidence"], existing_contracts=held_positions.get(sig["ticker"], 0))
 
     # === CACHE SCAN RESULTS ===
+    # Cache ALL displayed signals (|edge| >= SHOW_THRESHOLD), not just tradeable ones
     try:
         from dashboard.ticker_map import ticker_to_city
         init_scan_cache_db()
         cache_rows = []
-        for sig in tradeable_temp_signals:
+        for sig in all_displayed_temp_signals:
             ticker = sig["ticker"]
             low = sig["low"]
             high = sig["high"]
@@ -417,7 +437,7 @@ def run_scanner():
                 "threshold": bucket_str,
                 "days_left": 0 if sig["is_sameday"] else 1,
             })
-        for sig in tradeable_precip_signals:
+        for sig in all_displayed_precip_signals:
             ticker = sig["ticker"]
             raw_threshold = sig["market"].get("_threshold", "")
             threshold_str = str(raw_threshold) if raw_threshold != "" else ""

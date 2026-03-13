@@ -24,6 +24,7 @@ try:
 except ImportError:
     WEATHER_SERIES_LOW = {}
 from kalshi.trailing_stop import update_peak, check_trailing_stop, remove_position
+from kalshi.fill_tracker import record_fill
 from weather.multi_model import fuse_forecast
 from config import CONFIDENCE_THRESHOLD, ALERT_THRESHOLD, PAPER_MODE
 
@@ -451,6 +452,20 @@ def run_position_manager():
                 status = resp.get("order", {}).get("status", "unknown")
                 console.print(f"    [green]Sell order posted: {order_id} ({status})[/green]")
                 remove_position(ticker, side)  # Clean up trailing stop state
+
+                # Record exit fill in trades.db
+                sell_side = f"sell_{side}"  # "sell_yes" or "sell_no"
+                record_fill(
+                    db_path="data/trades.db",
+                    order_id=order_id,
+                    ticker=ticker,
+                    side=sell_side,
+                    limit_price=price,
+                    fill_price=price,
+                    fill_qty=qty,
+                    fill_time=datetime.now(timezone.utc).isoformat(),
+                    city=result.get("city", ""),
+                )
             except Exception as e:
                 console.print(f"    [red]Sell failed: {e}[/red]")
 

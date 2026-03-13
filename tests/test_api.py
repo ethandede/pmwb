@@ -43,7 +43,9 @@ def test_performance_endpoint():
     data = resp.json()
     assert "equity_curve" in data
     assert "model_accuracy" in data
+    assert "settled_daily" in data
     assert isinstance(data["equity_curve"], list)
+    assert isinstance(data["settled_daily"], list)
 
 
 def test_markets_temp_cached():
