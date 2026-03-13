@@ -47,7 +47,16 @@ def run_cycle(cycle_num: int):
         console.print(f"[red]Scanner error: {e}[/red]")
         traceback.print_exc()
 
-    # --- Phase 3: Quick balance check ---
+    # --- Phase 3: Settle resolved markets ---
+    console.print(f"\n[bold]Phase 3: Settlement[/bold]")
+    try:
+        from kalshi.settler import run_settler
+        run_settler()
+    except Exception as e:
+        console.print(f"[red]Settler error: {e}[/red]")
+        traceback.print_exc()
+
+    # --- Phase 4: Quick balance check ---
     try:
         from kalshi.trader import get_balance
         bal = get_balance()
