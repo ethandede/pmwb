@@ -1,0 +1,120 @@
+// ============================================================
+// _layout.scss — Sidebar + main content two-panel layout
+// ============================================================
+
+@use 'variables' as *;
+
+// ------------------------------------
+// Two-panel flex layout
+// ------------------------------------
+.we-layout {
+  display: flex;
+  gap: $sp-6;
+  align-items: flex-start;
+
+  @media (max-width: $bp-md) {
+    flex-direction: column;
+  }
+}
+
+// ------------------------------------
+// Sticky sidebar
+// ------------------------------------
+.we-sidebar {
+  width: 340px;
+  flex-shrink: 0;
+  position: sticky;
+  top: calc(#{$header-height} + #{$sp-4});
+  max-height: calc(100vh - #{$header-height} - #{$sp-8});
+  overflow-y: auto;
+  padding-right: $sp-2;
+
+  // Narrower scrollbar for sidebar
+  &::-webkit-scrollbar {
+    width: 4px;
+  }
+
+  // Metric rows: 2-column in sidebar
+  .metric-row {
+    grid-template-columns: repeat(2, 1fr);
+    gap: $sp-3;
+  }
+
+  // Signal summary: single column in sidebar
+  .metric-row-3 {
+    grid-template-columns: 1fr;
+    gap: $sp-3;
+  }
+
+  // Compact metric values in sidebar
+  .metric-value {
+    font-size: $font-size-lg;
+  }
+
+  .metric-card {
+    padding: $sp-3 $sp-4;
+  }
+
+  // Compact section headings
+  section > h2 {
+    font-size: 15px;
+    margin-bottom: $sp-3;
+  }
+
+  // Risk footer: remove top margin in sidebar context
+  .risk-footer {
+    margin-top: $sp-3;
+    padding: $sp-4;
+  }
+
+  @media (max-width: $bp-md) {
+    width: 100%;
+    position: static;
+    max-height: none;
+    padding-right: 0;
+
+    .metric-row {
+      grid-template-columns: repeat(4, 1fr);
+    }
+
+    .metric-row-3 {
+      grid-template-columns: repeat(3, 1fr);
+    }
+
+    .metric-value {
+      font-size: $font-size-xl;
+    }
+
+    .metric-card {
+      padding: $sp-4 $sp-5;
+    }
+  }
+
+  @media (max-width: $bp-sm) {
+    .metric-row {
+      grid-template-columns: repeat(2, 1fr);
+    }
+
+    .metric-row-3 {
+      grid-template-columns: 1fr;
+    }
+  }
+}
+
+// ------------------------------------
+// Sidebar table horizontal scroll
+// ------------------------------------
+.sidebar-table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  margin: 0 (-$sp-1);
+  padding: 0 $sp-1;
+}
+
+// ------------------------------------
+// Main content area
+// ------------------------------------
+.we-main {
+  flex: 1;
+  min-width: 0;
+}

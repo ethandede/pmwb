@@ -216,6 +216,92 @@ section > h2 {
   border: 1px solid #2a3a4e;
 }
 
+.we-layout {
+  display: flex;
+  gap: 24px;
+  align-items: flex-start;
+}
+@media (max-width: 900px) {
+  .we-layout {
+    flex-direction: column;
+  }
+}
+
+.we-sidebar {
+  width: 340px;
+  flex-shrink: 0;
+  position: sticky;
+  top: calc(60px + 16px);
+  max-height: calc(100vh - 60px - 32px);
+  overflow-y: auto;
+  padding-right: 8px;
+}
+.we-sidebar::-webkit-scrollbar {
+  width: 4px;
+}
+.we-sidebar .metric-row {
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+}
+.we-sidebar .metric-row-3 {
+  grid-template-columns: 1fr;
+  gap: 12px;
+}
+.we-sidebar .metric-value {
+  font-size: 16px;
+}
+.we-sidebar .metric-card {
+  padding: 12px 16px;
+}
+.we-sidebar section > h2 {
+  font-size: 15px;
+  margin-bottom: 12px;
+}
+.we-sidebar .risk-footer {
+  margin-top: 12px;
+  padding: 16px;
+}
+@media (max-width: 900px) {
+  .we-sidebar {
+    width: 100%;
+    position: static;
+    max-height: none;
+    padding-right: 0;
+  }
+  .we-sidebar .metric-row {
+    grid-template-columns: repeat(4, 1fr);
+  }
+  .we-sidebar .metric-row-3 {
+    grid-template-columns: repeat(3, 1fr);
+  }
+  .we-sidebar .metric-value {
+    font-size: 20px;
+  }
+  .we-sidebar .metric-card {
+    padding: 16px 20px;
+  }
+}
+@media (max-width: 600px) {
+  .we-sidebar .metric-row {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .we-sidebar .metric-row-3 {
+    grid-template-columns: 1fr;
+  }
+}
+
+.sidebar-table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  margin: 0 -4px;
+  padding: 0 4px;
+}
+
+.we-main {
+  flex: 1;
+  min-width: 0;
+}
+
 @keyframes spin {
   from {
     transform: rotate(0deg);
@@ -1163,5 +1249,3 @@ section > h2 {
 .page-footer a:hover {
   color: #45748C;
 }
-
-/*# sourceMappingURL=main.css.map */

@@ -184,12 +184,16 @@ function edgeBarChart(markets, containerId) {
         return;
     }
 
-    // Sort by edge ascending so highest positive is at top in horizontal bar
-    const sorted = [...markets].sort((a, b) => a.edge - b.edge);
+    // Sort by absolute edge ascending so largest is at top
+    const sorted = [...markets].sort((a, b) => Math.abs(a.edge) - Math.abs(b.edge));
 
-    const edges = sorted.map(m => parseFloat((m.edge * 100).toFixed(2)));
+    const edges = sorted.map(m => parseFloat((Math.abs(m.edge) * 100).toFixed(2)));
     const cities = sorted.map(m => m.city);
-    const colors = edges.map(e => e >= 0 ? '#2ecc71' : '#e74c3c');
+    // Color by direction: green = model higher than market, red = model lower
+    const colors = sorted.map(m => m.edge >= 0 ? '#2ecc71' : '#e74c3c');
+
+    const maxEdge = Math.max(...edges);
+    const xPad = Math.max(maxEdge * 0.1, 1);
 
     const trace = {
         type: 'bar',
@@ -197,7 +201,7 @@ function edgeBarChart(markets, containerId) {
         x: edges,
         y: cities,
         marker: { color: colors },
-        hovertemplate: '%{y}: %{x:+.1f}%<extra></extra>',
+        hovertemplate: '%{y}: %{x:.1f}%<extra></extra>',
     };
 
     const layout = {
@@ -205,7 +209,8 @@ function edgeBarChart(markets, containerId) {
         xaxis: {
             ...PLOTLY_LAYOUT.xaxis,
             title: { text: 'Edge (%)', font: { color: 'rgba(255,255,255,0.6)', size: 11 } },
-            tickformat: '+.1f',
+            tickformat: '.1f',
+            range: [0, maxEdge + xPad],
         },
         yaxis: {
             ...PLOTLY_LAYOUT.yaxis,
@@ -305,10 +310,11 @@ function confidenceScatter(markets, containerId, labelId) {
         return;
     }
 
-    const edges  = markets.map(m => parseFloat((m.edge * 100).toFixed(2)));
+    // Use absolute edge values — direction shown by color
+    const edges  = markets.map(m => parseFloat((Math.abs(m.edge) * 100).toFixed(2)));
     const confs  = markets.map(m => m.confidence);
     const cities = markets.map(m => m.city);
-    const colors = edges.map(e => e >= 0 ? '#2ecc71' : '#e74c3c');
+    const colors = markets.map(m => m.edge >= 0 ? '#2ecc71' : '#e74c3c');
 
     const trace = {
         type: 'scatter',
@@ -323,21 +329,20 @@ function confidenceScatter(markets, containerId, labelId) {
             size: 10,
             line: { color: 'rgba(255,255,255,0.3)', width: 1 },
         },
-        hovertemplate: '%{text}<br>Edge: %{x:+.1f}%<br>Conf: %{y}<extra></extra>',
+        hovertemplate: '%{text}<br>Edge: %{x:.1f}%<br>Conf: %{y}<extra></extra>',
     };
 
-    // Constrain x-axis to data range with padding, not Plotly's auto-range
-    const minEdge = Math.min(...edges);
+    // x-axis: 0 to max, constrained to populated range
     const maxEdge = Math.max(...edges);
-    const pad = Math.max((maxEdge - minEdge) * 0.15, 2);
+    const pad = Math.max(maxEdge * 0.15, 2);
 
     const layout = {
         ...PLOTLY_LAYOUT,
         xaxis: {
             ...PLOTLY_LAYOUT.xaxis,
             title: { text: 'Edge (%)', font: { color: 'rgba(255,255,255,0.6)', size: 11 } },
-            tickformat: '+.1f',
-            range: [minEdge - pad, maxEdge + pad],
+            tickformat: '.1f',
+            range: [0, maxEdge + pad],
         },
         yaxis: {
             ...PLOTLY_LAYOUT.yaxis,
