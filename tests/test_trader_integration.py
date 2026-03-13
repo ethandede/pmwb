@@ -29,7 +29,7 @@ def test_execute_kalshi_signal_records_fill(tmp_path):
         assert len(trades) == 1
         assert trades[0]["order_id"] == "test_ord_456"
         assert trades[0]["ticker"] == "KXHIGHNY-26MAR12-B65"
-        assert trades[0]["side"] == "yes"
+        assert trades[0]["side"] == "buy_yes"
 
 
 def test_execute_kalshi_signal_kelly_sizing():

@@ -41,9 +41,9 @@ def test_kelly_fraction_yes_bet():
         fractional=0.25, confidence=85,
         max_fraction=0.10,  # raise cap to test unclamped value
     )
-    # raw = 0.333, adjusted = 0.333 * 0.25 * (85/100) = 0.0708
+    # raw = 0.333, adjusted = 0.333 * 0.25 = 0.0833 (sigmoid controls via fractional)
     assert result["side"] == "yes"
-    assert result["fraction"] == pytest.approx(0.0708, abs=0.005)
+    assert result["fraction"] == pytest.approx(0.0833, abs=0.005)
     assert result["raw_kelly"] == pytest.approx(0.333, abs=0.01)
 
 
@@ -57,8 +57,8 @@ def test_kelly_fraction_no_bet():
     assert result["side"] == "no"
     # raw = (0.55 - 0.40) / 0.55 = 0.2727
     assert result["raw_kelly"] == pytest.approx(0.2727, abs=0.01)
-    # adjusted = 0.2727 * 0.25 * (90/100) = 0.0614
-    assert result["fraction"] == pytest.approx(0.0614, abs=0.005)
+    # adjusted = 0.2727 * 0.25 = 0.0682 (no more confidence/100 multiplier)
+    assert result["fraction"] == pytest.approx(0.0682, abs=0.005)
 
 
 def test_kelly_yes_market_at_one():

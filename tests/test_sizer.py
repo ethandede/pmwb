@@ -76,16 +76,16 @@ def test_compute_size_daily_stop_blocks():
 
 
 def test_compute_size_event_cap():
-    """Per-event 2-contract cap limits output."""
+    """Per-event contract cap limits output."""
+    from risk.sizer import MAX_CONTRACTS_PER_EVENT
     bt = BankrollTracker(initial_bankroll=10000.0)  # large bankroll
     cb = CircuitBreaker()
     result = compute_size(
         model_prob=0.80, market_prob=0.55,
         confidence=95.0, price_cents=10,  # cheap contracts
         bankroll_tracker=bt, circuit_breaker=cb,
-        event_contracts=1,  # already 1 contract on this event
+        event_contracts=MAX_CONTRACTS_PER_EVENT - 1,  # one slot left
     )
-    # Should cap at 1 more contract (max 2 per event)
     assert result.count <= 1
 
 

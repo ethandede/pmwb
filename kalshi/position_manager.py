@@ -25,7 +25,7 @@ except ImportError:
     WEATHER_SERIES_LOW = {}
 from kalshi.trailing_stop import update_peak, check_trailing_stop, remove_position
 from weather.multi_model import fuse_forecast
-from config import CONFIDENCE_THRESHOLD, PAPER_MODE
+from config import CONFIDENCE_THRESHOLD, ALERT_THRESHOLD, PAPER_MODE
 
 console = Console()
 
@@ -36,6 +36,10 @@ PROFIT_TAKE_PRICE = 0.92      # sell YES if market moved to 92¢+
 # Same-day thresholds — forecasts are locked in, act decisively
 SAMEDAY_MIN_EDGE = 0.02       # tighter: 2% edge is noise on a locked forecast
 SAMEDAY_LOSS_CUT = -0.03      # cut at -3% — it's not coming back
+
+# Fortify thresholds — add to winning positions
+FORTIFY_MIN_EDGE = ALERT_THRESHOLD  # edge must still be above entry threshold
+FORTIFY_MIN_CONFIDENCE = CONFIDENCE_THRESHOLD  # confidence must meet threshold
 
 
 # --- Ticker/series lookup ---
@@ -281,6 +285,12 @@ def evaluate_position(ticker: str, qty: float, market_data: dict) -> dict:
             result["sell_price_cents"] = max(1, int((1 - current_yes_price) * 100) - 1)
         return result
 
+    # Fortify: edge is still strong — add to the position
+    if edge >= FORTIFY_MIN_EDGE and confidence >= FORTIFY_MIN_CONFIDENCE and not is_same_day:
+        result["action"] = "fortify"
+        result["reason"] = f"FORTIFY [{time_label}] — edge {edge:+.1%}, conf {confidence}%"
+        return result
+
     result["action"] = "hold"
     result["reason"] = f"HOLD [{time_label}] — edge {edge:+.1%}, conf {confidence}%"
     return result
@@ -315,6 +325,7 @@ def run_position_manager():
     table.add_column("Reason", style="dim", max_width=35)
 
     exits = []
+    fortifies = []
     holds = 0
     skips = 0
 
@@ -351,7 +362,7 @@ def run_position_manager():
         edge_str = f"[{edge_color}]{edge_val:+.1%}[/{edge_color}]" if edge_val else "—"
 
         action = result["action"].upper()
-        action_color = "red" if action == "EXIT" else "green"
+        action_color = {"EXIT": "red", "FORTIFY": "cyan", "HOLD": "green"}.get(action, "white")
         action_str = f"[{action_color}]{action}[/{action_color}]"
 
         table.add_row(
@@ -362,40 +373,70 @@ def run_position_manager():
 
         if result["action"] == "exit":
             exits.append((ticker, result))
+        elif result["action"] == "fortify":
+            fortifies.append((ticker, result, market_data))
 
     console.print(table)
 
-    if not exits:
+    if not exits and not fortifies:
         console.print(f"\n[green]All positions healthy. {holds + len(positions) - skips} held, {skips} skipped.[/green]")
         return
 
-    # Execute exits
-    console.print(f"\n[bold yellow]Executing {len(exits)} exits...[/bold yellow]\n")
-
     mode_label = "PAPER" if PAPER_MODE else "LIVE"
-    for ticker, result in exits:
-        side = result["side"]
-        qty = result["qty"]
-        price = result.get("sell_price_cents", 1)
-        reason = result["reason"]
 
-        console.print(f"  [{mode_label}] SELL {side.upper()} {qty}x {ticker} @ {price}¢")
-        console.print(f"    Reason: {reason}")
+    # Execute exits
+    if exits:
+        console.print(f"\n[bold yellow]Executing {len(exits)} exits...[/bold yellow]\n")
 
-        if PAPER_MODE:
-            console.print(f"    [dim]PAPER MODE — no order sent[/dim]")
-            continue
+        for ticker, result in exits:
+            side = result["side"]
+            qty = result["qty"]
+            price = result.get("sell_price_cents", 1)
+            reason = result["reason"]
 
-        try:
-            resp = sell_order(ticker, side, price, qty)
-            order_id = resp.get("order", {}).get("order_id", "unknown")
-            status = resp.get("order", {}).get("status", "unknown")
-            console.print(f"    [green]Sell order posted: {order_id} ({status})[/green]")
-            remove_position(ticker, side)  # Clean up trailing stop state
-        except Exception as e:
-            console.print(f"    [red]Sell failed: {e}[/red]")
+            console.print(f"  [{mode_label}] SELL {side.upper()} {qty}x {ticker} @ {price}¢")
+            console.print(f"    Reason: {reason}")
 
-        time.sleep(0.2)
+            if PAPER_MODE:
+                console.print(f"    [dim]PAPER MODE — no order sent[/dim]")
+                continue
+
+            try:
+                resp = sell_order(ticker, side, price, qty)
+                order_id = resp.get("order", {}).get("order_id", "unknown")
+                status = resp.get("order", {}).get("status", "unknown")
+                console.print(f"    [green]Sell order posted: {order_id} ({status})[/green]")
+                remove_position(ticker, side)  # Clean up trailing stop state
+            except Exception as e:
+                console.print(f"    [red]Sell failed: {e}[/red]")
+
+            time.sleep(0.2)
+
+    # Execute fortifications — add to winning positions
+    if fortifies:
+        from kalshi.trader import execute_kalshi_signal
+
+        console.print(f"\n[bold cyan]Fortifying {len(fortifies)} positions...[/bold cyan]\n")
+
+        for ticker, result, market_data in fortifies:
+            city = result.get("city", "?")
+            model_prob = result.get("model_prob", 0)
+            current_price = result.get("current_price", 0)
+            edge = result.get("edge", 0)
+            confidence = result.get("confidence", 0)
+            existing_qty = result.get("qty", 0)
+            side = result["side"]
+            direction = "BUY YES" if side == "yes" else "BUY NO"
+
+            console.print(f"  [{mode_label}] FORTIFY {side.upper()} {ticker} (have {existing_qty}) — edge {edge:+.1%}, conf {confidence}%")
+
+            execute_kalshi_signal(
+                market_data, city, model_prob, current_price, edge,
+                direction, confidence=confidence,
+                existing_contracts=existing_qty,
+            )
+
+            time.sleep(0.2)
 
     console.print(f"\n[bold]Done. {len(exits)} exits attempted, {len(positions) - len(exits) - skips} held.[/bold]")
 

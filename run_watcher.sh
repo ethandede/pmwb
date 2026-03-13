@@ -1,4 +1,4 @@
 #!/bin/bash
 cd ~/Projects/polymarket-weather-bot
 source .venv/bin/activate
-PAPER_MODE=false python main.py >> logs/cron.log 2>&1
+python -m kalshi.price_watcher

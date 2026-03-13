@@ -28,11 +28,11 @@ def kelly_no(model_prob: float, market_prob: float) -> float:
 def kelly_fraction(
     model_prob: float,
     market_prob: float,
-    fractional: float = 0.25,
+    fractional: float = 0.25,   # this is now the sigmoid output
     confidence: float = 100.0,
     max_fraction: float = 0.03,
 ) -> dict:
-    """Compute confidence-adjusted fractional Kelly.
+    """Compute fractional Kelly sized by the sigmoid multiplier.
 
     Returns dict with:
         side: "yes", "no", or None (no trade)
@@ -51,14 +51,11 @@ def kelly_fraction(
     else:
         return {"side": None, "fraction": 0.0, "raw_kelly": 0.0}
 
-    # Confidence-adjusted fractional Kelly:
-    # adjusted_f = f_kelly * fractional * (confidence / 100)
-    adjusted = raw * fractional * (confidence / 100.0)
-
-    # Clamp to max_fraction
+    # No more (confidence / 100) multiplier — sigmoid already handled it
+    adjusted = raw * fractional
     adjusted = min(adjusted, max_fraction)
 
-    if adjusted < 0.001:  # less than 0.1% of bankroll -> skip
+    if adjusted < 0.001:
         return {"side": None, "fraction": 0.0, "raw_kelly": raw}
 
     return {

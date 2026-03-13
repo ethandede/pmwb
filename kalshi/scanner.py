@@ -13,17 +13,27 @@ WEATHER_SERIES = {
     "KXHIGHCHI": {"city": "chicago", "lat": 41.9742, "lon": -87.9073, "unit": "f"},
     "KXHIGHMIA": {"city": "miami", "lat": 25.7617, "lon": -80.1918, "unit": "f"},
     "KXHIGHAUS": {"city": "austin", "lat": 30.2672, "lon": -97.7431, "unit": "f"},
+    "KXHIGHLAX": {"city": "los_angeles", "lat": 33.9425, "lon": -118.4081, "unit": "f"},
+    "KXHIGHTSEA": {"city": "seattle", "lat": 47.4502, "lon": -122.3088, "unit": "f"},
+    "KXHIGHTHOU": {"city": "houston", "lat": 29.9902, "lon": -95.3368, "unit": "f"},
+    "KXHIGHTSFO": {"city": "san_francisco", "lat": 37.6213, "lon": -122.3790, "unit": "f"},
+    "KXHIGHTATL": {"city": "atlanta", "lat": 33.6407, "lon": -84.4277, "unit": "f"},
+    "KXHIGHTDC": {"city": "washington_dc", "lat": 38.8512, "lon": -77.0402, "unit": "f"},
+    "KXHIGHTBOS": {"city": "boston", "lat": 42.3656, "lon": -71.0096, "unit": "f"},
+    "KXHIGHTPHX": {"city": "phoenix", "lat": 33.4373, "lon": -112.0078, "unit": "f"},
+    "KXHIGHTSATX": {"city": "san_antonio", "lat": 29.5312, "lon": -98.4690, "unit": "f"},
+    "KXHIGHTLV": {"city": "las_vegas", "lat": 36.0840, "lon": -115.1537, "unit": "f"},
 }
 
 # Precipitation series — monthly cumulative + daily binary
 PRECIP_SERIES = {
-    "kxrainnycm": {"city": "nyc", "lat": 40.7931, "lon": -73.8720, "unit": "in"},
-    "kxrainchim": {"city": "chicago", "lat": 41.9742, "lon": -87.9073, "unit": "in"},
-    "kxrainlaxm": {"city": "los_angeles", "lat": 33.9425, "lon": -118.4081, "unit": "in"},
-    "kxrainseam": {"city": "seattle", "lat": 47.4502, "lon": -122.3088, "unit": "in"},
-    "kxrainmiam": {"city": "miami", "lat": 25.7617, "lon": -80.1918, "unit": "in"},
-    "kxrainhoum": {"city": "houston", "lat": 29.9902, "lon": -95.3368, "unit": "in"},
-    "kxrainsfom": {"city": "san_francisco", "lat": 37.6213, "lon": -122.3790, "unit": "in"},
+    "KXRAINNYCM": {"city": "nyc", "lat": 40.7931, "lon": -73.8720, "unit": "in"},
+    "KXRAINCHIM": {"city": "chicago", "lat": 41.9742, "lon": -87.9073, "unit": "in"},
+    "KXRAINLAXM": {"city": "los_angeles", "lat": 33.9425, "lon": -118.4081, "unit": "in"},
+    "KXRAINSEAM": {"city": "seattle", "lat": 47.4502, "lon": -122.3088, "unit": "in"},
+    "KXRAINMIAM": {"city": "miami", "lat": 25.7617, "lon": -80.1918, "unit": "in"},
+    "KXRAINHOUM": {"city": "houston", "lat": 29.9902, "lon": -95.3368, "unit": "in"},
+    "KXRAINSFOM": {"city": "san_francisco", "lat": 37.6213, "lon": -122.3790, "unit": "in"},
 }
 
 
@@ -31,7 +41,9 @@ def get_kalshi_weather_markets() -> List[Dict]:
     """Fetch active weather markets from Kalshi public API."""
     all_markets = []
 
-    for series_ticker, info in WEATHER_SERIES.items():
+    for i, (series_ticker, info) in enumerate(WEATHER_SERIES.items()):
+        if i > 0:
+            time.sleep(0.15)
         try:
             url = f"{KALSHI_BASE}/events"
             params = {
@@ -94,6 +106,31 @@ def get_kalshi_precip_markets() -> List[Dict]:
             print(f"Kalshi API error for {series_ticker}: {e}")
 
     return all_markets
+
+
+def get_kalshi_price(market: dict) -> Optional[float]:
+    """Extract yes price from a Kalshi market dict.
+
+    Kalshi returns prices in two formats:
+      - yes_ask / last_price: integer cents (often None)
+      - yes_ask_dollars / last_price_dollars: string dollars like "0.0700"
+
+    Returns price as a float in [0, 1] or None if unavailable.
+    """
+    # Try cents format first
+    cents = market.get("yes_ask") or market.get("last_price")
+    if cents is not None:
+        return cents / 100.0
+
+    # Try dollar-string format
+    dollars = market.get("yes_ask_dollars") or market.get("last_price_dollars")
+    if dollars is not None:
+        try:
+            return float(dollars)
+        except (ValueError, TypeError):
+            return None
+
+    return None
 
 
 def parse_kalshi_bucket(market: dict) -> Optional[Tuple[float, float | None]]:

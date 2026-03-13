@@ -41,12 +41,17 @@ def record_fill(
     settlement_outcome: Optional[str] = None,
     pnl: Optional[float] = None,
 ):
-    """Record a fill. Deduplicates on order_id (INSERT OR IGNORE)."""
+    """Record a fill. Updates fill data if order already exists (for resting order polling)."""
     conn = sqlite3.connect(db_path)
     conn.execute(
-        """INSERT OR IGNORE INTO trades
+        """INSERT INTO trades
            (order_id, ticker, city, side, limit_price, fill_price, fill_qty, fill_time, settlement_outcome, pnl)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(order_id) DO UPDATE SET
+               fill_price = excluded.fill_price,
+               fill_qty = excluded.fill_qty,
+               fill_time = excluded.fill_time
+           WHERE excluded.fill_qty > trades.fill_qty""",
         (order_id, ticker, city, side, limit_price, fill_price, fill_qty, fill_time, settlement_outcome, pnl),
     )
     conn.commit()

@@ -22,6 +22,29 @@ from weather.precip_model import gamma_precip_prob
 from config import BIAS_DB_PATH, FUSION_WEIGHTS, PRECIP_FUSION_WEIGHTS
 
 
+def _calculate_confidence(agreement: float, spread: float, bias_available: float,
+                          csgd_success: float, nws_available: float) -> int:
+    """Continuous weighted confidence score — feeds directly into sigmoid Kelly.
+
+    Each input is a 0-1 signal. Weighted sum maps to [55, 100].
+    Floor at 55 (the trading gate) ensures only the sigmoid range varies.
+
+    Weights:
+        agreement (35):     model agreement — strongest signal
+        spread (30):        tight ensemble spread — forecast certainty
+        bias_available (20): historical bias corrections active
+        csgd_success (10):  CSGD/gamma fit quality
+        nws_available (5):  independent NWS confirmation
+    """
+    score = 0.0
+    score += 35 * agreement
+    score += 30 * (1 - spread) if spread < 1 else 0  # invert: spread_norm already inverted for temp
+    # For the caller: spread_norm = 1.0 - raw_spread/12, so 1-spread_norm = raw/12
+    # But we receive the ALREADY-INVERTED value (1=tight, 0=wide), so use directly:
+    score = 35 * agreement + 30 * spread + 20 * bias_available + 10 * csgd_success + 5 * nws_available
+    return int(min(100, max(55, score)))
+
+
 # ---------------------------------------------------------------------------
 # SQLite bias table
 # ---------------------------------------------------------------------------
@@ -299,10 +322,12 @@ def fuse_forecast(
     details["fused_prob"] = fused_prob
     details["models_used"] = len(active)
 
-    # --- Confidence score (0–100) ---
-    confidence = 0
+    # --- Confidence score (0–100) — continuous weighted scoring ---
+    # Each component produces a 0-1 signal; weighted sum maps to [55, 100].
+    # This feeds directly into the sigmoid Kelly curve, so smooth gradations
+    # matter more than stepped thresholds.
 
-    # +30 if all 3 models agree within 2°F
+    # Component 1: Model agreement (0-1) — how close are point forecasts?
     point_temps = []
     if ensemble_temps:
         point_temps.append(sum(ensemble_temps) / len(ensemble_temps))
@@ -312,32 +337,28 @@ def fuse_forecast(
         point_temps.append(hrrr_temp)
     if len(point_temps) >= 2:
         temp_range = max(point_temps) - min(point_temps)
-        if temp_range <= 2.0:
-            confidence += 30
-        elif temp_range <= 4.0:
-            confidence += 15
+        # 0°F range → 1.0, 10°F range → 0.0, linear
+        agreement = max(0.0, min(1.0, 1.0 - temp_range / 10.0))
+    else:
+        agreement = 0.5  # single model, neutral
 
-    # +25 if ensemble spread < 3°F
-    if ensemble_spread < 3.0:
-        confidence += 25
-    elif ensemble_spread < 5.0:
-        confidence += 12
+    # Component 2: Ensemble spread (0-1) — tighter = more confident
+    # 0°F spread → 1.0, 12°F spread → 0.0, linear
+    spread_norm = max(0.0, min(1.0, 1.0 - ensemble_spread / 12.0))
 
-    # +20 if bias correction applied with decent sample size
-    if any(get_bias(city, month, m)[1] >= 30 for m in ["ensemble", "noaa", "hrrr"]):
-        confidence += 20
-    elif any(get_bias(city, month, m)[1] >= 10 for m in ["ensemble", "noaa", "hrrr"]):
-        confidence += 10
+    # Component 3: Bias data available (0-1)
+    bias_counts = [get_bias(city, month, m)[1] for m in ["ensemble", "noaa", "hrrr"]]
+    best_bias_n = max(bias_counts) if bias_counts else 0
+    # 0 samples → 0, 10 → 0.5, 30+ → 1.0
+    bias_available = min(1.0, best_bias_n / 30.0)
 
-    # +15 if nowcast (HRRR) is available
-    if hrrr_prob is not None:
-        confidence += 15
+    # Component 4: CSGD/model fit quality — always 1.0 for temp (ensemble is primary)
+    csgd_success = 1.0
 
-    # +10 if NOAA is available (independent confirmation)
-    if noaa_prob is not None:
-        confidence += 10
+    # Component 5: NWS data available (0 or 1)
+    nws_available = 1.0 if noaa_prob is not None else 0.0
 
-    confidence = min(100, confidence)
+    confidence = _calculate_confidence(agreement, spread_norm, bias_available, csgd_success, nws_available)
     details["confidence"] = confidence
 
     return fused_prob, confidence, details
@@ -414,37 +435,32 @@ def fuse_precip_forecast(
     details["fused_prob"] = fused_prob
     details["models_used"] = len(active)
 
-    # --- Confidence scoring (0-100, adapted for precip) ---
-    confidence = 0
+    # --- Confidence scoring (0-100) — continuous weighted, same as temp ---
 
-    # +30 if ensemble and NWS agree
-    if (ensemble_prob > 0.5 and noaa_prob > 0.5) or (ensemble_prob < 0.5 and noaa_prob < 0.5):
-        confidence += 30
-    elif abs(ensemble_prob - noaa_prob) < 0.15:
-        confidence += 15
-
-    # +25 if ensemble has strong agreement
-    fa = csgd_result.fraction_above
-    if fa > 0.85 or fa < 0.15:
-        confidence += 25
-    elif fa > 0.75 or fa < 0.25:
-        confidence += 12
-
-    # +20 if bias data available
-    if any(get_bias(city, month, m)[1] >= 30 for m in ["ensemble_precip", "noaa_precip"]):
-        confidence += 20
-    elif any(get_bias(city, month, m)[1] >= 10 for m in ["ensemble_precip", "noaa_precip"]):
-        confidence += 10
-
-    # +15 if CSGD fit succeeded (not fallback)
-    if csgd_result.method == "csgd":
-        confidence += 15
-
-    # +10 if NWS data available
+    # Component 1: Model agreement (0-1) — ensemble vs NWS probability agreement
     if noaa_prob is not None:
-        confidence += 10
+        prob_diff = abs(ensemble_prob - noaa_prob)
+        agreement = max(0.0, min(1.0, 1.0 - prob_diff / 0.5))
+    else:
+        agreement = 0.5
 
-    confidence = min(100, confidence)
+    # Component 2: Ensemble consensus (0-1) — how decisive is the ensemble?
+    fa = csgd_result.fraction_above
+    # fa near 0 or 1 = strong consensus; fa near 0.5 = uncertain
+    spread_norm = 2.0 * abs(fa - 0.5)  # 0=split, 1=unanimous
+
+    # Component 3: Bias data available (0-1)
+    bias_counts = [get_bias(city, month, m)[1] for m in ["ensemble_precip", "noaa_precip"]]
+    best_bias_n = max(bias_counts) if bias_counts else 0
+    bias_available = min(1.0, best_bias_n / 30.0)
+
+    # Component 4: CSGD fit quality (0 or 1)
+    csgd_success = 1.0 if csgd_result.method == "csgd" else 0.0
+
+    # Component 5: NWS data available (0 or 1)
+    nws_available = 1.0 if noaa_prob is not None else 0.0
+
+    confidence = _calculate_confidence(agreement, spread_norm, bias_available, csgd_success, nws_available)
     details["confidence"] = confidence
 
     return fused_prob, confidence, details

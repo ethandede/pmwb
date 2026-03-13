@@ -9,14 +9,22 @@ from polymarket.gamma import get_active_weather_markets, parse_bucket
 from alerts.telegram_alert import send_signal_alert
 from logging_utils import log_signal
 from trading.trader import execute_signal
-from kalshi.scanner import get_kalshi_weather_markets, parse_kalshi_bucket, get_kalshi_precip_markets
+from kalshi.scanner import get_kalshi_weather_markets, parse_kalshi_bucket, get_kalshi_precip_markets, get_kalshi_price
 from kalshi.trader import execute_kalshi_signal, reset_scan_budget
 from weather.forecast_logger import log_forecast, parse_ticker_date
 from weather.multi_model import fuse_precip_forecast
 from weather.forecast import calculate_remaining_month_days
-from config import MAX_ENSEMBLE_HORIZON_DAYS
+from config import MAX_ENSEMBLE_HORIZON_DAYS, MIN_VOLUME_24H, MIN_OPEN_INTEREST
+from config import SAMEDAY_EDGE_THRESHOLD, SAMEDAY_CONFIDENCE_THRESHOLD, SAMEDAY_KELLY_FLOOR
 
 console = Console()
+
+
+def _is_liquid(market: dict) -> bool:
+    """Check if a market has sufficient liquidity to trade."""
+    volume = float(market.get("volume_24h_fp", "0") or "0")
+    oi = float(market.get("open_interest_fp", "0") or "0")
+    return volume > MIN_VOLUME_24H or oi > MIN_OPEN_INTEREST
 
 
 def _buckets_overlap(lo1, hi1, lo2, hi2) -> bool:
@@ -30,9 +38,28 @@ def _buckets_overlap(lo1, hi1, lo2, hi2) -> bool:
     return a_lo < b_hi + 2 and b_lo < a_hi + 2
 
 
+def _get_existing_positions() -> dict[str, int]:
+    """Fetch open positions and return {ticker: abs_qty} for deduplication."""
+    try:
+        from kalshi.trader import get_positions
+        positions = get_positions()
+        return {
+            p.get("ticker", ""): int(abs(float(p.get("position_fp", "0"))))
+            for p in positions
+            if float(p.get("position_fp", "0")) != 0
+        }
+    except Exception:
+        return {}
+
+
 def run_scanner():
     console.print("[bold cyan]Weather Edge Scanner — Bidirectional Signals[/bold cyan]\n")
     reset_scan_budget()
+
+    # Fetch existing positions once for deduplication
+    held_positions = _get_existing_positions()
+    if held_positions:
+        console.print(f"[dim]Existing positions: {len(held_positions)} tickers[/dim]")
 
     console.print("Fetching weather markets from Gamma API...")
     markets = get_active_weather_markets()
@@ -145,15 +172,17 @@ def run_scanner():
     # Track positions per city/date to avoid correlated bets
     city_date_positions = {}  # (city, date, temp_type) -> list of (side, bucket)
 
+    # --- Phase 1: Score all temp markets, collect tradeable signals ---
+    tradeable_temp_signals = []
+
     for market in kalshi_markets:
         title = market.get("title", "") + " " + market.get("subtitle", "")
         city_key = market["_city"]
         unit = market["_unit"]
 
-        yes_ask = market.get("yes_ask")
-        if yes_ask is None:
+        yes_price = get_kalshi_price(market)
+        if yes_price is None:
             continue
-        yes_price = yes_ask / 100.0  # Kalshi prices are in cents
 
         bucket = parse_kalshi_bucket(market)
         if not bucket:
@@ -222,35 +251,61 @@ def run_scanner():
             # Log to CSV
             log_signal(title, city_key + " (kalshi)", model_prob, yes_price, edge, direction, False, PAPER_MODE, confidence=confidence, ticker=ticker)
 
-            # Only trade when confidence meets threshold
-            if abs(edge) >= ALERT_THRESHOLD and confidence >= CONFIDENCE_THRESHOLD:
-                # Anti-correlation: don't bet YES and NO on overlapping buckets
-                pos_key = (city_key, target_date or "unknown", temp_type)
-                side = "yes" if edge > 0 else "no"
-                existing = city_date_positions.get(pos_key, [])
+            # Same-day markets: forecasts are near-locked, use relaxed thresholds
+            is_sameday = (days_ahead == 0)
+            edge_gate = SAMEDAY_EDGE_THRESHOLD if is_sameday else ALERT_THRESHOLD
+            conf_gate = SAMEDAY_CONFIDENCE_THRESHOLD if is_sameday else CONFIDENCE_THRESHOLD
+            kelly_floor = SAMEDAY_KELLY_FLOOR if is_sameday else None
 
-                # Only skip if opposite side on an overlapping/adjacent bucket
-                skip = False
-                for prev_side, prev_bucket in existing:
-                    if prev_side != side:
-                        p_lo, p_hi = prev_bucket
-                        # Check for overlap between buckets
-                        if _buckets_overlap(low, high, p_lo, p_hi):
-                            skip = True
-                            console.print(f"[dim]  Skipping {ticker} — conflicts with existing {prev_side.upper()} on {city_key}[/dim]")
-                            break
+            # Collect tradeable signals for priority sorting
+            if abs(edge) >= edge_gate and confidence >= conf_gate and _is_liquid(market):
+                # Rank by |edge| * confidence — best signals trade first
+                rank_score = abs(edge) * confidence
+                tradeable_temp_signals.append({
+                    "market": market, "title": title, "city_key": city_key,
+                    "model_prob": model_prob, "yes_price": yes_price, "edge": edge,
+                    "direction": direction, "confidence": confidence,
+                    "n_models": n_models, "ticker": ticker, "target_date": target_date,
+                    "temp_type": temp_type, "low": low, "high": high,
+                    "is_sameday": is_sameday, "kelly_floor": kelly_floor,
+                    "rank_score": rank_score,
+                })
 
-                if not skip:
-                    city_date_positions.setdefault(pos_key, []).append((side, (low, high)))
-                    send_signal_alert(
-                        title, city_key + " (Kalshi)", model_prob, yes_price, edge,
-                        f"{direction} (Conf {confidence}%, {n_models} models)"
-                    )
-                    execute_kalshi_signal(market, city_key, model_prob, yes_price, edge, direction, confidence)
+    # --- Phase 2: Execute temp signals in priority order (strongest first) ---
+    tradeable_temp_signals.sort(key=lambda s: s["rank_score"], reverse=True)
+    if tradeable_temp_signals:
+        console.print(f"\n[bold]Executing {len(tradeable_temp_signals)} temp signals (sorted by strength)[/bold]")
+
+    for sig in tradeable_temp_signals:
+        pos_key = (sig["city_key"], sig["target_date"] or "unknown", sig["temp_type"])
+        side = "yes" if sig["edge"] > 0 else "no"
+        existing = city_date_positions.get(pos_key, [])
+
+        # Only skip if opposite side on an overlapping/adjacent bucket
+        skip = False
+        for prev_side, prev_bucket in existing:
+            if prev_side != side:
+                p_lo, p_hi = prev_bucket
+                if _buckets_overlap(sig["low"], sig["high"], p_lo, p_hi):
+                    skip = True
+                    console.print(f"[dim]  Skipping {sig['ticker']} — conflicts with existing {prev_side.upper()} on {sig['city_key']}[/dim]")
+                    break
+
+        if not skip:
+            city_date_positions.setdefault(pos_key, []).append((side, (sig["low"], sig["high"])))
+            tag = "SAMEDAY " if sig["is_sameday"] else ""
+            send_signal_alert(
+                sig["title"], sig["city_key"] + " (Kalshi)", sig["model_prob"], sig["yes_price"], sig["edge"],
+                f"{tag}{sig['direction']} (Conf {sig['confidence']}%, {sig['n_models']} models)"
+            )
+            execute_kalshi_signal(sig["market"], sig["city_key"], sig["model_prob"], sig["yes_price"], sig["edge"], sig["direction"], sig["confidence"], existing_contracts=held_positions.get(sig["ticker"], 0), kelly_floor=sig["kelly_floor"])
 
     # --- Kalshi Precipitation Markets ---
     precip_markets = get_kalshi_precip_markets()
     console.print(f"\n  Found {len(precip_markets)} precip markets")
+
+    # --- Phase 1: Score all precip markets, collect tradeable signals ---
+    tradeable_precip_signals = []
 
     for market in precip_markets:
         ticker = market.get("ticker", "")
@@ -258,23 +313,50 @@ def run_scanner():
         city_key = market.get("_city", "unknown")
         threshold = market.get("_threshold", 0.0)
 
-        yes_ask = market.get("yes_ask")
-        if yes_ask is None:
+        yes_price = get_kalshi_price(market)
+        if yes_price is None:
             continue
-        yes_price = yes_ask / 100.0  # Kalshi prices are in cents
 
-        # Monthly contracts: check horizon limit
+        # Monthly contracts: cap forecast window at ensemble horizon
         remaining_days = calculate_remaining_month_days()
-        if remaining_days > MAX_ENSEMBLE_HORIZON_DAYS:
-            continue  # Skip — beyond ensemble forecast horizon
+        forecast_days = min(remaining_days, MAX_ENSEMBLE_HORIZON_DAYS)
+        if forecast_days <= 0:
+            continue
+
+        blind_days = remaining_days - forecast_days
 
         month = datetime.now(timezone.utc).month
 
         try:
             model_prob, confidence, details = fuse_precip_forecast(
                 market["_lat"], market["_lon"], city_key, month,
-                threshold=threshold, forecast_days=remaining_days,
+                threshold=threshold, forecast_days=forecast_days,
             )
+            # Adjust probability for blind days using climatological base rates
+            if blind_days > 0:
+                from weather.climate import estimate_blind_day_precip
+                blind_expected, blind_std = estimate_blind_day_precip(
+                    city_key, month, market["_lat"], market["_lon"], blind_days,
+                )
+                # Shift the effective threshold down by expected blind-day precip
+                # If threshold=3" and blind days expect 0.45", model only needs to
+                # see 2.55" in the forecast window to hit 3" total
+                adjusted_threshold = max(0.0, threshold - blind_expected)
+                if adjusted_threshold != threshold:
+                    # Re-run fusion with adjusted threshold
+                    model_prob_adj, _, _ = fuse_precip_forecast(
+                        market["_lat"], market["_lon"], city_key, month,
+                        threshold=adjusted_threshold, forecast_days=forecast_days,
+                    )
+                    # Blend: weight toward adjusted prob, but discount by uncertainty
+                    # More blind days = more uncertainty = lower confidence
+                    coverage = forecast_days / max(remaining_days, 1)
+                    model_prob = model_prob_adj
+                    confidence = int(confidence * coverage)
+                    details["blind_days"] = blind_days
+                    details["blind_expected_inches"] = round(blind_expected, 2)
+                    details["adjusted_threshold"] = round(adjusted_threshold, 2)
+                    details["coverage"] = round(coverage, 2)
         except Exception as e:
             console.print(f"[red]Precip fusion error for {city_key}: {e}[/red]")
             continue
@@ -292,8 +374,26 @@ def run_scanner():
             log_signal(title, city_key + " (kalshi)", model_prob, yes_price, edge, direction, False, PAPER_MODE, confidence=confidence, ticker=ticker)
             signals_found += 1
 
-            if abs(edge) >= ALERT_THRESHOLD and confidence >= CONFIDENCE_THRESHOLD:
-                execute_kalshi_signal(market, city_key, model_prob, yes_price, edge, direction, confidence=confidence)
+            if abs(edge) >= ALERT_THRESHOLD and confidence >= CONFIDENCE_THRESHOLD and _is_liquid(market):
+                rank_score = abs(edge) * confidence
+                tradeable_precip_signals.append({
+                    "market": market, "city_key": city_key, "model_prob": model_prob,
+                    "yes_price": yes_price, "edge": edge, "direction": direction,
+                    "confidence": confidence, "ticker": ticker, "title": title,
+                    "rank_score": rank_score,
+                })
+
+    # --- Phase 2: Execute precip signals in priority order ---
+    tradeable_precip_signals.sort(key=lambda s: s["rank_score"], reverse=True)
+    if tradeable_precip_signals:
+        console.print(f"\n[bold]Executing {len(tradeable_precip_signals)} precip signals (sorted by strength)[/bold]")
+
+    for sig in tradeable_precip_signals:
+        execute_kalshi_signal(sig["market"], sig["city_key"], sig["model_prob"], sig["yes_price"], sig["edge"], sig["direction"], confidence=sig["confidence"], existing_contracts=held_positions.get(sig["ticker"], 0))
+
+    # === RESTING ORDER FILL POLLER ===
+    from kalshi.trader import poll_and_update_fills
+    poll_and_update_fills()
 
     if signals_found:
         console.print(table)

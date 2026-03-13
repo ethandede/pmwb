@@ -123,7 +123,26 @@ _scan_spent = 0.0  # tracks dollars spent in current scan cycle
 from risk.bankroll import BankrollTracker
 from risk.circuit_breaker import CircuitBreaker
 
-_bankroll_tracker = BankrollTracker(initial_bankroll=500.0)
+
+def _init_bankroll() -> BankrollTracker:
+    """Initialize bankroll from Kalshi API, fall back to conservative default."""
+    try:
+        bal = get_balance()
+        cash = bal.get("balance", 0) / 100.0
+        portfolio = bal.get("portfolio_value", 0) / 100.0
+        bt = BankrollTracker(initial_bankroll=cash + portfolio)
+        bt.update_from_api(
+            balance_cents=bal.get("balance", 0),
+            portfolio_value_cents=bal.get("portfolio_value", 0),
+        )
+        print(f"  Bankroll synced: ${cash + portfolio:.2f} (cash ${cash:.2f} + positions ${portfolio:.2f})")
+        return bt
+    except Exception as e:
+        print(f"  Bankroll API unavailable ({e}), using $500 default")
+        return BankrollTracker(initial_bankroll=500.0)
+
+
+_bankroll_tracker = _init_bankroll()
 _circuit_breaker = CircuitBreaker()
 
 
@@ -131,19 +150,25 @@ def reset_scan_budget():
     """Reset per-scan spending tracker. Call at start of each scan."""
     global _scan_spent
     _scan_spent = 0.0
-    # Try to refresh bankroll from API (non-fatal if offline)
+    # Refresh bankroll from API (non-fatal if offline)
     try:
         bal = get_balance()
         _bankroll_tracker.update_from_api(
             balance_cents=bal.get("balance", 0),
             portfolio_value_cents=bal.get("portfolio_value", 0),
         )
-    except Exception:
-        pass  # Use last known or initial bankroll
+    except Exception as e:
+        print(f"  Bankroll sync failed: {e} — using last known value")
 
 
-def execute_kalshi_signal(market: dict, city: str, model_prob: float, market_prob: float, edge: float, direction: str, confidence: float = 0):
-    """Execute a trade on Kalshi based on a signal."""
+def execute_kalshi_signal(market: dict, city: str, model_prob: float, market_prob: float, edge: float, direction: str, confidence: float = 0, existing_contracts: int = 0, kelly_floor: float | None = None):
+    """Execute a trade on Kalshi based on a signal.
+
+    Args:
+        existing_contracts: number of contracts we already hold on this ticker.
+            Used to enforce per-event caps and prevent stacking.
+        kelly_floor: override the base Kelly multiplier (e.g. 0.35 for same-day).
+    """
     global _scan_spent
     from config import PAPER_MODE, FRACTIONAL_KELLY
     from alerts.telegram_alert import send_signal_alert
@@ -164,7 +189,10 @@ def execute_kalshi_signal(market: dict, city: str, model_prob: float, market_pro
         price_cents = int((1 - market_prob + abs(edge) * 0.3) * 100)
     price_cents = max(1, min(99, price_cents))
 
-    # Kelly-based position sizing
+    # Same-day markets use a higher Kelly floor
+    effective_kelly = kelly_floor if kelly_floor is not None else FRACTIONAL_KELLY
+
+    # Kelly-based position sizing (existing_contracts enforces per-event cap)
     size_result = compute_size(
         model_prob=model_prob,
         market_prob=market_prob,
@@ -173,7 +201,8 @@ def execute_kalshi_signal(market: dict, city: str, model_prob: float, market_pro
         bankroll_tracker=_bankroll_tracker,
         circuit_breaker=_circuit_breaker,
         scan_spent=_scan_spent,
-        fractional_kelly=FRACTIONAL_KELLY,
+        fractional_kelly=effective_kelly,
+        event_contracts=existing_contracts,
     )
 
     if size_result.count == 0:
@@ -182,6 +211,13 @@ def execute_kalshi_signal(market: dict, city: str, model_prob: float, market_pro
 
     count = size_result.count
     order_cost = size_result.dollar_amount
+
+    # Fee-adjusted edge filter — skip if expected profit after fees is negative
+    fee_estimate = 0.035 + (count * 0.01)
+    expected_profit = (abs(edge) * count * 1.00) - fee_estimate
+    if expected_profit < 0.12:
+        print(f"\n  SKIP {ticker} — fee-adjusted profit ${expected_profit:.2f} < $0.12 (fee ~${fee_estimate:.2f})")
+        return
 
     mode_label = "PAPER" if PAPER_MODE else "LIVE"
     print(f"\n  [{mode_label}] {side.upper()} {count} contracts @ {price_cents}¢ (${order_cost:.2f})")
@@ -195,29 +231,110 @@ def execute_kalshi_signal(market: dict, city: str, model_prob: float, market_pro
 
     try:
         resp = place_order(ticker, side, price_cents, count)
-        order_id = resp.get("order", {}).get("order_id", "unknown")
-        status = resp.get("order", {}).get("status", "unknown")
-        _scan_spent += order_cost
-        _bankroll_tracker.record_daily_pnl(-order_cost)  # Track spend for daily stop
+        order = resp.get("order", {})
+        order_id = order.get("order_id", "unknown")
+        status = order.get("status", "unknown")
         print(f"  Order posted! ID: {order_id} Status: {status}")
 
-        # Persist fill for backtesting
-        init_trades_db(TRADES_DB_PATH)
-        record_fill(
-            db_path=TRADES_DB_PATH,
-            order_id=order_id,
-            ticker=ticker,
-            side=side,
-            limit_price=price_cents,
-            fill_price=price_cents,
-            fill_qty=count,
-            fill_time=datetime.now(timezone.utc).isoformat(),
-            city=city,
-        )
+        # Verify actual fill from response
+        fill_qty = int(float(order.get("fill_count_fp", "0") or "0"))
+        remaining = int(float(order.get("remaining_count_fp", "0") or "0"))
+
+        if fill_qty > 0:
+            # Use actual fill cost if available, else estimate
+            taker_cost = float(order.get("taker_fill_cost_dollars", "0") or "0")
+            maker_cost = float(order.get("maker_fill_cost_dollars", "0") or "0")
+            actual_cost = taker_cost + maker_cost if (taker_cost + maker_cost) > 0 else fill_qty * price_cents / 100.0
+            actual_price_cents = int(actual_cost / fill_qty * 100) if fill_qty > 0 else price_cents
+
+            _scan_spent += actual_cost
+            _bankroll_tracker.record_daily_pnl(-actual_cost)
+            print(f"  Filled: {fill_qty}/{count} @ ~{actual_price_cents}¢ (${actual_cost:.2f})")
+
+            init_trades_db(TRADES_DB_PATH)
+            record_fill(
+                db_path=TRADES_DB_PATH,
+                order_id=order_id,
+                ticker=ticker,
+                side=f"buy_{side}",
+                limit_price=price_cents,
+                fill_price=actual_price_cents,
+                fill_qty=fill_qty,
+                fill_time=datetime.now(timezone.utc).isoformat(),
+                city=city,
+            )
+        else:
+            # Resting — no fill yet, track limit price estimate
+            _scan_spent += order_cost
+            _bankroll_tracker.record_daily_pnl(-order_cost)
+            print(f"  Resting: 0/{count} filled — limit order at {price_cents}¢")
+
+            init_trades_db(TRADES_DB_PATH)
+            record_fill(
+                db_path=TRADES_DB_PATH,
+                order_id=order_id,
+                ticker=ticker,
+                side=f"buy_{side}",
+                limit_price=price_cents,
+                fill_price=0,
+                fill_qty=0,
+                fill_time=datetime.now(timezone.utc).isoformat(),
+                city=city,
+            )
+
+        if remaining > 0:
+            print(f"  Partial fill: {remaining} contracts still resting")
 
         send_signal_alert(
             market.get("title", ticker), city + " (Kalshi)", model_prob, market_prob, edge,
-            f"{direction} (LIVE order {order_id})"
+            f"{direction} (LIVE order {order_id}, filled {fill_qty}/{count})"
         )
     except Exception as e:
         print(f"  Order failed: {e}")
+
+
+def poll_and_update_fills():
+    """Poll all resting orders and update trades.db with actual fills.
+
+    Called at the end of every scan cycle.
+    Handles partial fills, late fills, and multiple orders safely.
+    """
+    try:
+        orders = get_orders(status="resting") + get_orders(status="executed")
+
+        updated = 0
+        for order in orders:
+            order_id = order.get("order_id")
+            if not order_id:
+                continue
+
+            fill_qty = int(float(order.get("fill_count_fp", "0") or "0"))
+
+            if fill_qty > 0:
+                taker_cost = float(order.get("taker_fill_cost_dollars", "0") or "0")
+                maker_cost = float(order.get("maker_fill_cost_dollars", "0") or "0")
+                total_cost = taker_cost + maker_cost
+                actual_price_cents = int((total_cost / fill_qty) * 100) if fill_qty > 0 else 0
+
+                init_trades_db(TRADES_DB_PATH)
+                record_fill(
+                    db_path=TRADES_DB_PATH,
+                    order_id=order_id,
+                    ticker=order.get("ticker", ""),
+                    side=order.get("side", ""),
+                    limit_price=order.get("yes_price") or order.get("no_price") or 0,
+                    fill_price=actual_price_cents,
+                    fill_qty=fill_qty,
+                    fill_time=order.get("last_update_time", datetime.now(timezone.utc).isoformat()),
+                    city="",
+                )
+                updated += 1
+                print(f"  [Poller] Updated fill for {order_id}: {fill_qty} @ {actual_price_cents}¢")
+
+        if updated:
+            print(f"  [Poller] Updated {updated} orders with actual fills")
+        else:
+            print("  [Poller] No new fills this cycle")
+
+    except Exception as e:
+        print(f"  [Poller] Error: {e}")

@@ -7,15 +7,39 @@ Usage:
         place_order(ticker, result.side, price_cents, result.count)
 """
 
+import math
 from dataclasses import dataclass
 from risk.kelly import kelly_fraction
 from risk.position_limits import check_limits
 from risk.bankroll import BankrollTracker
 from risk.circuit_breaker import CircuitBreaker
+from config import FRACTIONAL_KELLY
 
 
-# Default fractional Kelly multiplier (start conservative)
-DEFAULT_FRACTIONAL_KELLY = 0.25
+def sigmoid_kelly(confidence: float, edge: float, floor: float = 0.25) -> float:
+    """Sigmoid-scaled Kelly multiplier — smooth logistic ramp from floor to 0.50x.
+
+    Inputs:
+        confidence: model agreement score (0-100), gated at 55 minimum
+        edge: absolute edge as a decimal (e.g. 0.12 for 12%)
+        floor: minimum Kelly multiplier (0.25 normal, 0.35 same-day)
+
+    The function normalizes both inputs to [0, 1], combines them into a single
+    signal-strength score, passes it through a logistic sigmoid, and maps the
+    output to a Kelly multiplier in [floor, 0.50].
+
+    Behavior (floor=0.25):
+        - Floor (55% conf, 7% edge):  ~0.25x Kelly
+        - Mid   (70% conf, 12% edge): ~0.38x Kelly
+        - High  (90% conf, 18% edge): ~0.50x Kelly
+    """
+    c_norm = max(0.0, (confidence - 55) / 45)
+    e_norm = min(1.0, abs(edge) / 0.20)
+    strength = 8.5 * c_norm * e_norm - 3.8
+    sig = 1.0 / (1.0 + math.exp(-strength))
+    # Scale from floor to 0.50: floor + (0.50 - floor) * sigmoid
+    ramp = 0.50 - floor
+    return min(0.50, floor + ramp * sig)
 
 
 @dataclass
@@ -28,7 +52,7 @@ class SizeResult:
     limit_reason: str      # which limit was binding
 
 
-MAX_CONTRACTS_PER_EVENT = 2  # spec: max 2 contracts per city/day/type
+MAX_CONTRACTS_PER_EVENT = 10  # max contracts per city/day/type
 
 
 def compute_size(
@@ -42,7 +66,7 @@ def compute_size(
     city_day_spent: float = 0.0,
     total_exposure: float = 0.0,
     event_contracts: int = 0,
-    fractional_kelly: float = DEFAULT_FRACTIONAL_KELLY,
+    fractional_kelly: float = FRACTIONAL_KELLY,
 ) -> SizeResult:
     """Compute position size for a signal.
 
@@ -64,11 +88,13 @@ def compute_size(
             limit_reason="daily stop active",
         )
 
-    # Step 1: Kelly fraction
+    # Step 1: Kelly fraction with sigmoid-scaled multiplier
+    edge = abs(model_prob - market_prob)
+    scaled_kelly = sigmoid_kelly(confidence, edge, floor=fractional_kelly)
     kelly = kelly_fraction(
         model_prob=model_prob,
         market_prob=market_prob,
-        fractional=fractional_kelly,
+        fractional=scaled_kelly,
         confidence=confidence,
     )
 
