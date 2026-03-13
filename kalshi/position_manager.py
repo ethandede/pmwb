@@ -278,7 +278,7 @@ def evaluate_position(ticker: str, qty: float, market_data: dict) -> dict:
     # Confidence dropped below threshold (only for multi-day — same-day trusts the forecast)
     if not is_same_day and confidence < CONFIDENCE_THRESHOLD * 0.7:
         result["action"] = "exit"
-        result["reason"] = f"LOW CONFIDENCE [{time_label}] — {confidence}% (need {CONFIDENCE_THRESHOLD * 0.7:.0f}%)"
+        result["reason"] = f"LOW CONFIDENCE [{time_label}] — {confidence:.1f}% (need {CONFIDENCE_THRESHOLD * 0.7:.0f}%)"
         if side == "yes":
             result["sell_price_cents"] = max(1, int(current_yes_price * 100) - 1)
         else:
@@ -288,11 +288,11 @@ def evaluate_position(ticker: str, qty: float, market_data: dict) -> dict:
     # Fortify: edge is still strong — add to the position
     if edge >= FORTIFY_MIN_EDGE and confidence >= FORTIFY_MIN_CONFIDENCE and not is_same_day:
         result["action"] = "fortify"
-        result["reason"] = f"FORTIFY [{time_label}] — edge {edge:+.1%}, conf {confidence}%"
+        result["reason"] = f"FORTIFY [{time_label}] — edge {edge:+.1%}, conf {confidence:.1f}%"
         return result
 
     result["action"] = "hold"
-    result["reason"] = f"HOLD [{time_label}] — edge {edge:+.1%}, conf {confidence}%"
+    result["reason"] = f"HOLD [{time_label}] — edge {edge:+.1%}, conf {confidence:.1f}%"
     return result
 
 
@@ -428,7 +428,7 @@ def run_position_manager():
             side = result["side"]
             direction = "BUY YES" if side == "yes" else "BUY NO"
 
-            console.print(f"  [{mode_label}] FORTIFY {side.upper()} {ticker} (have {existing_qty}) — edge {edge:+.1%}, conf {confidence}%")
+            console.print(f"  [{mode_label}] FORTIFY {side.upper()} {ticker} (have {existing_qty}) — edge {edge:+.1%}, conf {confidence:.1f}%")
 
             execute_kalshi_signal(
                 market_data, city, model_prob, current_price, edge,

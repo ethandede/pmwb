@@ -22,27 +22,41 @@ from weather.precip_model import gamma_precip_prob
 from config import BIAS_DB_PATH, FUSION_WEIGHTS, PRECIP_FUSION_WEIGHTS
 
 
-def _calculate_confidence(agreement: float, spread: float, bias_available: float,
-                          csgd_success: float, nws_available: float) -> int:
-    """Continuous weighted confidence score — feeds directly into sigmoid Kelly.
+def _calculate_confidence(
+    agreement: float,
+    spread_norm: float,
+    bias_available: float,
+    csgd_success: float,
+    nws_agreement: float,
+    horizon_days: int,
+    liquidity_score: float = 0.5,
+) -> float:
+    """Nonlinear continuous confidence (40-100). Power weighting spreads values naturally.
 
-    Each input is a 0-1 signal. Weighted sum maps to [55, 100].
-    Floor at 55 (the trading gate) ensures only the sigmoid range varies.
+    Power-law exponents on agreement (1.2) and spread (1.1) reward strong signals
+    disproportionately — high values get amplified, mediocre values get compressed.
+    This eliminates the clustering that the old linear integer model produced and
+    gives the sigmoid Kelly real dynamic range.
 
-    Weights:
-        agreement (35):     model agreement — strongest signal
-        spread (30):        tight ensemble spread — forecast certainty
-        bias_available (20): historical bias corrections active
-        csgd_success (10):  CSGD/gamma fit quality
-        nws_available (5):  independent NWS confirmation
+    Inputs (all 0-1 unless noted):
+        agreement:       model agreement (power-weighted 0.35)
+        spread_norm:     ensemble tightness (power-weighted 0.30)
+        bias_available:  historical bias data depth (0.15)
+        csgd_success:    model fit quality, continuous for precip (0.10)
+        nws_agreement:   strength of NWS match, not just presence (0.05)
+        horizon_days:    days to settlement — closer = more confident (0.03)
+        liquidity_score: normalized volume/OI, default 0.5 (0.02)
     """
-    score = 0.0
-    score += 35 * agreement
-    score += 30 * (1 - spread) if spread < 1 else 0  # invert: spread_norm already inverted for temp
-    # For the caller: spread_norm = 1.0 - raw_spread/12, so 1-spread_norm = raw/12
-    # But we receive the ALREADY-INVERTED value (1=tight, 0=wide), so use directly:
-    score = 35 * agreement + 30 * spread + 20 * bias_available + 10 * csgd_success + 5 * nws_available
-    return int(min(100, max(55, score)))
+    score = (
+        0.35 * agreement ** 1.2
+        + 0.30 * spread_norm ** 1.1
+        + 0.15 * bias_available
+        + 0.10 * csgd_success
+        + 0.05 * nws_agreement
+        + 0.03 * (1.0 / max(horizon_days, 1))
+        + 0.02 * liquidity_score
+    ) * 100
+    return max(40.0, min(100.0, score))
 
 
 # ---------------------------------------------------------------------------
@@ -355,10 +369,16 @@ def fuse_forecast(
     # Component 4: CSGD/model fit quality — always 1.0 for temp (ensemble is primary)
     csgd_success = 1.0
 
-    # Component 5: NWS data available (0 or 1)
-    nws_available = 1.0 if noaa_prob is not None else 0.0
+    # Component 5: NWS agreement strength (0-1, not just presence)
+    if noaa_prob is not None and ensemble_prob is not None:
+        nws_agreement = max(0.0, min(1.0, 1.0 - abs(ensemble_prob - noaa_prob) / 0.3))
+    else:
+        nws_agreement = 0.0
 
-    confidence = _calculate_confidence(agreement, spread_norm, bias_available, csgd_success, nws_available)
+    confidence = _calculate_confidence(
+        agreement, spread_norm, bias_available, csgd_success,
+        nws_agreement, horizon_days=days_ahead,
+    )
     details["confidence"] = confidence
 
     return fused_prob, confidence, details
@@ -454,13 +474,19 @@ def fuse_precip_forecast(
     best_bias_n = max(bias_counts) if bias_counts else 0
     bias_available = min(1.0, best_bias_n / 30.0)
 
-    # Component 4: CSGD fit quality (0 or 1)
-    csgd_success = 1.0 if csgd_result.method == "csgd" else 0.0
+    # Component 4: CSGD fit quality — continuous: 1.0 for csgd, 0.3 for empirical fallback
+    csgd_success = 1.0 if csgd_result.method == "csgd" else 0.3
 
-    # Component 5: NWS data available (0 or 1)
-    nws_available = 1.0 if noaa_prob is not None else 0.0
+    # Component 5: NWS agreement strength (0-1, not just presence)
+    if noaa_prob is not None and ensemble_prob is not None:
+        nws_agreement = max(0.0, min(1.0, 1.0 - abs(ensemble_prob - noaa_prob) / 0.3))
+    else:
+        nws_agreement = 0.0
 
-    confidence = _calculate_confidence(agreement, spread_norm, bias_available, csgd_success, nws_available)
+    confidence = _calculate_confidence(
+        agreement, spread_norm, bias_available, csgd_success,
+        nws_agreement, horizon_days=forecast_days or 1,
+    )
     details["confidence"] = confidence
 
     return fused_prob, confidence, details

@@ -437,8 +437,8 @@ async function renderMarkets(data, type) {
         confidenceScatter(markets, heatmapId, labelId);
     }
 
-    // 5. Signal badge — trade-worthy: edge > 7% AND confidence >= 55
-    const tradeworthy = markets.filter(m => m.edge > 0.07 && m.confidence >= 55);
+    // 5. Signal badge — trade-worthy: edge > 7% AND confidence >= 50
+    const tradeworthy = markets.filter(m => m.edge > 0.07 && m.confidence >= 50);
     const badgeEl = document.getElementById(`${type}-signal-badge`);
     if (badgeEl) {
         const count = tradeworthy.length;

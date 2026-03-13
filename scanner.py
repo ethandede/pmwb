@@ -232,8 +232,8 @@ def run_scanner():
             edge_str = f"[{color}]{edge:+.1%}[/{color}]"
 
             n_models = details.get("models_used", 1)
-            conf_color = "green" if confidence >= CONFIDENCE_THRESHOLD else "yellow" if confidence >= 50 else "red"
-            conf_str = f"[{conf_color}]{confidence}% ({n_models}m)[/{conf_color}]"
+            conf_color = "green" if confidence >= CONFIDENCE_THRESHOLD else "yellow" if confidence >= 45 else "red"
+            conf_str = f"[{conf_color}]{confidence:.1f}% ({n_models}m)[/{conf_color}]"
 
             display_q = title[:42] + "..." if len(title) > 45 else title
             type_label = "Lo" if temp_type == "min" else "Hi"
@@ -297,7 +297,7 @@ def run_scanner():
             tag = "SAMEDAY " if sig["is_sameday"] else ""
             send_signal_alert(
                 sig["title"], sig["city_key"] + " (Kalshi)", sig["model_prob"], sig["yes_price"], sig["edge"],
-                f"{tag}{sig['direction']} (Conf {sig['confidence']}%, {sig['n_models']} models)"
+                f"{tag}{sig['direction']} (Conf {sig['confidence']:.1f}%, {sig['n_models']} models)"
             )
             execute_kalshi_signal(sig["market"], sig["city_key"], sig["model_prob"], sig["yes_price"], sig["edge"], sig["direction"], sig["confidence"], existing_contracts=held_positions.get(sig["ticker"], 0), kelly_floor=sig["kelly_floor"])
 
@@ -353,7 +353,7 @@ def run_scanner():
                     # More blind days = more uncertainty = lower confidence
                     coverage = forecast_days / max(remaining_days, 1)
                     model_prob = model_prob_adj
-                    confidence = int(confidence * coverage)
+                    confidence = confidence * coverage
                     details["blind_days"] = blind_days
                     details["blind_expected_inches"] = round(blind_expected, 2)
                     details["adjusted_threshold"] = round(adjusted_threshold, 2)
@@ -370,7 +370,7 @@ def run_scanner():
             table.add_row(
                 title[:40], city_key, f"{model_prob:.0%}", f"{yes_price:.0%}",
                 f"[{edge_color}]{edge:+.1%}[/{edge_color}]",
-                f"[bold]{direction}[/bold]", f"{confidence}%", ticker,
+                f"[bold]{direction}[/bold]", f"{confidence:.1f}%", ticker,
             )
             log_signal(title, city_key + " (kalshi)", model_prob, yes_price, edge, direction, False, PAPER_MODE, confidence=confidence, ticker=ticker)
             signals_found += 1

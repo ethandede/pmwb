@@ -20,7 +20,7 @@ def sigmoid_kelly(confidence: float, edge: float, floor: float = 0.25) -> float:
     """Sigmoid-scaled Kelly multiplier — smooth logistic ramp from floor to 0.50x.
 
     Inputs:
-        confidence: model agreement score (0-100), gated at 55 minimum
+        confidence: nonlinear confidence score (40-100 float)
         edge: absolute edge as a decimal (e.g. 0.12 for 12%)
         floor: minimum Kelly multiplier (0.25 normal, 0.35 same-day)
 
@@ -29,11 +29,11 @@ def sigmoid_kelly(confidence: float, edge: float, floor: float = 0.25) -> float:
     output to a Kelly multiplier in [floor, 0.50].
 
     Behavior (floor=0.25):
-        - Floor (55% conf, 7% edge):  ~0.25x Kelly
-        - Mid   (70% conf, 12% edge): ~0.38x Kelly
+        - Floor (40% conf, 7% edge):  ~0.25x Kelly
+        - Mid   (65% conf, 12% edge): ~0.38x Kelly
         - High  (90% conf, 18% edge): ~0.50x Kelly
     """
-    c_norm = max(0.0, (confidence - 55) / 45)
+    c_norm = max(0.0, (confidence - 40) / 60)
     e_norm = min(1.0, abs(edge) / 0.20)
     strength = 8.5 * c_norm * e_norm - 3.8
     sig = 1.0 / (1.0 + math.exp(-strength))

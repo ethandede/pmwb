@@ -36,7 +36,7 @@ MAX_ORDER_USD = 20.0      # max dollars per individual order
 
 # Multi-model fusion
 BIAS_DB_PATH = "data/bias.db"
-CONFIDENCE_THRESHOLD = 55
+CONFIDENCE_THRESHOLD = 50
 FUSION_WEIGHTS = {"ensemble": 0.40, "noaa": 0.35, "hrrr": 0.25}
 HIGH_CONFIDENCE_MULTIPLIER = 1.5  # size boost when confidence >= 85
 HOST = "https://clob.polymarket.com"
@@ -56,7 +56,7 @@ CIRCUIT_BREAKER_COOLDOWN_HOURS = 48
 
 # Same-day aggressive pass — forecasts are near-locked, exploit harder
 SAMEDAY_EDGE_THRESHOLD = 0.05      # 5% edge (vs 7% for multi-day)
-SAMEDAY_CONFIDENCE_THRESHOLD = 50  # 50% confidence (vs 55%)
+SAMEDAY_CONFIDENCE_THRESHOLD = 45  # 45% confidence (vs 50%)
 SAMEDAY_KELLY_FLOOR = 0.35         # start at 0.35x Kelly (vs 0.25x)
 
 # Precipitation fusion weights (Phase 4)
