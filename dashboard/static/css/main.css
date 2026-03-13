@@ -216,90 +216,126 @@ section > h2 {
   border: 1px solid #2a3a4e;
 }
 
-.we-layout {
+.triptych-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  margin-bottom: 24px;
+}
+@media (max-width: 900px) {
+  .triptych-row {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+}
+
+.triptych-card {
+  position: relative;
+  background: #1a2332;
+  border: 1px solid #2a3a4e;
+  border-radius: 6px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  padding: 16px 20px;
+  overflow: hidden;
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+.triptych-card:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+}
+.triptych-card::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.02) 0%, transparent 60%);
+  pointer-events: none;
+}
+
+.triptych-label {
+  font-family: "Roboto", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-weight: 500;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.45);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  line-height: 1.2;
+  margin-bottom: 4px;
+}
+
+.triptych-value {
+  font-family: "JetBrains Mono", "Fira Mono", "Cascadia Code", "Courier New", monospace;
+  font-weight: 700;
+  font-size: 24px;
+  color: rgba(255, 255, 255, 0.92);
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+@media (max-width: 600px) {
+  .triptych-value {
+    font-size: 20px;
+  }
+}
+
+.triptych-detail {
+  font-family: "Roboto", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.45);
+  line-height: 1.2;
+  margin-top: 4px;
+}
+
+.triptych-visual {
+  margin-top: 12px;
+  min-height: 20px;
+}
+
+.main-two-col {
   display: flex;
   gap: 24px;
   align-items: flex-start;
 }
 @media (max-width: 900px) {
-  .we-layout {
+  .main-two-col {
     flex-direction: column;
   }
 }
 
-.we-sidebar {
-  width: 340px;
-  flex-shrink: 0;
-  position: sticky;
-  top: calc(60px + 16px);
-  max-height: calc(100vh - 60px - 32px);
-  overflow-y: auto;
-  padding-right: 8px;
+.main-wide {
+  flex: 3;
+  min-width: 0;
 }
-.we-sidebar::-webkit-scrollbar {
-  width: 4px;
+
+.main-narrow {
+  flex: 1;
+  min-width: 260px;
 }
-.we-sidebar .metric-row {
-  grid-template-columns: repeat(2, 1fr);
-  gap: 12px;
+.main-narrow .chart-row-stack {
+  flex-direction: column;
 }
-.we-sidebar .metric-row-3 {
+.main-narrow .metric-row-narrow {
   grid-template-columns: 1fr;
   gap: 12px;
 }
-.we-sidebar .metric-value {
+.main-narrow .metric-value {
   font-size: 16px;
 }
-.we-sidebar .metric-card {
+.main-narrow .metric-card {
   padding: 12px 16px;
 }
-.we-sidebar section > h2 {
+.main-narrow section > h2 {
   font-size: 15px;
   margin-bottom: 12px;
 }
-.we-sidebar .risk-footer {
+.main-narrow .risk-footer {
   margin-top: 12px;
   padding: 16px;
 }
 @media (max-width: 900px) {
-  .we-sidebar {
+  .main-narrow {
+    min-width: 0;
     width: 100%;
-    position: static;
-    max-height: none;
-    padding-right: 0;
   }
-  .we-sidebar .metric-row {
-    grid-template-columns: repeat(4, 1fr);
-  }
-  .we-sidebar .metric-row-3 {
-    grid-template-columns: repeat(3, 1fr);
-  }
-  .we-sidebar .metric-value {
-    font-size: 20px;
-  }
-  .we-sidebar .metric-card {
-    padding: 16px 20px;
-  }
-}
-@media (max-width: 600px) {
-  .we-sidebar .metric-row {
-    grid-template-columns: repeat(2, 1fr);
-  }
-  .we-sidebar .metric-row-3 {
-    grid-template-columns: 1fr;
-  }
-}
-
-.sidebar-table-scroll {
-  overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
-  margin: 0 -4px;
-  padding: 0 4px;
-}
-
-.we-main {
-  flex: 1;
-  min-width: 0;
 }
 
 @keyframes spin {
@@ -1249,3 +1285,5 @@ section > h2 {
 .page-footer a:hover {
   color: #45748C;
 }
+
+/*# sourceMappingURL=main.css.map */

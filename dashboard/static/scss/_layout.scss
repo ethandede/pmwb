@@ -1,13 +1,91 @@
 // ============================================================
-// _layout.scss — Sidebar + main content two-panel layout
+// _layout.scss — Triptych + two-column layout (no sidebar)
 // ============================================================
 
 @use 'variables' as *;
+@use 'sass:color';
 
 // ------------------------------------
-// Two-panel flex layout
+// Triptych: 3 summary cards across top
 // ------------------------------------
-.we-layout {
+.triptych-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: $sp-4;
+  margin-bottom: $sp-6;
+
+  @media (max-width: $bp-md) {
+    grid-template-columns: 1fr;
+    gap: $sp-3;
+  }
+}
+
+.triptych-card {
+  position: relative;
+  background: $bg-card;
+  border: 1px solid $border-subtle;
+  border-radius: $card-radius;
+  box-shadow: $shadow-card;
+  padding: $sp-4 $sp-5;
+  overflow: hidden;
+  transition: transform $transition-fast, box-shadow $transition-fast;
+
+  &:hover {
+    transform: translateY(-1px);
+    box-shadow: $shadow-raise;
+  }
+
+  &::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.02) 0%, transparent 60%);
+    pointer-events: none;
+  }
+}
+
+.triptych-label {
+  font-family: $font-body;
+  font-weight: 500;
+  font-size: $font-size-xs;
+  color: $text-muted;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  line-height: $line-height-tight;
+  margin-bottom: $sp-1;
+}
+
+.triptych-value {
+  font-family: $font-mono;
+  font-weight: 700;
+  font-size: $font-size-2xl;
+  color: $text-primary;
+  line-height: $line-height-tight;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+
+  @media (max-width: $bp-sm) {
+    font-size: $font-size-xl;
+  }
+}
+
+.triptych-detail {
+  font-family: $font-body;
+  font-size: $font-size-xs;
+  color: $text-muted;
+  line-height: $line-height-tight;
+  margin-top: $sp-1;
+}
+
+.triptych-visual {
+  margin-top: $sp-3;
+  min-height: 20px;
+}
+
+// ------------------------------------
+// Two-column main area (75/25 split)
+// ------------------------------------
+.main-two-col {
   display: flex;
   gap: $sp-6;
   align-items: flex-start;
@@ -17,36 +95,26 @@
   }
 }
 
-// ------------------------------------
-// Sticky sidebar
-// ------------------------------------
-.we-sidebar {
-  width: 340px;
-  flex-shrink: 0;
-  position: sticky;
-  top: calc(#{$header-height} + #{$sp-4});
-  max-height: calc(100vh - #{$header-height} - #{$sp-8});
-  overflow-y: auto;
-  padding-right: $sp-2;
+.main-wide {
+  flex: 3;
+  min-width: 0;
+}
 
-  // Narrower scrollbar for sidebar
-  &::-webkit-scrollbar {
-    width: 4px;
+.main-narrow {
+  flex: 1;
+  min-width: 260px;
+
+  // Stack charts vertically in narrow column
+  .chart-row-stack {
+    flex-direction: column;
   }
 
-  // Metric rows: 2-column in sidebar
-  .metric-row {
-    grid-template-columns: repeat(2, 1fr);
-    gap: $sp-3;
-  }
-
-  // Signal summary: single column in sidebar
-  .metric-row-3 {
+  // Compact metric cards in narrow column
+  .metric-row-narrow {
     grid-template-columns: 1fr;
     gap: $sp-3;
   }
 
-  // Compact metric values in sidebar
   .metric-value {
     font-size: $font-size-lg;
   }
@@ -55,66 +123,18 @@
     padding: $sp-3 $sp-4;
   }
 
-  // Compact section headings
   section > h2 {
     font-size: 15px;
     margin-bottom: $sp-3;
   }
 
-  // Risk footer: remove top margin in sidebar context
   .risk-footer {
     margin-top: $sp-3;
     padding: $sp-4;
   }
 
   @media (max-width: $bp-md) {
+    min-width: 0;
     width: 100%;
-    position: static;
-    max-height: none;
-    padding-right: 0;
-
-    .metric-row {
-      grid-template-columns: repeat(4, 1fr);
-    }
-
-    .metric-row-3 {
-      grid-template-columns: repeat(3, 1fr);
-    }
-
-    .metric-value {
-      font-size: $font-size-xl;
-    }
-
-    .metric-card {
-      padding: $sp-4 $sp-5;
-    }
   }
-
-  @media (max-width: $bp-sm) {
-    .metric-row {
-      grid-template-columns: repeat(2, 1fr);
-    }
-
-    .metric-row-3 {
-      grid-template-columns: 1fr;
-    }
-  }
-}
-
-// ------------------------------------
-// Sidebar table horizontal scroll
-// ------------------------------------
-.sidebar-table-scroll {
-  overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
-  margin: 0 (-$sp-1);
-  padding: 0 $sp-1;
-}
-
-// ------------------------------------
-// Main content area
-// ------------------------------------
-.we-main {
-  flex: 1;
-  min-width: 0;
 }

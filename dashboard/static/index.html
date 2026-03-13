@@ -27,81 +27,38 @@
     </header>
 
     <main class="we-page">
-    <!-- How This Works -->
-    <details class="we-expander">
-        <summary>How This Works</summary>
-        <div class="we-expander-content">
-            <p>This bot scans Kalshi weather markets every 15 minutes, comparing market prices against a multi-model ensemble forecast (GFS, ECMWF, CFS, HRRR). When the model detects meaningful edge — the difference between our probability estimate and the market price — it sizes positions using a modified Kelly criterion and places limit orders.</p>
-            <p>The forecast pipeline fuses up to 4 weather models with confidence weighting and bias correction. Position sizing uses a sigmoid-dampened fractional Kelly formula that accounts for model confidence, fee drag, and bankroll constraints.</p>
+    <!-- Triptych: 3 summary cards -->
+    <div class="triptych-row">
+        <div class="triptych-card">
+            <div class="triptych-label">Total Equity</div>
+            <div class="triptych-value" id="tri-equity">—</div>
+            <div class="triptych-detail" id="tri-equity-detail"></div>
+            <div class="triptych-visual" id="equity-sparkline"></div>
         </div>
-    </details>
+        <div class="triptych-card">
+            <div class="triptych-label">Record</div>
+            <div class="triptych-value" id="tri-record">—</div>
+            <div class="triptych-detail" id="tri-record-detail"></div>
+            <div class="triptych-visual" id="daily-pnl-chart"></div>
+        </div>
+        <div class="triptych-card">
+            <div class="triptych-label">Settled P&L</div>
+            <div class="triptych-value" id="tri-pnl">—</div>
+            <div class="triptych-detail" id="tri-pnl-detail"></div>
+            <div class="triptych-visual" id="health-badge"></div>
+        </div>
+    </div>
 
-    <div class="we-layout">
-        <!-- ═══ Sidebar ═══ -->
-        <aside class="we-sidebar">
+    <!-- Two-column main area -->
+    <div class="main-two-col">
+        <!-- Wide column: positions + temp markets -->
+        <div class="main-wide">
+            <!-- Open Positions -->
             <section id="portfolio-section">
-                <h2>Portfolio</h2>
+                <h2>Open Positions</h2>
                 <div id="portfolio-balance" class="metric-row"></div>
-                <div id="portfolio-settled-label" class="section-label">Settled Performance</div>
-                <div id="portfolio-settled" class="metric-row"></div>
-                <div id="open-positions-header"></div>
-                <div class="sidebar-table-scroll">
-                    <div id="open-positions-table"></div>
-                </div>
+                <div id="open-positions-table"></div>
                 <div id="open-positions-caption" class="caption"></div>
-                <details class="we-expander" id="resting-orders-expander">
-                    <summary>Resting Orders (<span id="resting-count">0</span>)</summary>
-                    <div class="sidebar-table-scroll">
-                        <div id="resting-orders-table"></div>
-                    </div>
-                </details>
-            </section>
-
-            <hr class="we-divider">
-
-            <div id="signal-summary" class="metric-row metric-row-3"></div>
-            <div id="risk-controls" class="risk-footer"></div>
-        </aside>
-
-        <!-- ═══ Main content ═══ -->
-        <div class="we-main">
-            <!-- Performance -->
-            <section id="performance-section">
-                <h2>Performance</h2>
-                <div class="chart-row">
-                    <div class="chart-card">
-                        <div class="chart-label">Equity Curve</div>
-                        <div id="equity-chart"></div>
-                    </div>
-                    <div class="chart-card">
-                        <div class="chart-label">Model Accuracy — Predicted vs Actual</div>
-                        <div id="accuracy-chart"></div>
-                    </div>
-                </div>
-            </section>
-
-            <hr class="we-divider">
-
-            <!-- Precipitation Markets -->
-            <section id="precip-section">
-                <h2>Precipitation Markets</h2>
-                <p class="section-desc">Monthly cumulative rainfall contracts. Settles at month-end via official station readings.</p>
-                <div class="scan-meta">
-                    <span id="precip-scan-time" class="scan-time"></span>
-                    <button class="force-rescan-btn" id="precip-rescan">Force Rescan</button>
-                </div>
-                <div id="precip-table"></div>
-                <div class="chart-row">
-                    <div class="chart-card">
-                        <div class="chart-label">Edge by City</div>
-                        <div id="precip-edge-chart"></div>
-                    </div>
-                    <div class="chart-card">
-                        <div class="chart-label" id="precip-chart2-label">Edge Heatmap — City x Date</div>
-                        <div id="precip-heatmap-chart"></div>
-                    </div>
-                </div>
-                <div id="precip-signal-badge"></div>
             </section>
 
             <hr class="we-divider">
@@ -109,7 +66,7 @@
             <!-- Temperature Markets -->
             <section id="temp-section">
                 <h2>Temperature Markets</h2>
-                <p class="section-desc">Daily high temperature contracts across US cities. Settles next day via official airport readings.</p>
+                <p class="section-desc">Daily high temperature contracts across US cities.</p>
                 <div class="scan-meta">
                     <span id="temp-scan-time" class="scan-time"></span>
                     <button class="force-rescan-btn" id="temp-rescan">Force Rescan</button>
@@ -127,6 +84,36 @@
                 </div>
                 <div id="temp-signal-badge"></div>
             </section>
+        </div>
+
+        <!-- Narrow column: precip + risk + signals -->
+        <div class="main-narrow">
+            <!-- Precipitation Markets -->
+            <section id="precip-section">
+                <h2>Precipitation</h2>
+                <p class="section-desc">Monthly cumulative rainfall contracts.</p>
+                <div class="scan-meta">
+                    <span id="precip-scan-time" class="scan-time"></span>
+                    <button class="force-rescan-btn" id="precip-rescan">Force Rescan</button>
+                </div>
+                <div id="precip-table"></div>
+                <div class="chart-row chart-row-stack">
+                    <div class="chart-card">
+                        <div class="chart-label">Edge by City</div>
+                        <div id="precip-edge-chart"></div>
+                    </div>
+                    <div class="chart-card">
+                        <div class="chart-label" id="precip-chart2-label">Edge Heatmap</div>
+                        <div id="precip-heatmap-chart"></div>
+                    </div>
+                </div>
+                <div id="precip-signal-badge"></div>
+            </section>
+
+            <hr class="we-divider">
+
+            <div id="signal-summary" class="metric-row metric-row-narrow"></div>
+            <div id="risk-controls" class="risk-footer"></div>
         </div>
     </div>
 
