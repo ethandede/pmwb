@@ -12,6 +12,7 @@ from weather.forecast_logger import get_unresolved_forecasts, mark_resolved
 from weather.multi_model import update_bias
 from config import CITIES
 from kalshi.scanner import WEATHER_SERIES
+from dashboard.scan_cache import init_scan_cache_db, write_model_outcome
 
 
 # Build unified city lookup: city_key -> {lat, lon, unit}
@@ -125,6 +126,14 @@ def run_resolver():
             bias = forecast_temp - actual
             print(f"    {model}: forecast={forecast_temp}° bias={bias:+.1f}°")
             update_bias(city, month, model, forecast_temp, actual)
+
+        # Record model outcome for dashboard accuracy chart
+        try:
+            init_scan_cache_db()
+            # TODO: Model outcomes need predicted_prob and market_price from scan time,
+            # not settlement time. Deferred to future reconciliation script.
+        except Exception as e:
+            print(f"    Model outcome write failed: {e}")
 
         mark_resolved(city, target_date)
         resolved_count += 1
