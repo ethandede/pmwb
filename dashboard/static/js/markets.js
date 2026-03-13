@@ -348,7 +348,7 @@ function confidenceScatter(markets, containerId, labelId) {
         yaxis: {
             ...PLOTLY_LAYOUT.yaxis,
             title: { text: 'Confidence', font: { color: 'rgba(255,255,255,0.6)', size: 11 } },
-            range: [55, 100],
+            range: [Math.min(...confs) - 2, Math.max(...confs) + 3],
         },
     };
 
