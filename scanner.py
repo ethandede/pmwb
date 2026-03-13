@@ -1,5 +1,6 @@
 import json
 from datetime import datetime, timezone
+from dashboard.scan_cache import init_scan_cache_db, write_scan_results, cleanup_old_scans
 from rich.console import Console
 from rich.table import Table
 from config import CITIES, EDGE_THRESHOLD, SHOW_THRESHOLD, DUTCH_BOOK_THRESHOLD, ALERT_THRESHOLD, PAPER_MODE, CONFIDENCE_THRESHOLD
@@ -390,6 +391,53 @@ def run_scanner():
 
     for sig in tradeable_precip_signals:
         execute_kalshi_signal(sig["market"], sig["city_key"], sig["model_prob"], sig["yes_price"], sig["edge"], sig["direction"], confidence=sig["confidence"], existing_contracts=held_positions.get(sig["ticker"], 0))
+
+    # === CACHE SCAN RESULTS ===
+    try:
+        from dashboard.ticker_map import ticker_to_city
+        init_scan_cache_db()
+        cache_rows = []
+        for sig in tradeable_temp_signals:
+            ticker = sig["ticker"]
+            low = sig["low"]
+            high = sig["high"]
+            bucket_str = f"{low:.0f}-{high:.0f}" if high is not None else f">{low:.0f}"
+            cache_rows.append({
+                "market_type": "temp",
+                "ticker": ticker,
+                "city": ticker_to_city(ticker),
+                "model_prob": sig["model_prob"],
+                "market_price": sig["yes_price"],
+                "edge": sig["edge"],
+                "direction": sig["direction"],
+                "confidence": sig["confidence"],
+                "method": sig["temp_type"],
+                "threshold": bucket_str,
+                "days_left": 0 if sig["is_sameday"] else 1,
+            })
+        for sig in tradeable_precip_signals:
+            ticker = sig["ticker"]
+            raw_threshold = sig["market"].get("_threshold", "")
+            threshold_str = str(raw_threshold) if raw_threshold != "" else ""
+            cache_rows.append({
+                "market_type": "precip",
+                "ticker": ticker,
+                "city": ticker_to_city(ticker),
+                "model_prob": sig["model_prob"],
+                "market_price": sig["yes_price"],
+                "edge": sig["edge"],
+                "direction": sig["direction"],
+                "confidence": sig["confidence"],
+                "method": "",
+                "threshold": threshold_str,
+                "days_left": None,
+            })
+        if cache_rows:
+            write_scan_results(cache_rows)
+            cleanup_old_scans(days=30)
+            console.print(f"  [Cache] Wrote {len(cache_rows)} scan results to cache")
+    except Exception as e:
+        console.print(f"  [Cache] Error writing scan cache: {e}")
 
     # === RESTING ORDER FILL POLLER ===
     from kalshi.trader import poll_and_update_fills
