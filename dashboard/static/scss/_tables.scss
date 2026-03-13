@@ -1,0 +1,267 @@
+// ============================================================
+// _tables.scss — Data tables, P&L tinting, row interactions
+// ============================================================
+
+@use 'variables' as *;
+@use 'sass:color';
+
+// ------------------------------------
+// Table wrapper (horizontal scroll)
+// ------------------------------------
+.table-wrap {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  border-radius: $card-radius;
+  border: 1px solid $border-subtle;
+  background: $bg-card;
+  box-shadow: $shadow-card;
+  margin-bottom: $sp-4;
+}
+
+// ------------------------------------
+// Base table styles
+// ------------------------------------
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: $font-size-sm;
+  font-family: $font-body;
+  color: $text-secondary;
+
+  // ----------------------------------
+  // Header
+  // ----------------------------------
+  thead {
+    tr {
+      background: $bg-elevated;
+      border-bottom: 2px solid $border-subtle;
+    }
+
+    th {
+      padding: $sp-3 $sp-4;
+      text-align: left;
+      font-weight: 700;
+      font-size: $font-size-xs;
+      color: $text-muted;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      white-space: nowrap;
+      user-select: none;
+
+      // Numeric columns — right-align
+      &.num,
+      &[data-align="right"] {
+        text-align: right;
+      }
+
+      // Sortable hint
+      &[data-sortable] {
+        cursor: pointer;
+        transition: color $transition-fast;
+
+        &:hover {
+          color: $text-primary;
+        }
+
+        &::after {
+          content: ' ↕';
+          opacity: 0.4;
+          font-size: 10px;
+        }
+
+        &[data-sort="asc"]::after  { content: ' ↑'; opacity: 1; }
+        &[data-sort="desc"]::after { content: ' ↓'; opacity: 1; }
+      }
+    }
+  }
+
+  // ----------------------------------
+  // Body rows
+  // ----------------------------------
+  tbody {
+    tr {
+      border-bottom: 1px solid rgba($border-subtle, 0.5);
+      transition: background $transition-fast;
+
+      &:last-child {
+        border-bottom: none;
+      }
+
+      &:hover {
+        background: $bg-elevated;
+      }
+    }
+
+    td {
+      padding: $sp-3 $sp-4;
+      vertical-align: middle;
+      line-height: $line-height-tight;
+
+      // Numeric cells
+      &.num,
+      &[data-align="right"] {
+        text-align: right;
+        font-family: $font-mono;
+        font-variant-numeric: tabular-nums;
+        letter-spacing: 0.01em;
+      }
+
+      // Monospace override
+      &.mono-cell {
+        font-family: $font-mono;
+        font-variant-numeric: tabular-nums;
+      }
+    }
+  }
+
+  // ----------------------------------
+  // Footer (totals row)
+  // ----------------------------------
+  tfoot {
+    tr {
+      background: $bg-elevated;
+      border-top: 2px solid $border-subtle;
+    }
+
+    td {
+      padding: $sp-3 $sp-4;
+      font-weight: 700;
+      color: $text-primary;
+      font-family: $font-mono;
+      font-variant-numeric: tabular-nums;
+    }
+  }
+}
+
+// ------------------------------------
+// P&L tinting — applied to <tr>
+// ------------------------------------
+.pnl-positive {
+  background: rgba($brand-teal, 0.06) !important;
+
+  td {
+    color: $text-primary;
+  }
+
+  // Left accent bar
+  td:first-child {
+    border-left: 2px solid rgba($brand-teal, 0.5);
+  }
+
+  &:hover {
+    background: rgba($brand-teal, 0.10) !important;
+  }
+}
+
+.pnl-negative {
+  background: rgba($brand-red, 0.06) !important;
+
+  td {
+    color: $text-primary;
+  }
+
+  td:first-child {
+    border-left: 2px solid rgba($brand-red, 0.4);
+  }
+
+  &:hover {
+    background: rgba($brand-red, 0.10) !important;
+  }
+}
+
+// ------------------------------------
+// P&L value colouring — applied to <td>
+// ------------------------------------
+.val-positive {
+  color: $brand-teal !important;
+  font-weight: 600;
+}
+
+.val-negative {
+  color: $brand-red !important;
+  font-weight: 600;
+}
+
+.val-neutral {
+  color: $text-secondary;
+}
+
+// ------------------------------------
+// Status pill inside a table cell
+// ------------------------------------
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: $sp-1;
+  padding: 2px $sp-2;
+  border-radius: 10px;
+  font-size: $font-size-xs;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+
+  &.pill-open     { background: rgba($brand-primary, 0.15); color: color.adjust($brand-primary, $lightness: 15%); }
+  &.pill-won      { background: rgba($brand-teal, 0.15);    color: $brand-teal; }
+  &.pill-lost     { background: rgba($brand-red, 0.15);     color: $brand-red; }
+  &.pill-pending  { background: rgba($brand-amber, 0.15);   color: $brand-amber; }
+  &.pill-settled  { background: rgba($text-muted, 0.1);     color: $text-muted; }
+}
+
+// ------------------------------------
+// Empty table state
+// ------------------------------------
+.table-empty {
+  td {
+    padding: $sp-8 $sp-4;
+    text-align: center;
+    color: $text-muted;
+    font-style: italic;
+    font-size: $font-size-sm;
+  }
+}
+
+// ------------------------------------
+// Compact density modifier
+// ------------------------------------
+.data-table--compact {
+  tbody td,
+  thead th {
+    padding: $sp-2 $sp-3;
+  }
+}
+
+// ------------------------------------
+// Table inside a card (no separate wrapper border needed)
+// ------------------------------------
+.table-card {
+  background: $bg-card;
+  border: 1px solid $border-subtle;
+  border-radius: $card-radius;
+  overflow: hidden;
+  margin-bottom: $sp-4;
+  box-shadow: $shadow-card;
+
+  .data-table {
+    margin: 0;
+  }
+
+  .table-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: $sp-4;
+    padding: $sp-3 $sp-5;
+    background: $bg-elevated;
+    border-bottom: 1px solid $border-subtle;
+
+    .table-title {
+      font-weight: 700;
+      font-size: $font-size-sm;
+      color: $text-secondary;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+  }
+}

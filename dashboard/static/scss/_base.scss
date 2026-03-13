@@ -1,0 +1,212 @@
+// ============================================================
+// _base.scss — Reset, root, global element styles
+// ============================================================
+
+@use 'variables' as *;
+@use 'sass:color';
+
+@import url('https://fonts.googleapis.com/css2?family=Merriweather:wght@700;900&family=Roboto:wght@300;400;500;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+
+// ------------------------------------
+// Box-sizing reset
+// ------------------------------------
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+// ------------------------------------
+// Root / HTML
+// ------------------------------------
+:root {
+  font-size: $font-size-base;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  font-family: $font-body;
+  font-weight: 400;
+  font-size: $font-size-base;
+  line-height: $line-height-normal;
+  color: $text-primary;
+  background-color: $bg-deep;
+  min-height: 100vh;
+}
+
+// ------------------------------------
+// Custom scrollbar (dark theme)
+// ------------------------------------
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: $bg-surface;
+}
+
+::-webkit-scrollbar-thumb {
+  background: $border-subtle;
+  border-radius: 3px;
+
+  &:hover {
+    background: color.adjust($border-subtle, $lightness: 10%);
+  }
+}
+
+// Firefox
+* {
+  scrollbar-width: thin;
+  scrollbar-color: $border-subtle $bg-surface;
+}
+
+// ------------------------------------
+// Typography
+// ------------------------------------
+h1, h2, h3, h4, h5, h6 {
+  font-family: $font-heading;
+  font-weight: 700;
+  line-height: $line-height-tight;
+  color: $text-primary;
+}
+
+p {
+  line-height: $line-height-normal;
+  color: $text-secondary;
+}
+
+a {
+  color: $brand-primary;
+  text-decoration: none;
+  transition: color $transition-fast;
+
+  &:hover {
+    color: color.adjust($brand-primary, $lightness: 12%);
+  }
+}
+
+code, pre {
+  font-family: $font-mono;
+}
+
+strong {
+  font-weight: 700;
+}
+
+small {
+  font-size: $font-size-sm;
+  color: $text-muted;
+}
+
+// ------------------------------------
+// Forms / Inputs (shared base)
+// ------------------------------------
+button {
+  font-family: $font-body;
+  cursor: pointer;
+  border: none;
+  background: none;
+
+  &:focus-visible {
+    outline: 2px solid $border-focus;
+    outline-offset: 2px;
+  }
+}
+
+// ------------------------------------
+// Horizontal rule / dividers
+// ------------------------------------
+hr,
+.we-divider {
+  border: none;
+  border-top: 1px solid $border-subtle;
+  margin: $sp-6 0;
+  opacity: 0.6;
+}
+
+// ------------------------------------
+// Utility: monospace number class
+// ------------------------------------
+.mono {
+  font-family: $font-mono;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+}
+
+// ------------------------------------
+// Utility: loading skeleton pulse
+// ------------------------------------
+@keyframes skeleton-pulse {
+  0%, 100% { opacity: 0.4; }
+  50%       { opacity: 0.8; }
+}
+
+.skeleton {
+  background: $bg-elevated;
+  border-radius: $card-radius;
+  animation: skeleton-pulse 1.6s ease-in-out infinite;
+  color: transparent !important;
+  pointer-events: none;
+  user-select: none;
+
+  * {
+    visibility: hidden;
+  }
+}
+
+// ------------------------------------
+// Utility: signal badge
+// ------------------------------------
+.signal-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 $sp-2;
+  border-radius: 11px;
+  background: $brand-secondary;
+  color: #fff;
+  font-family: $font-mono;
+  font-size: $font-size-xs;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0.02em;
+}
+
+// ------------------------------------
+// Utility: error message card
+// ------------------------------------
+.error-msg {
+  background: rgba($brand-red, 0.1);
+  border: 1px solid rgba($brand-red, 0.3);
+  border-left: 3px solid $brand-red;
+  border-radius: $card-radius;
+  padding: $sp-4 $sp-5;
+  color: color.adjust($brand-red, $lightness: 15%);
+  font-size: $font-size-sm;
+  line-height: $line-height-normal;
+  margin: $sp-4 0;
+}
+
+// ------------------------------------
+// Main page wrapper
+// ------------------------------------
+.we-page {
+  max-width: $container-max;
+  margin: 0 auto;
+  padding: 0 $sp-6;
+
+  @media (max-width: $bp-sm) {
+    padding: 0 $sp-4;
+  }
+}

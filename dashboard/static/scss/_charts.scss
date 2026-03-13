@@ -1,0 +1,125 @@
+// ============================================================
+// _charts.scss — Chart containers, Plotly wrappers
+// ============================================================
+
+@use 'variables' as *;
+@use 'sass:color';
+
+// ------------------------------------
+// Chart row — 2-column grid
+// ------------------------------------
+.chart-row {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: $sp-4;
+  margin-bottom: $sp-4;
+
+  @media (max-width: $bp-md) {
+    grid-template-columns: 1fr;
+  }
+}
+
+// Single-column override (when explicitly needed)
+.chart-row--single {
+  grid-template-columns: 1fr;
+}
+
+// Full-width override
+.chart-row--full {
+  grid-template-columns: 1fr;
+}
+
+// ------------------------------------
+// Individual chart card
+// ------------------------------------
+.chart-card {
+  position: relative;
+  background: $bg-card;
+  border: 1px solid $border-subtle;
+  border-radius: $card-radius;
+  box-shadow: $shadow-card;
+  overflow: hidden;
+  transition: box-shadow $transition-normal;
+
+  &:hover {
+    box-shadow: $shadow-raise;
+  }
+
+  // Top-left accent border
+  &::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, $brand-primary, transparent 70%);
+    opacity: 0.7;
+  }
+}
+
+// ------------------------------------
+// Chart label / title
+// ------------------------------------
+.chart-label {
+  padding: $sp-3 $sp-5 0;
+  font-family: $font-body;
+  font-weight: 700;
+  font-size: $font-size-sm;
+  color: $text-secondary;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  line-height: $line-height-tight;
+}
+
+// ------------------------------------
+// Plotly container sizing
+// ------------------------------------
+.chart-plotly {
+  width: 100%;
+  min-height: 280px;
+  padding: $sp-2;
+
+  // Override Plotly's default white background on modebar
+  .modebar {
+    background: transparent !important;
+  }
+
+  .modebar-btn svg {
+    fill: $text-muted !important;
+
+    &:hover {
+      fill: $text-primary !important;
+    }
+  }
+
+  // Plotly paper/plot background — set in chart options but override if needed
+  .plot-container {
+    background: transparent;
+  }
+}
+
+// ------------------------------------
+// Empty state within a chart card
+// ------------------------------------
+.chart-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 200px;
+  color: $text-muted;
+  font-size: $font-size-sm;
+  font-style: italic;
+  padding: $sp-6;
+  text-align: center;
+}
+
+// ------------------------------------
+// Chart footer annotation
+// ------------------------------------
+.chart-footnote {
+  padding: 0 $sp-5 $sp-3;
+  font-size: $font-size-xs;
+  color: $text-muted;
+  font-style: italic;
+}

@@ -1,0 +1,204 @@
+// ============================================================
+// _footer.scss — Risk footer, signal summary, risk controls
+// ============================================================
+
+@use 'variables' as *;
+@use 'sass:color';
+
+// ------------------------------------
+// Risk footer shell
+// ------------------------------------
+.risk-footer {
+  background: $bg-surface;
+  border-top: 1px solid $border-subtle;
+  padding: $sp-6;
+  margin-top: $sp-8;
+
+  @media (max-width: $bp-sm) {
+    padding: $sp-5 $sp-4;
+  }
+}
+
+.risk-footer-title {
+  font-family: $font-body;
+  font-weight: 700;
+  font-size: $font-size-sm;
+  color: $text-muted;
+  text-transform: uppercase;
+  letter-spacing: 0.10em;
+  margin-bottom: $sp-5;
+  display: flex;
+  align-items: center;
+  gap: $sp-2;
+
+  &::before {
+    content: '';
+    display: inline-block;
+    width: 3px;
+    height: 14px;
+    background: $brand-secondary;
+    border-radius: 2px;
+    flex-shrink: 0;
+  }
+}
+
+// ------------------------------------
+// Signal summary cards — 3-column
+// ------------------------------------
+.signal-summary-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: $sp-4;
+  margin-bottom: $sp-6;
+
+  @media (max-width: $bp-md) {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  @media (max-width: $bp-sm) {
+    grid-template-columns: 1fr;
+  }
+}
+
+.signal-card {
+  display: flex;
+  align-items: center;
+  gap: $sp-4;
+  padding: $sp-4 $sp-5;
+  background: $bg-card;
+  border: 1px solid $border-subtle;
+  border-radius: $card-radius;
+  box-shadow: $shadow-card;
+  transition: transform $transition-fast, box-shadow $transition-fast;
+
+  &:hover {
+    transform: translateY(-1px);
+    box-shadow: $shadow-raise;
+  }
+}
+
+.signal-card-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  flex-shrink: 0;
+
+  &.icon-bull {
+    background: rgba($brand-teal, 0.15);
+    color: $brand-teal;
+  }
+
+  &.icon-bear {
+    background: rgba($brand-red, 0.15);
+    color: $brand-red;
+  }
+
+  &.icon-neutral {
+    background: rgba($brand-primary, 0.15);
+    color: color.adjust($brand-primary, $lightness: 15%);
+  }
+}
+
+.signal-card-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.signal-card-label {
+  font-size: $font-size-xs;
+  color: $text-muted;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  font-weight: 500;
+}
+
+.signal-card-value {
+  font-family: $font-mono;
+  font-size: $font-size-xl;
+  font-weight: 600;
+  color: $text-primary;
+  line-height: $line-height-tight;
+  font-variant-numeric: tabular-nums;
+}
+
+// ------------------------------------
+// Risk controls grid
+// ------------------------------------
+.risk-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: $sp-3;
+
+  @media (max-width: $bp-md) {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  @media (max-width: $bp-sm) {
+    grid-template-columns: 1fr;
+  }
+}
+
+.risk-item {
+  display: flex;
+  flex-direction: column;
+  gap: $sp-1;
+  padding: $sp-3 $sp-4;
+  background: $bg-card;
+  border: 1px solid $border-subtle;
+  border-radius: $card-radius;
+  border-left: 3px solid $border-subtle;
+  transition: border-left-color $transition-fast;
+
+  &:hover {
+    border-left-color: $brand-primary;
+  }
+}
+
+.risk-item-label {
+  font-size: $font-size-xs;
+  color: $text-muted;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  font-weight: 500;
+  line-height: $line-height-tight;
+}
+
+.risk-item-value {
+  font-family: $font-mono;
+  font-size: $font-size-lg;
+  font-weight: 600;
+  color: $text-primary;
+  line-height: $line-height-tight;
+  font-variant-numeric: tabular-nums;
+}
+
+.risk-item-sub {
+  font-size: $font-size-xs;
+  color: $text-muted;
+  line-height: $line-height-tight;
+}
+
+// ------------------------------------
+// Page footer (copyright / build info)
+// ------------------------------------
+.page-footer {
+  text-align: center;
+  padding: $sp-5 $sp-6;
+  font-size: $font-size-xs;
+  color: $text-muted;
+  letter-spacing: 0.03em;
+  border-top: 1px solid $border-subtle;
+  margin-top: $sp-6;
+
+  a {
+    color: rgba($brand-primary, 0.7);
+
+    &:hover {
+      color: $brand-primary;
+    }
+  }
+}

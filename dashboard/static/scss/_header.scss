@@ -1,0 +1,278 @@
+// ============================================================
+// _header.scss — Top navigation bar
+// ============================================================
+
+@use 'variables' as *;
+@use 'sass:color';
+
+// ------------------------------------
+// Spin animation for refresh button
+// ------------------------------------
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+// ------------------------------------
+// Header shell
+// ------------------------------------
+.we-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: $sp-4;
+  height: $header-height;
+  padding: 0 $sp-6;
+  background: $bg-surface;
+  border-bottom: 1px solid $border-subtle;
+  position: sticky;
+  top: 0;
+  z-index: $z-raised;
+  // Subtle left glow
+  box-shadow: inset 3px 0 0 $brand-primary, $shadow-card;
+
+  @media (max-width: $bp-sm) {
+    padding: 0 $sp-4;
+    flex-wrap: wrap;
+    height: auto;
+    padding-top: $sp-3;
+    padding-bottom: $sp-3;
+  }
+}
+
+// ------------------------------------
+// Logo + text lockup
+// ------------------------------------
+.we-header-logo {
+  display: flex;
+  align-items: center;
+  gap: $sp-3;
+  flex-shrink: 0;
+
+  img,
+  svg {
+    width: 28px;
+    height: 37px;
+    display: block;
+  }
+}
+
+.we-header-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.we-header-title {
+  font-family: $font-heading;
+  font-weight: 900;
+  font-size: $font-size-lg;
+  color: $text-primary;
+  letter-spacing: -0.01em;
+  line-height: $line-height-tight;
+  white-space: nowrap;
+}
+
+.we-header-subtitle {
+  font-family: $font-body;
+  font-weight: 300;
+  font-size: $font-size-xs;
+  color: $text-muted;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+// ------------------------------------
+// Right-side controls
+// ------------------------------------
+.we-header-right {
+  display: flex;
+  align-items: center;
+  gap: $sp-4;
+  margin-left: auto;
+
+  @media (max-width: $bp-sm) {
+    gap: $sp-3;
+  }
+}
+
+// ------------------------------------
+// Refresh button
+// ------------------------------------
+.we-refresh-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: $btn-radius;
+  background: $bg-elevated;
+  border: 1px solid $border-subtle;
+  color: $text-secondary;
+  font-size: 16px;
+  line-height: 1;
+  transition: background $transition-fast, color $transition-fast, border-color $transition-fast;
+
+  &:hover {
+    background: $brand-primary;
+    color: #fff;
+    border-color: $brand-primary;
+  }
+
+  &:active {
+    transform: scale(0.93);
+  }
+
+  // The inner icon spins when .spinning is applied
+  &.spinning .we-refresh-icon,
+  .spinning & .we-refresh-icon,
+  &.spinning {
+    animation: spin 0.8s linear infinite;
+  }
+}
+
+// Standalone spin class (applied to child element or button itself)
+.spinning {
+  animation: spin 0.8s linear infinite;
+}
+
+// ------------------------------------
+// Mode badge
+// ------------------------------------
+.we-mode-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: $sp-1;
+  padding: 3px $sp-3;
+  border-radius: 12px;
+  font-family: $font-mono;
+  font-size: $font-size-xs;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  border: 1px solid transparent;
+  white-space: nowrap;
+
+  // Live indicator dot
+  &::before {
+    content: '';
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+  }
+}
+
+.we-mode-live {
+  background: rgba($brand-teal, 0.15);
+  color: $brand-teal;
+  border-color: rgba($brand-teal, 0.35);
+
+  &::before {
+    box-shadow: 0 0 4px $brand-teal;
+    animation: live-pulse 2s ease-in-out infinite;
+  }
+}
+
+.we-mode-paper {
+  background: rgba($brand-amber, 0.12);
+  color: $brand-amber;
+  border-color: rgba($brand-amber, 0.30);
+
+  &::before {
+    background: $brand-amber;
+  }
+}
+
+@keyframes live-pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.4; }
+}
+
+// ------------------------------------
+// Timestamp
+// ------------------------------------
+.we-timestamp {
+  font-family: $font-mono;
+  font-size: $font-size-xs;
+  color: $text-muted;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+
+  @media (max-width: $bp-sm) {
+    display: none;
+  }
+}
+
+// ------------------------------------
+// Collapsible expander (details/summary)
+// ------------------------------------
+.we-expander {
+  background: $bg-card;
+  border: 1px solid $border-subtle;
+  border-radius: $card-radius;
+  margin: $sp-4 0;
+  overflow: hidden;
+
+  summary {
+    display: flex;
+    align-items: center;
+    gap: $sp-2;
+    padding: $sp-3 $sp-5;
+    cursor: pointer;
+    font-weight: 500;
+    font-size: $font-size-sm;
+    color: $text-secondary;
+    user-select: none;
+    transition: background $transition-fast, color $transition-fast;
+    list-style: none; // remove default triangle in Firefox
+
+    // Remove WebKit disclosure arrow
+    &::-webkit-details-marker { display: none; }
+
+    // Custom arrow
+    &::before {
+      content: '▶';
+      font-size: 9px;
+      color: $text-muted;
+      transition: transform $transition-fast;
+      flex-shrink: 0;
+    }
+
+    &:hover {
+      background: $bg-elevated;
+      color: $text-primary;
+    }
+  }
+
+  &[open] summary {
+    border-bottom: 1px solid $border-subtle;
+    color: $text-primary;
+
+    &::before {
+      transform: rotate(90deg);
+    }
+  }
+}
+
+.we-expander-content {
+  padding: $sp-5;
+  font-size: $font-size-sm;
+  color: $text-secondary;
+  line-height: $line-height-loose;
+
+  p + p {
+    margin-top: $sp-3;
+  }
+
+  ul, ol {
+    padding-left: $sp-5;
+    margin-top: $sp-2;
+
+    li {
+      margin-bottom: $sp-1;
+    }
+  }
+}

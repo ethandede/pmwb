@@ -1,0 +1,265 @@
+// ============================================================
+// _metrics.scss — KPI metric cards, rows, section labels
+// ============================================================
+
+@use 'variables' as *;
+@use 'sass:color';
+
+// ------------------------------------
+// Section label (e.g. "Settled Performance")
+// ------------------------------------
+.section-label {
+  font-family: $font-body;
+  font-weight: 700;
+  font-size: $font-size-sm;
+  color: $text-secondary;
+  text-transform: uppercase;
+  letter-spacing: 0.10em;
+  padding: $sp-2 0;
+  margin-bottom: $sp-3;
+  border-bottom: 1px solid $border-subtle;
+  display: flex;
+  align-items: center;
+  gap: $sp-2;
+
+  // Optional accent line on left
+  &::before {
+    content: '';
+    display: inline-block;
+    width: 3px;
+    height: 14px;
+    background: $brand-primary;
+    border-radius: 2px;
+    flex-shrink: 0;
+  }
+}
+
+.section-desc {
+  font-size: $font-size-sm;
+  color: $text-muted;
+  margin-bottom: $sp-4;
+  line-height: $line-height-normal;
+}
+
+.caption {
+  font-size: $font-size-xs;
+  color: $text-muted;
+  font-style: italic;
+  line-height: $line-height-normal;
+}
+
+// ------------------------------------
+// Metric rows — grid containers
+// ------------------------------------
+.metric-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: $sp-4;
+  margin-bottom: $sp-4;
+
+  @media (max-width: $bp-md) {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  @media (max-width: $bp-sm) {
+    grid-template-columns: 1fr;
+  }
+}
+
+// 3-column variant
+.metric-row-3 {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: $sp-4;
+  margin-bottom: $sp-4;
+
+  @media (max-width: $bp-md) {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  @media (max-width: $bp-sm) {
+    grid-template-columns: 1fr;
+  }
+}
+
+// ------------------------------------
+// Individual metric card
+// ------------------------------------
+.metric-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: $sp-1;
+  padding: $sp-4 $sp-5;
+  background: $bg-card;
+  border: 1px solid $border-subtle;
+  border-left: 3px solid $border-subtle; // default; overridden by variants
+  border-radius: $card-radius;
+  box-shadow: $shadow-card;
+  overflow: hidden;
+  transition: transform $transition-fast, box-shadow $transition-fast, border-color $transition-fast;
+
+  &:hover {
+    transform: translateY(-1px);
+    box-shadow: $shadow-raise;
+  }
+
+  // Subtle top gradient shimmer
+  &::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.02) 0%, transparent 60%);
+    pointer-events: none;
+  }
+}
+
+// ------------------------------------
+// Card state variants (left border)
+// ------------------------------------
+.metric-positive {
+  border-left-color: $color-positive;
+
+  .metric-value {
+    color: $color-positive;
+  }
+
+  &::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: linear-gradient(90deg, rgba($color-positive, 0.4), transparent);
+  }
+}
+
+.metric-negative {
+  border-left-color: $color-negative;
+
+  .metric-value {
+    color: $color-negative;
+  }
+
+  &::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: linear-gradient(90deg, rgba($color-negative, 0.4), transparent);
+  }
+}
+
+.metric-neutral {
+  border-left-color: $border-subtle;
+  // value stays $text-primary
+}
+
+.metric-accent {
+  border-left-color: $brand-primary;
+
+  .metric-value {
+    color: color.adjust($brand-primary, $lightness: 15%);
+  }
+
+  &::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: linear-gradient(90deg, rgba($brand-primary, 0.4), transparent);
+  }
+}
+
+// ------------------------------------
+// Metric card internals
+// ------------------------------------
+.metric-label {
+  font-family: $font-body;
+  font-weight: 500;
+  font-size: $font-size-xs;
+  color: $text-muted;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  line-height: $line-height-tight;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.metric-value {
+  font-family: $font-mono;
+  font-weight: 600;
+  font-size: $font-size-2xl;
+  color: $text-primary;
+  line-height: $line-height-tight;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+
+  @media (max-width: $bp-md) {
+    font-size: $font-size-xl;
+  }
+}
+
+.metric-subtitle {
+  font-family: $font-body;
+  font-size: $font-size-xs;
+  color: $text-muted;
+  line-height: $line-height-tight;
+  margin-top: $sp-1;
+}
+
+// ------------------------------------
+// Scan meta (timestamp + rescan button)
+// ------------------------------------
+.scan-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: $sp-4;
+  padding: $sp-3 0;
+  margin-bottom: $sp-4;
+
+  @media (max-width: $bp-sm) {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: $sp-2;
+  }
+}
+
+.scan-time {
+  font-family: $font-mono;
+  font-size: $font-size-xs;
+  color: $text-muted;
+  letter-spacing: 0.03em;
+}
+
+.force-rescan-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: $sp-2;
+  padding: $sp-2 $sp-4;
+  background: $bg-elevated;
+  border: 1px solid $border-subtle;
+  border-radius: $btn-radius;
+  color: $text-secondary;
+  font-family: $font-body;
+  font-size: $font-size-sm;
+  font-weight: 500;
+  transition: background $transition-fast, color $transition-fast, border-color $transition-fast;
+
+  &:hover {
+    background: $brand-primary;
+    color: #fff;
+    border-color: $brand-primary;
+  }
+
+  &:active {
+    transform: scale(0.97);
+  }
+}

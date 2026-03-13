@@ -1,0 +1,17 @@
+// ============================================================
+// main.scss — Weather Edge Dashboard
+// Entry point: imports all partials in dependency order
+// ============================================================
+
+// 1. Design tokens (no output, pure variables)
+@use 'variables' as *;
+
+// 2. Base reset + global element styles + utility classes
+@use 'base';
+
+// 3. Layout components
+@use 'header';
+@use 'metrics';
+@use 'charts';
+@use 'tables';
+@use 'footer';
