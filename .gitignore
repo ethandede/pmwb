@@ -10,3 +10,4 @@ logs/
 data/
 .worktrees/
 .pytest_cache/
+.superpowers/
