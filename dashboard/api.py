@@ -270,3 +270,9 @@ async def config():
         "drawdown_threshold": DRAWDOWN_THRESHOLD,
         "daily_stop_pct": DAILY_STOP_PCT,
     }
+
+
+@app.get("/api/health")
+async def health():
+    from health_check import run_health_check
+    return run_health_check()
