@@ -332,20 +332,18 @@ function confidenceScatter(markets, containerId, labelId) {
         hovertemplate: '%{text}<br>Edge: %{x:.1f}%<br>Conf: %{y}<extra></extra>',
     };
 
-    // Fit axes to actual data range with padding
-    const minEdge = Math.min(...edges);
-    const maxEdge = Math.max(...edges);
-    const edgeSpan = maxEdge - minEdge || 1;
-    const xPad = edgeSpan * 0.15;
+    // Cap x-axis at 90th percentile to prevent outliers from compressing the chart
+    const sorted = [...edges].sort((a, b) => a - b);
+    const p90 = sorted[Math.floor(sorted.length * 0.9)] || sorted[sorted.length - 1];
+    const xMax = Math.max(p90 * 1.2, 10);
 
-    // Confidence is produced in [55, 100] — use that as the meaningful range
     const layout = {
         ...PLOTLY_LAYOUT,
         xaxis: {
             ...PLOTLY_LAYOUT.xaxis,
             title: { text: 'Edge (%)', font: { color: 'rgba(255,255,255,0.6)', size: 11 } },
             tickformat: '.1f',
-            range: [Math.max(0, minEdge - xPad), maxEdge + xPad],
+            range: [0, xMax],
         },
         yaxis: {
             ...PLOTLY_LAYOUT.yaxis,
