@@ -1,4 +1,129 @@
 <!DOCTYPE html>
-<html><head><title>Weather Edge</title></head>
-<body><h1>Weather Edge — frontend coming soon</h1></body>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Weather Edge</title>
+    <link rel="stylesheet" href="/static/css/main.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Merriweather:wght@700;900&family=Roboto:wght@300;400;500;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.plot.ly/plotly-2.35.0.min.js" charset="utf-8"></script>
+</head>
+<body>
+    <!-- Header -->
+    <header class="we-header">
+        <img src="/static/assets/logo.svg" alt="WE" class="we-header-logo">
+        <div class="we-header-text">
+            <h1 class="we-header-title">Weather Edge</h1>
+            <p class="we-header-subtitle">Automated Weather Market Trading Terminal</p>
+        </div>
+        <div class="we-header-right">
+            <button class="we-refresh-btn" id="refresh-btn" title="Refresh data">↻</button>
+            <div class="we-header-meta">
+                <span id="mode-badge" class="we-mode-badge"></span>
+                <span id="header-timestamp" class="we-timestamp"></span>
+            </div>
+        </div>
+    </header>
+
+    <!-- How This Works -->
+    <details class="we-expander">
+        <summary>How This Works</summary>
+        <div class="we-expander-content">
+            <p>This bot scans Kalshi weather markets every 15 minutes, comparing market prices against a multi-model ensemble forecast (GFS, ECMWF, CFS, HRRR). When the model detects meaningful edge — the difference between our probability estimate and the market price — it sizes positions using a modified Kelly criterion and places limit orders.</p>
+            <p>The forecast pipeline fuses up to 4 weather models with confidence weighting and bias correction. Position sizing uses a sigmoid-dampened fractional Kelly formula that accounts for model confidence, fee drag, and bankroll constraints.</p>
+        </div>
+    </details>
+
+    <!-- Portfolio -->
+    <section id="portfolio-section">
+        <h2>Portfolio</h2>
+        <div id="portfolio-balance" class="metric-row"></div>
+        <div id="portfolio-settled-label" class="section-label">Settled Performance</div>
+        <div id="portfolio-settled" class="metric-row"></div>
+        <div id="open-positions-header"></div>
+        <div id="open-positions-table"></div>
+        <div id="open-positions-caption" class="caption"></div>
+        <details class="we-expander" id="resting-orders-expander">
+            <summary>Resting Orders (<span id="resting-count">0</span>)</summary>
+            <div id="resting-orders-table"></div>
+        </details>
+    </section>
+
+    <hr class="we-divider">
+
+    <!-- Performance -->
+    <section id="performance-section">
+        <h2>Performance</h2>
+        <div class="chart-row">
+            <div class="chart-card">
+                <div class="chart-label">Equity Curve</div>
+                <div id="equity-chart"></div>
+            </div>
+            <div class="chart-card">
+                <div class="chart-label">Model Accuracy — Predicted vs Actual</div>
+                <div id="accuracy-chart"></div>
+            </div>
+        </div>
+    </section>
+
+    <hr class="we-divider">
+
+    <!-- Precipitation Markets -->
+    <section id="precip-section">
+        <h2>Precipitation Markets</h2>
+        <p class="section-desc">Monthly cumulative rainfall contracts. Settles at month-end via official station readings.</p>
+        <div class="scan-meta">
+            <span id="precip-scan-time" class="scan-time"></span>
+            <button class="force-rescan-btn" id="precip-rescan">Force Rescan</button>
+        </div>
+        <div id="precip-table"></div>
+        <div class="chart-row">
+            <div class="chart-card">
+                <div class="chart-label">Edge by City</div>
+                <div id="precip-edge-chart"></div>
+            </div>
+            <div class="chart-card">
+                <div class="chart-label" id="precip-chart2-label">Edge Heatmap — City x Date</div>
+                <div id="precip-heatmap-chart"></div>
+            </div>
+        </div>
+        <div id="precip-signal-badge"></div>
+    </section>
+
+    <hr class="we-divider">
+
+    <!-- Temperature Markets -->
+    <section id="temp-section">
+        <h2>Temperature Markets</h2>
+        <p class="section-desc">Daily high temperature contracts across US cities. Settles next day via official airport readings.</p>
+        <div class="scan-meta">
+            <span id="temp-scan-time" class="scan-time"></span>
+            <button class="force-rescan-btn" id="temp-rescan">Force Rescan</button>
+        </div>
+        <div id="temp-table"></div>
+        <div class="chart-row">
+            <div class="chart-card">
+                <div class="chart-label">Edge by City</div>
+                <div id="temp-edge-chart"></div>
+            </div>
+            <div class="chart-card">
+                <div class="chart-label" id="temp-chart2-label">Edge Heatmap — City x Date</div>
+                <div id="temp-heatmap-chart"></div>
+            </div>
+        </div>
+        <div id="temp-signal-badge"></div>
+    </section>
+
+    <hr class="we-divider">
+
+    <!-- Footer -->
+    <footer>
+        <div id="signal-summary" class="metric-row metric-row-3"></div>
+        <div id="risk-controls" class="risk-footer"></div>
+    </footer>
+
+    <!-- JS modules -->
+    <script type="module" src="/static/js/app.js"></script>
+</body>
 </html>
