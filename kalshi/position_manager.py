@@ -17,7 +17,7 @@ from typing import Optional, Tuple
 from rich.console import Console
 from rich.table import Table
 
-from kalshi.trader import get_positions, get_balance, sell_order, _sign_request, _BASE_URL, _load_credentials
+from kalshi.trader import get_positions, get_balance, sell_order, get_orders, _sign_request, _BASE_URL, _load_credentials
 from kalshi.scanner import WEATHER_SERIES, parse_kalshi_bucket, PRECIP_SERIES
 try:
     from kalshi.scanner import WEATHER_SERIES_LOW
@@ -429,8 +429,15 @@ def run_position_manager():
 
     mode_label = "PAPER" if PAPER_MODE else "LIVE"
 
-    # Execute exits
+    # Execute exits — but skip if there's already a resting sell for that ticker
     if exits:
+        # Fetch resting orders once to check for duplicates
+        try:
+            resting = get_orders(status="resting")
+            resting_tickers = {o.get("ticker", "") for o in resting if o.get("action") == "sell"}
+        except Exception:
+            resting_tickers = set()
+
         console.print(f"\n[bold yellow]Executing {len(exits)} exits...[/bold yellow]\n")
 
         for ticker, result in exits:
@@ -438,6 +445,11 @@ def run_position_manager():
             qty = result["qty"]
             price = result.get("sell_price_cents", 1)
             reason = result["reason"]
+
+            # Skip if there's already a resting sell order for this ticker
+            if ticker in resting_tickers:
+                console.print(f"  [dim]SKIP {ticker} — resting sell order already exists[/dim]")
+                continue
 
             console.print(f"  [{mode_label}] SELL {side.upper()} {qty}x {ticker} @ {price}¢")
             console.print(f"    Reason: {reason}")
