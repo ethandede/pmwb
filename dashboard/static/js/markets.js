@@ -68,15 +68,28 @@ function fmtScanTime(isoStr) {
  * @param {Array} markets
  * @returns {string}
  */
-function marketsTable(markets) {
+// Column definitions for sortable headers
+const COLUMNS = [
+    { key: 'city',         label: 'City',       num: false },
+    { key: 'ticker',       label: 'Ticker',     num: false },
+    { key: 'threshold',    label: 'Threshold',  num: false },
+    { key: 'model_prob',   label: 'Model',      num: true  },
+    { key: 'market_price', label: 'Market',     num: true  },
+    { key: 'edge',         label: 'Edge',       num: true  },
+    { key: 'direction',    label: 'Direction',  num: false },
+    { key: 'confidence',   label: 'Confidence', num: true  },
+];
+
+// Track sort state per table type
+const _sortState = {};
+
+function marketsTable(markets, type) {
     if (!markets || markets.length === 0) {
         return `
         <table class="data-table">
           <thead>
             <tr>
-              <th>City</th><th>Ticker</th><th>Threshold</th>
-              <th class="num">Model</th><th class="num">Market</th>
-              <th class="num">Edge</th><th>Direction</th><th class="num">Confidence</th>
+              ${COLUMNS.map(c => `<th${c.num ? ' class="num"' : ''}>${c.label}</th>`).join('')}
             </tr>
           </thead>
           <tbody class="table-empty">
@@ -85,22 +98,21 @@ function marketsTable(markets) {
         </table>`.trim();
     }
 
-    // Sort by absolute edge descending
-    const sorted = [...markets].sort((a, b) => Math.abs(b.edge) - Math.abs(a.edge));
+    // Determine sort
+    const st = _sortState[type] || { key: 'edge', dir: 'desc', abs: true };
+    const sorted = [...markets].sort((a, b) => {
+        let va = a[st.key], vb = b[st.key];
+        if (st.abs) { va = Math.abs(va); vb = Math.abs(vb); }
+        if (typeof va === 'string') return st.dir === 'asc' ? va.localeCompare(vb) : vb.localeCompare(va);
+        return st.dir === 'asc' ? va - vb : vb - va;
+    });
 
     const rows = sorted.map(m => {
-        // Edge color
         const edgeClass = m.edge > 0 ? 'val-positive' : m.edge < 0 ? 'val-negative' : 'val-neutral';
-
-        // Confidence color
         let confClass;
-        if (m.confidence >= 60) {
-            confClass = 'val-positive';
-        } else if (m.confidence >= 40) {
-            confClass = 'val-amber';
-        } else {
-            confClass = 'val-negative';
-        }
+        if (m.confidence >= 60) confClass = 'val-positive';
+        else if (m.confidence >= 40) confClass = 'val-amber';
+        else confClass = 'val-negative';
 
         return `
         <tr>
@@ -115,17 +127,43 @@ function marketsTable(markets) {
         </tr>`.trim();
     }).join('\n');
 
+    const headers = COLUMNS.map(c => {
+        const arrow = st.key === c.key ? (st.dir === 'asc' ? ' ↑' : ' ↓') : '';
+        return `<th${c.num ? ' class="num"' : ''} data-sort-key="${c.key}" style="cursor:pointer;user-select:none">${c.label}${arrow}</th>`;
+    }).join('');
+
     return `
-    <table class="data-table">
-      <thead>
-        <tr>
-          <th>City</th><th>Ticker</th><th>Threshold</th>
-          <th class="num">Model</th><th class="num">Market</th>
-          <th class="num">Edge</th><th>Direction</th><th class="num">Confidence</th>
-        </tr>
-      </thead>
+    <table class="data-table" data-market-type="${type}">
+      <thead><tr>${headers}</tr></thead>
       <tbody>${rows}</tbody>
     </table>`.trim();
+}
+
+/**
+ * Attach click-to-sort handlers on a rendered markets table.
+ * @param {string} type - "precip" or "temp"
+ * @param {Array} markets - raw market data for re-render
+ */
+function attachSortHandlers(type, markets) {
+    const container = document.getElementById(`${type}-table`);
+    if (!container) return;
+    const ths = container.querySelectorAll('th[data-sort-key]');
+    ths.forEach(th => {
+        th.addEventListener('click', () => {
+            const key = th.dataset.sortKey;
+            const prev = _sortState[type] || { key: 'edge', dir: 'desc', abs: true };
+            if (prev.key === key) {
+                // Toggle direction
+                _sortState[type] = { key, dir: prev.dir === 'desc' ? 'asc' : 'desc', abs: false };
+            } else {
+                // New column — numeric defaults desc, string defaults asc
+                const col = COLUMNS.find(c => c.key === key);
+                _sortState[type] = { key, dir: col && col.num ? 'desc' : 'asc', abs: false };
+            }
+            container.innerHTML = marketsTable(markets, type);
+            attachSortHandlers(type, markets);
+        });
+    });
 }
 
 // ─── Edge bar chart ─────────────────────────────────────────────────────────
@@ -288,16 +326,23 @@ function confidenceScatter(markets, containerId, labelId) {
         hovertemplate: '%{text}<br>Edge: %{x:+.1f}%<br>Conf: %{y}<extra></extra>',
     };
 
+    // Constrain x-axis to data range with padding, not Plotly's auto-range
+    const minEdge = Math.min(...edges);
+    const maxEdge = Math.max(...edges);
+    const pad = Math.max((maxEdge - minEdge) * 0.15, 2);
+
     const layout = {
         ...PLOTLY_LAYOUT,
         xaxis: {
             ...PLOTLY_LAYOUT.xaxis,
             title: { text: 'Edge (%)', font: { color: 'rgba(255,255,255,0.6)', size: 11 } },
             tickformat: '+.1f',
+            range: [minEdge - pad, maxEdge + pad],
         },
         yaxis: {
             ...PLOTLY_LAYOUT.yaxis,
             title: { text: 'Confidence', font: { color: 'rgba(255,255,255,0.6)', size: 11 } },
+            range: [0, 100],
         },
     };
 
@@ -353,10 +398,11 @@ async function renderMarkets(data, type) {
         scanTimeEl.textContent = scan_time ? `Last scan: ${fmtScanTime(scan_time)}` : '';
     }
 
-    // 2. Data table
+    // 2. Data table (sortable)
     const tableEl = document.getElementById(`${type}-table`);
     if (tableEl) {
-        tableEl.innerHTML = marketsTable(markets);
+        tableEl.innerHTML = marketsTable(markets, type);
+        attachSortHandlers(type, markets);
     }
 
     // 3. Edge bar chart
