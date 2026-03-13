@@ -11,6 +11,7 @@ compute bucket probabilities independently, then fuse with weighted average.
 Confidence score gates trading decisions.
 """
 
+import math
 import os
 import sqlite3
 import requests
@@ -20,6 +21,15 @@ from weather.forecast import get_ensemble_precip, get_nws_precip_forecast
 from weather import cache as fcache
 from weather.precip_model import gamma_precip_prob
 from config import BIAS_DB_PATH, FUSION_WEIGHTS, PRECIP_FUSION_WEIGHTS
+
+
+def _get_liquidity_score(market: dict) -> float:
+    """Normalize volume + open interest to [0, 1] for confidence scoring.
+    Typical Kalshi weather markets: $500 ~ 0.2, $5k ~ 0.6, $50k+ ~ 1.0"""
+    volume = float(market.get("volume_24h_fp", 0) or 0)
+    oi = float(market.get("open_interest_fp", 0) or 0)
+    combined = volume + (oi * 0.6)  # OI slightly downweighted
+    return min(1.0, max(0.0, math.log(combined + 100) / math.log(50000)))
 
 
 def _calculate_confidence(
@@ -253,6 +263,7 @@ def fuse_forecast(
     lat: float, lon: float, city: str, month: int,
     low: float, high: Optional[float],
     days_ahead: int = 1, unit: str = "f", temp_type: str = "max",
+    liquidity_score: float = 0.5,
 ) -> Tuple[float, float, dict]:
     """Run multi-model fusion and return (fused_prob, confidence, details).
 
@@ -378,6 +389,7 @@ def fuse_forecast(
     confidence = _calculate_confidence(
         agreement, spread_norm, bias_available, csgd_success,
         nws_agreement, horizon_days=days_ahead,
+        liquidity_score=liquidity_score,
     )
     details["confidence"] = confidence
 
@@ -387,6 +399,7 @@ def fuse_forecast(
 def fuse_precip_forecast(
     lat: float, lon: float, city: str, month: int,
     threshold: float, forecast_days: Optional[int] = None,
+    liquidity_score: float = 0.5,
 ) -> Tuple[float, float, dict]:
     """Precipitation fusion. Returns (fused_prob, confidence, details).
 
@@ -486,6 +499,7 @@ def fuse_precip_forecast(
     confidence = _calculate_confidence(
         agreement, spread_norm, bias_available, csgd_success,
         nws_agreement, horizon_days=forecast_days or 1,
+        liquidity_score=liquidity_score,
     )
     details["confidence"] = confidence
 

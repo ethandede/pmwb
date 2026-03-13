@@ -5,7 +5,7 @@ from rich.console import Console
 from rich.table import Table
 from config import CITIES, EDGE_THRESHOLD, SHOW_THRESHOLD, DUTCH_BOOK_THRESHOLD, ALERT_THRESHOLD, PAPER_MODE, CONFIDENCE_THRESHOLD
 from weather.forecast import get_ensemble_max_temps, get_bucket_prob
-from weather.multi_model import fuse_forecast
+from weather.multi_model import fuse_forecast, _get_liquidity_score
 from polymarket.gamma import get_active_weather_markets, parse_bucket
 from alerts.telegram_alert import send_signal_alert
 from logging_utils import log_signal
@@ -209,6 +209,7 @@ def run_scanner():
             model_prob, confidence, details = fuse_forecast(
                 market["_lat"], market["_lon"], city_key, month,
                 low, high, days_ahead=days_ahead, unit=unit, temp_type=temp_type,
+                liquidity_score=_get_liquidity_score(market),
             )
         except Exception as e:
             console.print(f"[red]Fusion error for {city_key}: {e}[/red]")
@@ -332,6 +333,7 @@ def run_scanner():
             model_prob, confidence, details = fuse_precip_forecast(
                 market["_lat"], market["_lon"], city_key, month,
                 threshold=threshold, forecast_days=forecast_days,
+                liquidity_score=_get_liquidity_score(market),
             )
             # Adjust probability for blind days using climatological base rates
             if blind_days > 0:
