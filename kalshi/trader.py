@@ -119,6 +119,7 @@ def sell_order(ticker: str, side: str, price_cents: int, count: int) -> dict:
 
 
 _scan_spent = 0.0  # tracks dollars spent in current scan cycle
+_resting_buy_tickers: set[str] | None = None  # cached per scan cycle
 
 from risk.bankroll import BankrollTracker
 from risk.circuit_breaker import CircuitBreaker
@@ -148,8 +149,9 @@ _circuit_breaker = CircuitBreaker()
 
 def reset_scan_budget():
     """Reset per-scan spending tracker. Call at start of each scan."""
-    global _scan_spent
+    global _scan_spent, _resting_buy_tickers
     _scan_spent = 0.0
+    _resting_buy_tickers = None  # force re-fetch next signal
     # Refresh bankroll from API (non-fatal if offline)
     try:
         bal = get_balance()
@@ -177,6 +179,18 @@ def execute_kalshi_signal(market: dict, city: str, model_prob: float, market_pro
     ticker = market.get("ticker", "")
     if not ticker:
         print("No ticker in market data — skipping")
+        return
+
+    # Skip if there's already a resting buy order for this ticker
+    global _resting_buy_tickers
+    if _resting_buy_tickers is None:
+        try:
+            resting = get_orders(status="resting")
+            _resting_buy_tickers = {o.get("ticker", "") for o in resting if o.get("action") == "buy"}
+        except Exception:
+            _resting_buy_tickers = set()
+    if ticker in _resting_buy_tickers:
+        print(f"\n  SKIP {ticker} — resting buy order already exists")
         return
 
     # Determine side: positive edge = buy YES, negative = buy NO
@@ -235,6 +249,9 @@ def execute_kalshi_signal(market: dict, city: str, model_prob: float, market_pro
         order_id = order.get("order_id", "unknown")
         status = order.get("status", "unknown")
         print(f"  Order posted! ID: {order_id} Status: {status}")
+
+        # Track this ticker so we don't duplicate within the same scan cycle
+        _resting_buy_tickers.add(ticker)
 
         # Verify actual fill from response
         fill_qty = int(float(order.get("fill_count_fp", "0") or "0"))

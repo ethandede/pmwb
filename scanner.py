@@ -40,17 +40,36 @@ def _buckets_overlap(lo1, hi1, lo2, hi2) -> bool:
 
 
 def _get_existing_positions() -> dict[str, int]:
-    """Fetch open positions and return {ticker: abs_qty} for deduplication."""
+    """Fetch open positions AND resting buy orders → {ticker: abs_qty}.
+
+    Counts both filled positions and resting buy orders so the per-event cap
+    prevents duplicate entries across scan cycles.
+    """
+    result: dict[str, int] = {}
     try:
-        from kalshi.trader import get_positions
+        from kalshi.trader import get_positions, get_orders
         positions = get_positions()
-        return {
-            p.get("ticker", ""): int(abs(float(p.get("position_fp", "0"))))
-            for p in positions
-            if float(p.get("position_fp", "0")) != 0
-        }
+        for p in positions:
+            qty = int(abs(float(p.get("position_fp", "0"))))
+            if qty > 0:
+                result[p.get("ticker", "")] = qty
     except Exception:
-        return {}
+        pass
+
+    # Also count resting buy orders (unfilled entries from previous cycles)
+    try:
+        from kalshi.trader import get_orders
+        resting = get_orders(status="resting")
+        for o in resting:
+            if o.get("action") == "buy":
+                ticker = o.get("ticker", "")
+                remaining = int(float(o.get("remaining_count_fp", "0") or "0"))
+                if remaining > 0:
+                    result[ticker] = result.get(ticker, 0) + remaining
+    except Exception:
+        pass
+
+    return result
 
 
 def run_scanner():
