@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from kalshi.trader import get_balance, get_positions
 from alerts.telegram_alert import send_signal_alert
 from config import PAPER_MODE
+from dashboard.equity_db import init_equity_db, record_equity_snapshot
 
 DB_PATH = "data/trades.db"
 
@@ -73,6 +74,8 @@ def main():
         print(f"Total Equity   : ${total_equity:,.2f} (Cash ${cash:,.2f} | Positions ${portfolio:,.2f})")
     except Exception:
         total_equity = 0.0
+        cash = 0.0
+        portfolio = 0.0
         print("Bankroll sync failed — using last known")
 
     # 2. Realized P&L
@@ -86,6 +89,27 @@ def main():
     # 4. Total
     total_pnl = round(realized + unrealized, 2)
     print(f"**Total P&L**  : ${total_pnl:,.2f}")
+
+    # Record equity snapshot
+    try:
+        init_equity_db()
+        settled_positions = get_positions(settlement_status="settled")
+        wins = sum(1 for p in settled_positions if float(p.get("realized_pnl_dollars", "0")) > 0)
+        losses = sum(1 for p in settled_positions if float(p.get("realized_pnl_dollars", "0")) < 0)
+        settled_fees = sum(float(p.get("fees_paid_dollars", "0")) for p in settled_positions)
+        record_equity_snapshot(
+            date=datetime.now().strftime("%Y-%m-%d"),
+            total_equity=total_equity,
+            cash=cash,
+            portfolio_value=portfolio,
+            realized_pnl=realized,
+            fees_paid=settled_fees,
+            win_count=wins,
+            loss_count=losses,
+        )
+        print("Equity snapshot recorded.")
+    except Exception as e:
+        print(f"Equity snapshot failed: {e}")
 
     # Telegram summary
     message = (
