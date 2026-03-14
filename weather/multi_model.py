@@ -10,6 +10,7 @@ import math
 import os
 import sqlite3
 import requests
+from weather.http import get as http_get
 from typing import List, Optional, Tuple, Dict
 from weather.forecast import get_ensemble_max_temps, get_ensemble_min_temps, get_bucket_prob
 from weather.forecast import get_ensemble_precip, get_nws_precip_forecast
@@ -186,14 +187,14 @@ def get_noaa_point_forecast(lat: float, lon: float, days_ahead: int = 1, unit: s
         cache_key = (round(lat, 4), round(lon, 4))
         if cache_key not in _nws_cache:
             points_url = f"https://api.weather.gov/points/{lat},{lon}"
-            r = requests.get(points_url, headers=NWS_HEADERS, timeout=10)
+            r = http_get(points_url, headers=NWS_HEADERS, timeout=10)
             r.raise_for_status()
             forecast_url = r.json()["properties"]["forecast"]
             _nws_cache[cache_key] = forecast_url
         else:
             forecast_url = _nws_cache[cache_key]
 
-        r = requests.get(forecast_url, headers=NWS_HEADERS, timeout=10)
+        r = http_get(forecast_url, headers=NWS_HEADERS, timeout=10)
         r.raise_for_status()
         periods = r.json()["properties"]["periods"]
 
@@ -239,7 +240,7 @@ def get_hrrr_forecast(lat: float, lon: float, days_ahead: int = 1, unit: str = "
             f"&timezone=auto"
             f"&forecast_days={days_ahead + 2}"
         )
-        r = requests.get(url, timeout=10)
+        r = http_get(url, timeout=10)
         r.raise_for_status()
         data = r.json()
         temps = data.get("daily", {}).get(daily_var, [])

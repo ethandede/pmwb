@@ -3,6 +3,7 @@ import re
 import calendar
 from datetime import date
 from typing import List
+from weather.http import get as http_get
 
 def get_ensemble_max_temps(lat: float, lon: float, days_ahead: int = 1, unit: str = "f") -> List[float]:
     """Open-Meteo Ensemble — returns daily max temps in the correct unit (F or C)."""
@@ -17,7 +18,7 @@ def get_ensemble_max_temps(lat: float, lon: float, days_ahead: int = 1, unit: st
     )
 
     try:
-        r = requests.get(url, timeout=15)
+        r = http_get(url, timeout=15)
         r.raise_for_status()
         data = r.json()
 
@@ -61,7 +62,7 @@ def get_ensemble_min_temps(lat: float, lon: float, days_ahead: int = 1, unit: st
     )
 
     try:
-        r = requests.get(url, timeout=15)
+        r = http_get(url, timeout=15)
         r.raise_for_status()
         data = r.json()
 
@@ -137,7 +138,7 @@ def get_ensemble_precip(lat: float, lon: float, forecast_days: int | None = None
     )
 
     try:
-        r = requests.get(url, timeout=15)
+        r = http_get(url, timeout=15)
         r.raise_for_status()
         data = r.json()
 
@@ -178,11 +179,11 @@ def get_nws_precip_forecast(lat: float, lon: float) -> tuple[float, float]:
     try:
         points_url = f"https://api.weather.gov/points/{lat},{lon}"
         headers = {"User-Agent": "weather-bot/1.0"}
-        r = requests.get(points_url, headers=headers, timeout=10)
+        r = http_get(points_url, headers=headers, timeout=10)
         r.raise_for_status()
         forecast_url = r.json()["properties"]["forecast"]
 
-        r2 = requests.get(forecast_url, headers=headers, timeout=10)
+        r2 = http_get(forecast_url, headers=headers, timeout=10)
         r2.raise_for_status()
         periods = r2.json()["properties"]["periods"]
 
