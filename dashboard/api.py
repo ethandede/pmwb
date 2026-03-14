@@ -184,17 +184,22 @@ async def get_activity(limit: int = Query(50)):
     for r in rows:
         ticker = r["ticker"]
         scan = scan_lookup.get(ticker, {})
+        side_str = r["side"] or ""
+        is_no = "no" in side_str
+        raw_edge = scan.get("edge")
+        # Scan cache stores edge from YES perspective; flip for NO trades
+        edge = -raw_edge if raw_edge is not None and is_no else raw_edge
         result.append({
             "ticker": ticker,
             "city": ticker_to_city(ticker) if not r["city"] else r["city"],
-            "action": "SELL" if (r["side"] or "").startswith("sell") else "BUY",
-            "side": "YES" if "yes" in (r["side"] or "") else "NO",
+            "action": "SELL" if side_str.startswith("sell") else "BUY",
+            "side": "NO" if is_no else "YES",
             "price": r["fill_price"],
             "qty": r["fill_qty"],
             "time": r["fill_time"],
             "outcome": r["settlement_outcome"],
             "pnl": round(r["pnl"], 2) if r["pnl"] is not None else None,
-            "edge": round(scan["edge"], 4) if "edge" in scan else None,
+            "edge": round(edge, 4) if edge is not None else None,
             "confidence": round(scan["confidence"], 1) if "confidence" in scan else None,
         })
     return result
