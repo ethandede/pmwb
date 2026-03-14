@@ -16,11 +16,19 @@ function fmtTime(isoStr) {
     } catch (_) { return isoStr; }
 }
 
+function fmtEdge(n) {
+    if (n === null || n === undefined) return '\u2014';
+    const pct = (n * 100).toFixed(1);
+    return n >= 0 ? `+${pct}%` : `${pct}%`;
+}
+
 function activityTable(items, page) {
     const headers = `
         <tr>
           <th>Time</th><th>City</th><th>Action</th>
-          <th class="num">Price</th><th class="num">Qty</th><th>Outcome</th><th class="num">P&amp;L</th>
+          <th class="num">Price</th><th class="num">Qty</th>
+          <th class="num">Edge</th><th class="num">Conf</th>
+          <th>Outcome</th><th class="num">P&amp;L</th>
         </tr>`;
 
     if (!items || items.length === 0) {
@@ -28,7 +36,7 @@ function activityTable(items, page) {
         <table class="data-table">
           <thead>${headers}</thead>
           <tbody class="table-empty">
-            <tr><td colspan="7">No activity yet</td></tr>
+            <tr><td colspan="9">No activity yet</td></tr>
           </tbody>
         </table>`.trim();
     }
@@ -55,6 +63,9 @@ function activityTable(items, page) {
             pnlHtml = `<span class="${cls}">${sign}$${Math.abs(t.pnl).toFixed(2)}</span>`;
         }
 
+        const edgeClass = t.edge > 0 ? 'val-positive' : t.edge < 0 ? 'val-negative' : '';
+        const confClass = t.confidence >= 60 ? 'val-positive' : t.confidence >= 40 ? 'val-amber' : t.confidence !== null ? 'val-negative' : '';
+
         return `
         <tr>
           <td class="mono" style="white-space:nowrap">${fmtTime(t.time)}</td>
@@ -62,6 +73,8 @@ function activityTable(items, page) {
           <td class="${actionClass}">${sideLabel}</td>
           <td class="num mono">${t.price}\u00a2</td>
           <td class="num mono">${t.qty}</td>
+          <td class="num mono ${edgeClass}">${fmtEdge(t.edge)}</td>
+          <td class="num mono ${confClass}">${t.confidence !== null && t.confidence !== undefined ? t.confidence.toFixed(1) : '\u2014'}</td>
           <td>${outcomeHtml}</td>
           <td class="num mono">${pnlHtml}</td>
         </tr>`.trim();

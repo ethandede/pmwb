@@ -165,10 +165,28 @@ async def get_activity(limit: int = Query(50)):
         (limit,),
     ).fetchall()
     conn.close()
-    return [
-        {
-            "ticker": r["ticker"],
-            "city": ticker_to_city(r["ticker"]) if not r["city"] else r["city"],
+
+    # Look up edge/confidence from scan cache for each ticker
+    scan_db = Path(__file__).resolve().parent.parent / "data" / "scan_cache.db"
+    scan_lookup = {}
+    if scan_db.exists():
+        sc = sqlite3.connect(str(scan_db))
+        sc.row_factory = sqlite3.Row
+        scan_rows = sc.execute(
+            """SELECT ticker, edge, confidence FROM scan_results
+               WHERE id IN (SELECT MAX(id) FROM scan_results GROUP BY ticker)"""
+        ).fetchall()
+        sc.close()
+        for sr in scan_rows:
+            scan_lookup[sr["ticker"]] = {"edge": sr["edge"], "confidence": sr["confidence"]}
+
+    result = []
+    for r in rows:
+        ticker = r["ticker"]
+        scan = scan_lookup.get(ticker, {})
+        result.append({
+            "ticker": ticker,
+            "city": ticker_to_city(ticker) if not r["city"] else r["city"],
             "action": "SELL" if (r["side"] or "").startswith("sell") else "BUY",
             "side": "YES" if "yes" in (r["side"] or "") else "NO",
             "price": r["fill_price"],
@@ -176,9 +194,10 @@ async def get_activity(limit: int = Query(50)):
             "time": r["fill_time"],
             "outcome": r["settlement_outcome"],
             "pnl": round(r["pnl"], 2) if r["pnl"] is not None else None,
-        }
-        for r in rows
-    ]
+            "edge": round(scan["edge"], 4) if "edge" in scan else None,
+            "confidence": round(scan["confidence"], 1) if "confidence" in scan else None,
+        })
+    return result
 
 
 @app.get("/api/health")
