@@ -1,10 +1,11 @@
-"""Intraday Position Manager — re-evaluate open positions and exit when edge evaporates.
+"""Intraday Position Manager — EV-gated active management.
 
-Checks each open position against fresh model forecasts:
-  - EXIT if edge has flipped (model now disagrees with our side)
-  - EXIT if edge shrank below minimum threshold
-  - TAKE PROFIT if market price moved strongly in our favor
-  - HOLD otherwise
+Re-evaluates open positions against fresh forecasts. Every action (exit or fortify)
+must pass a strict sell-now-vs-hold-to-settlement EV test + liquidity guard.
+
+Default = HOLD (~85-90% of positions settle naturally).
+Exit = only when selling now has clear EV advantage over holding.
+Fortify = scale winners when edge strengthens and limits allow.
 
 Usage: python -m kalshi.position_manager
 """
@@ -27,25 +28,20 @@ from kalshi.trailing_stop import update_peak, check_trailing_stop, remove_positi
 from kalshi.fill_tracker import record_fill
 from weather.multi_model import fuse_forecast
 from config import CONFIDENCE_THRESHOLD, ALERT_THRESHOLD, PAPER_MODE
+from risk.position_limits import check_limits, MIN_ORDER_DOLLARS
 
 console = Console()
 
-# --- Base thresholds (adjusted by time-to-settlement) ---
-MIN_EDGE_TO_HOLD = 0.04       # exit if edge < 4% (was 7% to enter)
-PROFIT_TAKE_PRICE = 0.92      # sell YES if market moved to 92¢+
-
-# Same-day thresholds — forecasts are locked in, act decisively
-SAMEDAY_MIN_EDGE = 0.02       # tighter: 2% edge is noise on a locked forecast
-SAMEDAY_LOSS_CUT = -0.03      # cut at -3% — it's not coming back
-
-# Fee floor — don't sell if net proceeds after fees < this amount
-MIN_EXIT_PROCEEDS = 0.50      # $0.50 minimum net after fees to bother selling
-MIN_SELL_CENTS = 10           # never sell a contract below 10¢ — hold to settlement instead
-
-# Fortify thresholds — add to winning positions
-FORTIFY_MIN_EDGE = ALERT_THRESHOLD  # edge must still be above entry threshold
-FORTIFY_MIN_CONFIDENCE = CONFIDENCE_THRESHOLD  # confidence must meet threshold
-
+# --- Thresholds ---
+MIN_EDGE_TO_HOLD = 0.04
+PROFIT_TAKE_PRICE = 0.92
+SAMEDAY_MIN_EDGE = 0.02
+SAMEDAY_LOSS_CUT = -0.03
+MIN_EXIT_PROCEEDS = 1.00
+MIN_SELL_CENTS = 12
+FORTIFY_MIN_EDGE = ALERT_THRESHOLD
+FORTIFY_MIN_CONFIDENCE = CONFIDENCE_THRESHOLD
+MAX_SPREAD = 0.12
 
 # --- Ticker/series lookup ---
 _ALL_SERIES = {}
@@ -58,10 +54,6 @@ for ticker, info in PRECIP_SERIES.items():
 
 
 def _parse_position_ticker(ticker: str) -> Optional[dict]:
-    """Extract series info from a position ticker.
-
-    Returns dict with city, lat, lon, unit, and either temp_type or market_type.
-    """
     for series_prefix, info in _ALL_SERIES.items():
         if ticker.upper().startswith(series_prefix.upper()):
             return dict(info)
@@ -69,7 +61,6 @@ def _parse_position_ticker(ticker: str) -> Optional[dict]:
 
 
 def _get_market_data(ticker: str) -> Optional[dict]:
-    """Fetch market details from Kalshi API for a specific ticker."""
     try:
         _load_credentials()
         path = f"/trade-api/v2/markets/{ticker}"
@@ -83,7 +74,6 @@ def _get_market_data(ticker: str) -> Optional[dict]:
 
 
 def _sell_position(ticker: str, side: str, count: int, price_cents: int) -> Optional[dict]:
-    """Place a sell order to close a position."""
     path = "/trade-api/v2/portfolio/orders"
     headers = _sign_request("POST", path)
     body = {
@@ -105,11 +95,24 @@ def _sell_position(ticker: str, side: str, count: int, price_cents: int) -> Opti
     return resp.json()
 
 
-def evaluate_position(ticker: str, qty: float, market_data: dict) -> dict:
-    """Re-evaluate a single position against fresh forecasts.
+def _sell_ev_beats_hold(
+    current_price: float, our_win_prob: float, qty: int, buffer_pct: float = 0.025
+) -> tuple:
+    """Strict EV gate: sell-now vs hold-to-settlement after fees.
 
-    Returns dict with action ("hold", "exit", "profit_take"), reason, and details.
+    Returns (beats: bool, advantage_per_contract: float).
     """
+    fee = 0.035 + (qty * 0.01)
+    sell_ev = current_price * qty - fee
+    hold_ev = our_win_prob * qty
+
+    advantage = sell_ev - hold_ev
+    beats = advantage > max(1.0, buffer_pct * qty)
+    return beats, advantage / qty if qty > 0 else 0
+
+
+def evaluate_position(ticker: str, qty: float, market_data: dict, bankroll: float) -> dict:
+    """EV-gated active management — every exit must beat hold-to-settlement."""
     series_info = _parse_position_ticker(ticker)
     if not series_info:
         return {"action": "hold", "reason": "unknown series"}
@@ -117,11 +120,10 @@ def evaluate_position(ticker: str, qty: float, market_data: dict) -> dict:
     side = "yes" if qty > 0 else "no"
     abs_qty = abs(int(qty))
 
-    # Get current market price
+    # --- Price + liquidity guard ---
     yes_ask = market_data.get("yes_ask")
     no_ask = market_data.get("no_ask")
     if yes_ask is None and no_ask is None:
-        # Try dollar format
         yes_ask_d = market_data.get("yes_ask_dollars")
         no_ask_d = market_data.get("no_ask_dollars")
         if yes_ask_d:
@@ -134,9 +136,17 @@ def evaluate_position(ticker: str, qty: float, market_data: dict) -> dict:
 
     current_yes_price = yes_ask / 100.0 if yes_ask > 1 else yes_ask
 
+    # Spread guard — don't trade into thin books
+    if no_ask is not None and no_ask > 0:
+        spread = abs((yes_ask or 0) - (no_ask or 0)) / 100.0
+    else:
+        spread = 0.15  # conservative fallback when no_ask unavailable
+    if spread > MAX_SPREAD:
+        return {"action": "hold", "reason": f"spread too wide ({spread:.0%})"}
+
+    # --- Fresh forecast ---
     month = datetime.now(timezone.utc).month
 
-    # Check if this is a precip position
     if series_info.get("market_type") == "precip":
         from weather.multi_model import fuse_precip_forecast
         from kalshi.market_types import parse_precip_bucket
@@ -157,13 +167,10 @@ def evaluate_position(ticker: str, qty: float, market_data: dict) -> dict:
         except Exception as e:
             return {"action": "hold", "reason": f"precip forecast error: {e}"}
 
-        # For precip positions, set variables needed by decision logic below
         low, high = threshold, None
         temp_type = "precip"
-        days_ahead = 0  # Monthly markets don't have a single target day
-
+        days_ahead = 0
     else:
-        # Existing temperature path — unchanged
         bucket = parse_kalshi_bucket(market_data)
         if not bucket:
             return {"action": "hold", "reason": "can't parse bucket"}
@@ -172,7 +179,6 @@ def evaluate_position(ticker: str, qty: float, market_data: dict) -> dict:
         city = series_info["city"]
         temp_type = series_info["temp_type"]
 
-        # Calculate days ahead from ticker
         from weather.forecast_logger import parse_ticker_date
         target_date = parse_ticker_date(ticker)
         today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -185,7 +191,6 @@ def evaluate_position(ticker: str, qty: float, market_data: dict) -> dict:
         else:
             days_ahead = 0
 
-        # Run fresh forecast
         try:
             model_prob, confidence, details = fuse_forecast(
                 series_info["lat"], series_info["lon"], city, month,
@@ -194,109 +199,107 @@ def evaluate_position(ticker: str, qty: float, market_data: dict) -> dict:
         except Exception as e:
             return {"action": "hold", "reason": f"forecast error: {e}"}
 
-    # Calculate current edge from our side's perspective
+    # --- Edge calculation ---
     if side == "yes":
         edge = model_prob - current_yes_price
         our_price = current_yes_price
+        our_win_prob = model_prob
     else:
-        # For NO: our probability of winning = 1 - yes_price
-        # Model says YES prob is model_prob, so NO prob is 1 - model_prob
         no_prob = 1 - model_prob
         no_price = 1 - current_yes_price
         edge = no_prob - no_price
         our_price = no_price
+        our_win_prob = no_prob
 
-    # Time-aware thresholds: same-day forecasts are locked in
     is_same_day = (days_ahead == 0)
-    min_edge = SAMEDAY_MIN_EDGE if is_same_day else MIN_EDGE_TO_HOLD
-    loss_threshold = SAMEDAY_LOSS_CUT if is_same_day else -0.05
     time_label = "SAMEDAY" if is_same_day else f"{days_ahead}d"
 
     result = {
-        "side": side,
-        "qty": abs_qty,
-        "current_price": our_price,
-        "model_prob": model_prob if side == "yes" else (1 - model_prob),
-        "edge": edge,
-        "confidence": confidence,
-        "city": city,
-        "temp_type": temp_type,
-        "bucket": (low, high),
+        "side": side, "qty": abs_qty, "current_price": our_price,
+        "model_prob": our_win_prob, "edge": edge, "confidence": confidence,
+        "city": city, "temp_type": temp_type, "bucket": (low, high),
         "days_ahead": days_ahead,
     }
 
-    # --- Update trailing stop tracker ---
-    if side == "yes":
-        our_price_cents = int(current_yes_price * 100)
-    else:
-        our_price_cents = int((1 - current_yes_price) * 100)
+    # --- Trailing stop tracker ---
+    our_price_cents = int(our_price * 100)
     update_peak(ticker, side, our_price_cents)
 
-    # --- Helper: compute sell price in cents for our side ---
-    def _sell_cents():
-        if side == "yes":
-            return max(MIN_SELL_CENTS, int(current_yes_price * 100) - 1)
-        return max(MIN_SELL_CENTS, int((1 - current_yes_price) * 100) - 1)
-
-    # --- Helper: check if selling beats holding to settlement ---
-    def _sell_beats_settlement(sell_price_cents: int) -> bool:
-        """Return True if selling now nets more than holding to settlement.
-        On same-day with positive edge, settlement is usually better."""
-        sell_fee = 0.035 + (abs_qty * 0.01)
-        sell_proceeds = (sell_price_cents * abs_qty / 100.0) - sell_fee
-
-        # Expected settlement value: model_prob * $1 payout per contract
-        our_win_prob = model_prob if side == "yes" else (1 - model_prob)
-        expected_settlement = our_win_prob * abs_qty * 1.0
-
-        return sell_proceeds > expected_settlement
-
-    # --- Decision logic (simplified 2026-03-14) ---
-    # Binary contracts settle at $0 or $1. The model wins 53% of the time.
-    # Active exits were destroying edge by selling at terrible prices.
-    # New rule: hold to settlement unless locking in a clear profit.
-
-    # Profit take: our side is at 90¢+ (multi-day only, sameday just settles)
+    # --- Trailing stop exit (EV-gated) ---
     if not is_same_day:
-        if side == "yes" and current_yes_price >= PROFIT_TAKE_PRICE:
-            sell_price = max(MIN_SELL_CENTS, int(current_yes_price * 100) - 1)
-            if _sell_beats_settlement(sell_price):
+        trail_reason = check_trailing_stop(ticker, side, our_price_cents, days_ahead)
+        if trail_reason:
+            beats, adv = _sell_ev_beats_hold(our_price, our_win_prob, abs_qty)
+            if beats:
                 result["action"] = "exit"
-                result["reason"] = f"PROFIT TAKE — YES at {current_yes_price:.0%}"
-                result["sell_price_cents"] = sell_price
+                result["reason"] = f"TRAILING STOP — EV adv {adv:+.1%}"
+                result["sell_price_cents"] = max(MIN_SELL_CENTS, our_price_cents - 1)
                 return result
-        if side == "no" and current_yes_price <= (1 - PROFIT_TAKE_PRICE):
-            sell_price = max(MIN_SELL_CENTS, int((1 - current_yes_price) * 100) - 1)
-            if _sell_beats_settlement(sell_price):
+
+    # --- EV comparison (core gatekeeper) ---
+    beats_ev, ev_adv = _sell_ev_beats_hold(our_price, our_win_prob, abs_qty)
+
+    # --- Profit take (multi-day only, EV-gated) ---
+    if not is_same_day:
+        profit_threshold = 0.90 if days_ahead <= 3 else 0.88
+        if ((side == "yes" and current_yes_price >= profit_threshold) or
+            (side == "no" and current_yes_price <= (1 - profit_threshold))):
+            if beats_ev and edge > 0.02:
+                sell_price = max(MIN_SELL_CENTS, int(our_price * 100) - 1)
                 result["action"] = "exit"
-                result["reason"] = f"PROFIT TAKE — NO near certain (YES at {current_yes_price:.0%})"
+                result["reason"] = f"PROFIT TAKE — {side.upper()} @ {our_price:.0%} (EV+{ev_adv:.1%})"
                 result["sell_price_cents"] = sell_price
                 return result
 
-    # Everything else: hold to settlement
+    # --- Fortify: scale winners when edge strengthens ---
+    if (edge > FORTIFY_MIN_EDGE + 0.02 and
+        confidence >= FORTIFY_MIN_CONFIDENCE and
+        not is_same_day and
+        not beats_ev):
+
+        limit_result = check_limits(
+            order_dollars=abs_qty * 0.85,
+            bankroll=bankroll,
+            total_exposure=abs_qty * 0.85,
+            scan_spent=0.0,
+            city_day_spent=0.0,
+        )
+        if limit_result.allowed_dollars >= MIN_ORDER_DOLLARS * 2:
+            result["action"] = "fortify"
+            result["reason"] = f"FORTIFY — edge {edge:+.1%}, conf {confidence:.0f}% (+${limit_result.allowed_dollars:.0f})"
+            return result
+
+    # --- Defensive reversal (very high bar) ---
+    reversal_threshold = -0.08 if not is_same_day else -0.15
+    if edge < reversal_threshold and confidence > 70 and beats_ev:
+        sell_price = max(MIN_SELL_CENTS, int(our_price * 100) - 1)
+        result["action"] = "exit"
+        result["reason"] = f"REVERSAL — edge {edge:+.1%} (EV+{ev_adv:.1%})"
+        result["sell_price_cents"] = sell_price
+        return result
+
+    # --- Default: HOLD ---
     result["action"] = "hold"
-    result["reason"] = f"HOLD [{time_label}] — edge {edge:+.1%}, conf {confidence:.1f}%"
+    result["reason"] = f"HOLD [{time_label}] — edge {edge:+.1%}, conf {confidence:.1f}% (EV {ev_adv:+.1%})"
     return result
 
 
 def run_position_manager():
-    """Main loop: evaluate all open positions and execute exits."""
+    """Main loop: evaluate all open positions and execute exits/fortifications."""
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     console.print(f"\n[bold cyan]Position Manager — {now}[/bold cyan]\n")
 
-    # Get balance
     bal = get_balance()
     cash = bal.get("balance", 0) / 100.0
     portfolio = bal.get("portfolio_value", 0) / 100.0
-    console.print(f"  Cash: ${cash:.2f}  |  Positions: ${portfolio:.2f}  |  Total: ${cash + portfolio:.2f}\n")
+    bankroll = cash + portfolio
+    console.print(f"  Cash: ${cash:.2f}  |  Positions: ${portfolio:.2f}  |  Total: ${bankroll:.2f}\n")
 
-    # Get open positions
     positions = get_positions()
     if not positions:
         console.print("[dim]No open positions to manage.[/dim]")
         return
 
-    # Build results table
     table = Table(title=f"Position Evaluation ({len(positions)} positions)")
     table.add_column("Ticker", style="cyan", max_width=28)
     table.add_column("Side", style="bold")
@@ -309,7 +312,6 @@ def run_position_manager():
 
     exits = []
     fortifies = []
-    holds = 0
     skips = 0
 
     for pos in positions:
@@ -318,31 +320,29 @@ def run_position_manager():
         if qty == 0:
             continue
 
-        # Fetch fresh market data
         market_data = _get_market_data(ticker)
         if not market_data:
             skips += 1
             continue
 
-        # Check if market is still tradeable
         status = market_data.get("status", "")
         if status not in ("open", "active"):
             skips += 1
             continue
 
-        time.sleep(0.15)  # Rate limit
+        time.sleep(0.15)
 
-        result = evaluate_position(ticker, qty, market_data)
+        result = evaluate_position(ticker, qty, market_data, bankroll)
 
         side = result.get("side", "?").upper()
         side_color = "green" if side == "YES" else "red"
         abs_qty = result.get("qty", 0)
 
-        model_str = f"{result.get('model_prob', 0):.0%}" if result.get("model_prob") else "—"
-        market_str = f"{result.get('current_price', 0):.0%}" if result.get("current_price") else "—"
+        model_str = f"{result.get('model_prob', 0):.0%}" if result.get("model_prob") else "\u2014"
+        market_str = f"{result.get('current_price', 0):.0%}" if result.get("current_price") else "\u2014"
         edge_val = result.get("edge", 0)
         edge_color = "green" if edge_val > 0 else "red"
-        edge_str = f"[{edge_color}]{edge_val:+.1%}[/{edge_color}]" if edge_val else "—"
+        edge_str = f"[{edge_color}]{edge_val:+.1%}[/{edge_color}]" if edge_val else "\u2014"
 
         action = result["action"].upper()
         action_color = {"EXIT": "red", "FORTIFY": "cyan", "HOLD": "green"}.get(action, "white")
@@ -362,14 +362,12 @@ def run_position_manager():
     console.print(table)
 
     if not exits and not fortifies:
-        console.print(f"\n[green]All positions healthy. {holds + len(positions) - skips} held, {skips} skipped.[/green]")
+        console.print(f"\n[green]All positions holding. {len(positions) - skips} evaluated, {skips} skipped.[/green]")
         return
 
     mode_label = "PAPER" if PAPER_MODE else "LIVE"
 
-    # Execute exits — but skip if there's already a resting sell for that ticker
     if exits:
-        # Fetch resting orders once to check for duplicates
         try:
             resting = get_orders(status="resting")
             resting_tickers = {o.get("ticker", "") for o in resting if o.get("action") == "sell"}
@@ -381,19 +379,18 @@ def run_position_manager():
         for ticker, result in exits:
             side = result["side"]
             qty = result["qty"]
-            price = result.get("sell_price_cents", 1)
+            price = result.get("sell_price_cents", MIN_SELL_CENTS)
             reason = result["reason"]
 
-            # Skip if there's already a resting sell order for this ticker
             if ticker in resting_tickers:
-                console.print(f"  [dim]SKIP {ticker} — resting sell order already exists[/dim]")
+                console.print(f"  [dim]SKIP {ticker} \u2014 resting sell order already exists[/dim]")
                 continue
 
-            console.print(f"  [{mode_label}] SELL {side.upper()} {qty}x {ticker} @ {price}¢")
+            console.print(f"  [{mode_label}] SELL {side.upper()} {qty}x {ticker} @ {price}\u00a2")
             console.print(f"    Reason: {reason}")
 
             if PAPER_MODE:
-                console.print(f"    [dim]PAPER MODE — no order sent[/dim]")
+                console.print(f"    [dim]PAPER MODE \u2014 no order sent[/dim]")
                 continue
 
             try:
@@ -401,15 +398,13 @@ def run_position_manager():
                 order_id = resp.get("order", {}).get("order_id", "unknown")
                 status = resp.get("order", {}).get("status", "unknown")
                 console.print(f"    [green]Sell order posted: {order_id} ({status})[/green]")
-                remove_position(ticker, side)  # Clean up trailing stop state
+                remove_position(ticker, side)
 
-                # Record exit fill in trades.db
-                sell_side = f"sell_{side}"  # "sell_yes" or "sell_no"
                 record_fill(
                     db_path="data/trades.db",
                     order_id=order_id,
                     ticker=ticker,
-                    side=sell_side,
+                    side=f"sell_{side}",
                     limit_price=price,
                     fill_price=price,
                     fill_qty=qty,
@@ -421,7 +416,6 @@ def run_position_manager():
 
             time.sleep(0.2)
 
-    # Execute fortifications — add to winning positions
     if fortifies:
         from kalshi.trader import execute_kalshi_signal
 
@@ -437,7 +431,7 @@ def run_position_manager():
             side = result["side"]
             direction = "BUY YES" if side == "yes" else "BUY NO"
 
-            console.print(f"  [{mode_label}] FORTIFY {side.upper()} {ticker} (have {existing_qty}) — edge {edge:+.1%}, conf {confidence:.1f}%")
+            console.print(f"  [{mode_label}] FORTIFY {side.upper()} {ticker} (have {existing_qty}) \u2014 edge {edge:+.1%}, conf {confidence:.1f}%")
 
             execute_kalshi_signal(
                 market_data, city, model_prob, current_price, edge,
@@ -447,7 +441,7 @@ def run_position_manager():
 
             time.sleep(0.2)
 
-    console.print(f"\n[bold]Done. {len(exits)} exits attempted, {len(positions) - len(exits) - skips} held.[/bold]")
+    console.print(f"\n[bold]Done. {len(exits)} exits, {len(fortifies)} fortifies, {len(positions) - len(exits) - len(fortifies) - skips} held.[/bold]")
 
 
 if __name__ == "__main__":
