@@ -232,7 +232,7 @@ def get_hrrr_forecast(lat: float, lon: float, days_ahead: int = 1, unit: str = "
         unit_param = "fahrenheit" if unit == "f" else "celsius"
         daily_var = "temperature_2m_max" if temp_type == "max" else "temperature_2m_min"
         url = (
-            f"https://api.open-meteo.com/v1/forecast"
+            f"http://localhost:8080/v1/forecast"
             f"?latitude={lat}&longitude={lon}"
             f"&daily={daily_var}"
             f"&models=gfs_seamless"
