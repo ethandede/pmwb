@@ -315,6 +315,10 @@ def run_scanner():
             console.print(f"[yellow]  COOLDOWN {sig['ticker']} — sold recently, skipping re-entry[/yellow]")
             continue
 
+        if sig["ticker"] in held_positions:
+            console.print(f"[dim]  SKIP {sig['ticker']} — already holding this ticker[/dim]")
+            continue
+
         pos_key = (sig["city_key"], sig["target_date"] or "unknown", sig["temp_type"])
         side = "yes" if sig["edge"] > 0 else "no"
         existing = city_date_positions.get(pos_key, [])

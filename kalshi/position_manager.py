@@ -41,7 +41,7 @@ MIN_EXIT_PROCEEDS = 1.00
 MIN_SELL_CENTS = 12
 FORTIFY_MIN_EDGE = ALERT_THRESHOLD
 FORTIFY_MIN_CONFIDENCE = CONFIDENCE_THRESHOLD
-MAX_SPREAD = 0.12
+MAX_SPREAD = 0.22              # relaxed temporarily so we can see FORTIFY / PROFIT TAKE fire
 
 # --- Ticker/series lookup ---
 _ALL_SERIES = {}

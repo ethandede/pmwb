@@ -280,10 +280,14 @@ def execute_kalshi_signal(market: dict, city: str, model_prob: float, market_pro
         if remaining > 0:
             print(f"  Partial fill: {remaining} contracts still resting")
 
-        send_signal_alert(
-            market.get("title", ticker), city + " (Kalshi)", model_prob, market_prob, edge,
-            f"{direction} (LIVE order {order_id}, filled {fill_qty}/{count})"
-        )
+        try:
+            from alerts.telegram_alert import send_signal_alert
+            send_signal_alert(
+                market.get("title", ticker), city + " (Kalshi)", model_prob, market_prob, edge,
+                f"{direction} (LIVE order {order_id}, filled {fill_qty}/{count})"
+            )
+        except Exception:
+            pass
     except Exception as e:
         print(f"  Order failed: {e}")
 
