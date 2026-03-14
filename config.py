@@ -18,7 +18,7 @@ CITIES = {
 
 # HARD RISK RAILS — Super Heavy Grok (March 2026)
 MIN_TRADE_EDGE = 0.12                    # Only trade |edge| >= 12%
-MAX_POSITIONS_TOTAL = 15                 # Never exceed 15 open positions
+MAX_POSITIONS_TOTAL = 30                 # Never exceed 30 open positions
 MAX_BANKROLL_PCT_PER_TRADE = 0.02        # Hard 2% bankroll cap per trade
 SKIP_RAIN_MARKETS = True                 # Permanently disable all rain markets
 
