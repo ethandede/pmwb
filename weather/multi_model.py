@@ -343,7 +343,9 @@ def fuse_forecast(
 
     total_weight = sum(weights[k] for k in active)
     fused_prob = sum(weights[k] * active[k] / total_weight for k in active)
-    fused_prob = round(fused_prob, 4)
+    if fused_prob < 0.0 or fused_prob > 1.0:
+        print(f"  [CLAMP] fused_prob={fused_prob:.4f} out of [0,1] — inputs: {active}")
+    fused_prob = round(max(0.0, min(1.0, fused_prob)), 4)
     details["fused_prob"] = fused_prob
     details["models_used"] = len(active)
 
