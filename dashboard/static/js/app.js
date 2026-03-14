@@ -1,7 +1,8 @@
 // dashboard/static/js/app.js
-import { renderPortfolio } from './portfolio.js?v=4';
-import { renderMarkets } from './markets.js?v=4';
-import { renderTriptych } from './performance.js?v=4';
+import { renderPortfolio } from './portfolio.js?v=5';
+import { renderMarkets } from './markets.js?v=5';
+import { renderTriptych } from './performance.js?v=5';
+import { renderActivity } from './activity.js?v=5';
 
 let _configCache = null;
 
@@ -43,6 +44,7 @@ async function refreshAll() {
     await Promise.allSettled([
         loadSection('/api/markets/temp', (d) => renderMarkets(d, 'temp'), 'temp-table'),
         loadSection('/api/markets/precip', (d) => renderMarkets(d, 'precip'), 'precip-table'),
+        loadSection('/api/activity', renderActivity, 'activity-table'),
     ]);
 
     btn.classList.remove('spinning');

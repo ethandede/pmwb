@@ -151,6 +151,36 @@ async def get_config():
     }
 
 
+@app.get("/api/activity")
+async def get_activity(limit: int = Query(50)):
+    if not TRADES_DB.exists():
+        return []
+    conn = sqlite3.connect(str(TRADES_DB))
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        """SELECT ticker, city, side, fill_price, fill_qty, fill_time,
+                  settlement_outcome, pnl
+           FROM trades WHERE fill_qty > 0
+           ORDER BY fill_time DESC LIMIT ?""",
+        (limit,),
+    ).fetchall()
+    conn.close()
+    return [
+        {
+            "ticker": r["ticker"],
+            "city": ticker_to_city(r["ticker"]) if not r["city"] else r["city"],
+            "action": "SELL" if (r["side"] or "").startswith("sell") else "BUY",
+            "side": "YES" if "yes" in (r["side"] or "") else "NO",
+            "price": r["fill_price"],
+            "qty": r["fill_qty"],
+            "time": r["fill_time"],
+            "outcome": r["settlement_outcome"],
+            "pnl": round(r["pnl"], 2) if r["pnl"] is not None else None,
+        }
+        for r in rows
+    ]
+
+
 @app.get("/api/health")
 async def health_check():
     return {"status": "healthy", "time": datetime.now(timezone.utc).isoformat()}
