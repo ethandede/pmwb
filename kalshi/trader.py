@@ -196,7 +196,7 @@ def execute_kalshi_signal(market: dict, city: str, model_prob: float, market_pro
     )
 
     # HARD 2% BANKROLL CAP
-    current_bankroll = _bankroll_tracker.bankroll
+    current_bankroll = _bankroll_tracker.effective_bankroll()
     max_dollars = current_bankroll * MAX_BANKROLL_PCT_PER_TRADE
     if size_result.dollar_amount > max_dollars:
         size_result.count = int(max_dollars / (price_cents / 100.0))
