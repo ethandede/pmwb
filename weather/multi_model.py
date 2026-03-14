@@ -248,9 +248,9 @@ def _deterministic_bucket_prob(temp: float, low: Optional[float], high: Optional
         bucket_width = high - low
         distance = abs(temp - bucket_mid)
         if distance < bucket_width / 2:
-            return round(min(0.85, 0.4 + 0.45 * (1 - distance / spread)), 4)
+            return round(max(0.02, min(0.85, 0.4 + 0.45 * (1 - distance / spread))), 4)
         elif distance < spread:
-            return round(max(0.02, 0.4 * (1 - distance / spread)), 4)
+            return round(max(0.02, min(0.85, 0.4 * (1 - distance / spread))), 4)
         else:
             return 0.02
 
