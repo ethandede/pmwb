@@ -341,6 +341,10 @@ def fuse_forecast(
     if not active:
         return ensemble_prob, 0, details
 
+    # Debug: log inputs when any model prob is outside [0, 1]
+    if any(v < 0.0 or v > 1.0 for v in active.values()):
+        print(f"  [BAD INPUT] {city} {low}-{high or 'None'} | {active}")
+
     total_weight = sum(weights[k] for k in active)
     fused_prob = sum(weights[k] * active[k] / total_weight for k in active)
     if fused_prob < 0.0 or fused_prob > 1.0:
