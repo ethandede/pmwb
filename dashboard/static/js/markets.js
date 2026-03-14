@@ -1,8 +1,5 @@
 // dashboard/static/js/markets.js
-// Market tables and charts rendering module.
-// Handles both precip and temp market sections via a shared renderMarkets(data, type) function.
-
-// ─── Plotly theme constants ─────────────────────────────────────────────────
+// Market tables and charts: City | Range | Edge | Signal | Confidence (5 cols, paginated)
 
 const PLOTLY_LAYOUT = {
     paper_bgcolor: 'rgba(0,0,0,0)',
@@ -15,91 +12,67 @@ const PLOTLY_LAYOUT = {
 
 const PLOTLY_CONFIG = { displayModeBar: false, responsive: true };
 
-// ─── Global signal count store ──────────────────────────────────────────────
+const PAGE_SIZE = 10;
 
 window._signalCounts = window._signalCounts || {};
 
-// ─── Formatters ─────────────────────────────────────────────────────────────
+// --- State ---
 
-/**
- * Format a 0–1 probability as a percentage string (e.g. 0.721 → "72.1%").
- * @param {number} n
- * @returns {string}
- */
-function fmtProb(n) {
-    return `${(n * 100).toFixed(1)}%`;
-}
+const _sortState = {};
+const _pageState = {};
+const _marketData = {};
 
-/**
- * Format an edge value (0–1 range) as a signed percentage string (e.g. 0.111 → "+11.1%").
- * @param {number} n
- * @returns {string}
- */
+// --- Formatters ---
+
+function fmtProb(n) { return `${(n * 100).toFixed(1)}%`; }
+
 function fmtEdge(n) {
     const pct = (n * 100).toFixed(1);
     return n >= 0 ? `+${pct}%` : `${pct}%`;
 }
 
-/**
- * Format a scan_time ISO string to a human-readable local time.
- * @param {string} isoStr
- * @returns {string}
- */
 function fmtScanTime(isoStr) {
     try {
         const d = new Date(isoStr);
         return d.toLocaleString('en-US', {
-            month: 'short', day: 'numeric', year: 'numeric',
+            month: 'short', day: 'numeric',
             hour: '2-digit', minute: '2-digit', second: '2-digit',
         });
-    } catch (_) {
-        return isoStr;
-    }
+    } catch (_) { return isoStr; }
 }
 
-// ─── Table builder ──────────────────────────────────────────────────────────
+// --- Columns ---
 
-/**
- * Build the markets data table HTML string.
- * Sorted by absolute edge descending.
- *
- * Columns: City | Ticker | Threshold | Model | Market | Edge | Direction | Confidence
- *
- * @param {Array} markets
- * @returns {string}
- */
-// Column definitions for sortable headers
 const COLUMNS = [
-    { key: 'city',         label: 'City',       num: false },
-    { key: 'ticker',       label: 'Ticker',     num: false },
-    { key: 'threshold',    label: 'Threshold',  num: false },
-    { key: 'model_prob',   label: 'Model',      num: true  },
-    { key: 'market_price', label: 'Market',     num: true  },
-    { key: 'edge',         label: 'Edge',       num: true  },
-    { key: 'direction',    label: 'Direction',  num: false },
-    { key: 'confidence',   label: 'Confidence', num: true  },
+    { key: 'city',       label: 'City',       num: false },
+    { key: 'threshold',  label: 'Range',      num: false },
+    { key: 'edge',       label: 'Edge',       num: true  },
+    { key: 'direction',  label: 'Signal',     num: false },
+    { key: 'confidence', label: 'Confidence', num: true  },
 ];
 
-// Track sort state per table type
-const _sortState = {};
+// --- Table builder ---
 
 function marketsTable(markets, type) {
+    const st = _sortState[type] || { key: 'edge', dir: 'desc', abs: true };
+    const page = _pageState[type] || 1;
+
+    const headers = COLUMNS.map(c => {
+        const arrow = st.key === c.key ? (st.dir === 'asc' ? ' \u2191' : ' \u2193') : '';
+        return `<th${c.num ? ' class="num"' : ''} data-sort-key="${c.key}" style="cursor:pointer;user-select:none">${c.label}${arrow}</th>`;
+    }).join('');
+
     if (!markets || markets.length === 0) {
         return `
-        <table class="data-table">
-          <thead>
-            <tr>
-              ${COLUMNS.map(c => `<th${c.num ? ' class="num"' : ''}>${c.label}</th>`).join('')}
-            </tr>
-          </thead>
+        <table class="data-table" data-market-type="${type}">
+          <thead><tr>${headers}</tr></thead>
           <tbody class="table-empty">
-            <tr><td colspan="8">No markets available</td></tr>
+            <tr><td colspan="5">No markets available</td></tr>
           </tbody>
         </table>`.trim();
     }
 
-    // Determine sort
-    const st = _sortState[type] || { key: 'edge', dir: 'desc', abs: true };
+    // Sort
     const sorted = [...markets].sort((a, b) => {
         let va = a[st.key], vb = b[st.key];
         if (st.abs) { va = Math.abs(va); vb = Math.abs(vb); }
@@ -107,147 +80,166 @@ function marketsTable(markets, type) {
         return st.dir === 'asc' ? va - vb : vb - va;
     });
 
-    const rows = sorted.map(m => {
+    // Paginate
+    const total = sorted.length;
+    const totalPages = Math.ceil(total / PAGE_SIZE);
+    const safePage = Math.max(1, Math.min(page, totalPages));
+    const start = (safePage - 1) * PAGE_SIZE;
+    const slice = sorted.slice(start, start + PAGE_SIZE);
+
+    const rows = slice.map(m => {
         const edgeClass = m.edge > 0 ? 'val-positive' : m.edge < 0 ? 'val-negative' : 'val-neutral';
         let confClass;
         if (m.confidence >= 60) confClass = 'val-positive';
         else if (m.confidence >= 40) confClass = 'val-amber';
         else confClass = 'val-negative';
 
+        const signal = m.edge > 0 ? 'BUY YES' : 'SELL YES';
+        const signalClass = m.edge > 0 ? 'val-positive' : 'val-negative';
+
         return `
         <tr>
           <td>${m.city}</td>
-          <td class="mono">${m.ticker}</td>
-          <td>${m.threshold}</td>
-          <td class="num mono">${fmtProb(m.model_prob)}</td>
-          <td class="num mono">${fmtProb(m.market_price)}</td>
+          <td class="mono">${m.threshold}</td>
           <td class="num mono ${edgeClass}">${fmtEdge(m.edge)}</td>
-          <td>${m.direction}</td>
-          <td class="num mono ${confClass}">${m.confidence}</td>
+          <td class="${signalClass}">${signal}</td>
+          <td class="num mono ${confClass}">${m.confidence.toFixed(1)}</td>
         </tr>`.trim();
     }).join('\n');
 
-    const headers = COLUMNS.map(c => {
-        const arrow = st.key === c.key ? (st.dir === 'asc' ? ' ↑' : ' ↓') : '';
-        return `<th${c.num ? ' class="num"' : ''} data-sort-key="${c.key}" style="cursor:pointer;user-select:none">${c.label}${arrow}</th>`;
-    }).join('');
+    let pagination = '';
+    if (totalPages > 1) {
+        pagination = `
+        <div class="pagination" data-paginator="${type}">
+            <span class="pagination-info">Showing ${start + 1}\u2013${Math.min(start + PAGE_SIZE, total)} of ${total}</span>
+            <div class="pagination-buttons">
+                <button class="pagination-btn" data-page="${safePage - 1}" ${safePage <= 1 ? 'disabled' : ''}>\u2190 Prev</button>
+                <button class="pagination-btn" data-page="${safePage + 1}" ${safePage >= totalPages ? 'disabled' : ''}>Next \u2192</button>
+            </div>
+        </div>`;
+    }
 
     return `
     <table class="data-table" data-market-type="${type}">
       <thead><tr>${headers}</tr></thead>
       <tbody>${rows}</tbody>
-    </table>`.trim();
+    </table>${pagination}`.trim();
 }
 
-/**
- * Attach click-to-sort handlers on a rendered markets table.
- * @param {string} type - "precip" or "temp"
- * @param {Array} markets - raw market data for re-render
- */
-function attachSortHandlers(type, markets) {
+// --- Sort + pagination handlers ---
+
+function attachHandlers(type) {
     const container = document.getElementById(`${type}-table`);
     if (!container) return;
-    const ths = container.querySelectorAll('th[data-sort-key]');
-    ths.forEach(th => {
+
+    // Sort headers
+    container.querySelectorAll('th[data-sort-key]').forEach(th => {
         th.addEventListener('click', () => {
             const key = th.dataset.sortKey;
             const prev = _sortState[type] || { key: 'edge', dir: 'desc', abs: true };
             if (prev.key === key) {
-                // Toggle direction
                 _sortState[type] = { key, dir: prev.dir === 'desc' ? 'asc' : 'desc', abs: false };
             } else {
-                // New column — numeric defaults desc, string defaults asc
                 const col = COLUMNS.find(c => c.key === key);
                 _sortState[type] = { key, dir: col && col.num ? 'desc' : 'asc', abs: false };
             }
-            container.innerHTML = marketsTable(markets, type);
-            attachSortHandlers(type, markets);
+            _pageState[type] = 1;
+            rerender(type);
+        });
+    });
+
+    // Pagination buttons
+    container.querySelectorAll(`.pagination-btn`).forEach(btn => {
+        btn.addEventListener('click', () => {
+            const page = parseInt(btn.dataset.page);
+            if (!isNaN(page)) {
+                _pageState[type] = page;
+                rerender(type);
+            }
         });
     });
 }
 
-// ─── Edge bar chart ─────────────────────────────────────────────────────────
+function rerender(type) {
+    const container = document.getElementById(`${type}-table`);
+    if (!container || !_marketData[type]) return;
+    container.innerHTML = marketsTable(_marketData[type], type);
+    attachHandlers(type);
+}
 
-/**
- * Render a Plotly horizontal bar chart showing edge by city.
- * Bars are green for positive edge, red for negative.
- *
- * @param {Array}  markets     - market objects with .city and .edge
- * @param {string} containerId - DOM element id
- */
+// --- Charts ---
+
 function edgeBarChart(markets, containerId) {
     const el = document.getElementById(containerId);
     if (!el) return;
+    if (!markets || markets.length === 0) {
+        el.innerHTML = '<div class="chart-empty">No data</div>';
+        return;
+    }
+
+    const sorted = [...markets].sort((a, b) => Math.abs(a.edge) - Math.abs(b.edge));
+    const edges = sorted.map(m => parseFloat((Math.abs(m.edge) * 100).toFixed(2)));
+    const cities = sorted.map(m => m.city);
+    const colors = sorted.map(m => m.edge >= 0 ? '#2ecc71' : '#e74c3c');
+    const maxEdge = Math.max(...edges);
+
+    Plotly.react(el, [{
+        type: 'bar', orientation: 'h', x: edges, y: cities,
+        marker: { color: colors },
+        hovertemplate: '%{y}: %{x:.1f}%<extra></extra>',
+    }], {
+        ...PLOTLY_LAYOUT,
+        xaxis: { ...PLOTLY_LAYOUT.xaxis, title: { text: 'Edge (%)', font: { color: 'rgba(255,255,255,0.6)', size: 11 } }, tickformat: '.1f', range: [0, maxEdge * 1.15] },
+        yaxis: { ...PLOTLY_LAYOUT.yaxis, automargin: true },
+        bargap: 0.3,
+    }, PLOTLY_CONFIG);
+}
+
+function confidenceScatter(markets, containerId, labelId) {
+    const el = document.getElementById(containerId);
+    if (!el) return;
+    const labelEl = document.getElementById(labelId);
+    if (labelEl) labelEl.textContent = 'Confidence vs Edge';
 
     if (!markets || markets.length === 0) {
         el.innerHTML = '<div class="chart-empty">No data</div>';
         return;
     }
 
-    // Sort by absolute edge ascending so largest is at top
-    const sorted = [...markets].sort((a, b) => Math.abs(a.edge) - Math.abs(b.edge));
+    const edges = markets.map(m => parseFloat((Math.abs(m.edge) * 100).toFixed(2)));
+    const confs = markets.map(m => m.confidence);
+    const cities = markets.map(m => m.city);
+    const colors = markets.map(m => m.edge >= 0 ? '#2ecc71' : '#e74c3c');
 
-    const edges = sorted.map(m => parseFloat((Math.abs(m.edge) * 100).toFixed(2)));
-    const cities = sorted.map(m => m.city);
-    // Color by direction: green = model higher than market, red = model lower
-    const colors = sorted.map(m => m.edge >= 0 ? '#2ecc71' : '#e74c3c');
+    const sortedEdges = [...edges].sort((a, b) => a - b);
+    const p90 = sortedEdges[Math.floor(sortedEdges.length * 0.9)] || sortedEdges[sortedEdges.length - 1];
 
-    const maxEdge = Math.max(...edges);
-    const xPad = Math.max(maxEdge * 0.1, 1);
-
-    const trace = {
-        type: 'bar',
-        orientation: 'h',
-        x: edges,
-        y: cities,
-        marker: { color: colors },
-        hovertemplate: '%{y}: %{x:.1f}%<extra></extra>',
-    };
-
-    const layout = {
+    Plotly.react(el, [{
+        type: 'scatter', mode: 'markers+text',
+        x: edges, y: confs, text: cities,
+        textposition: 'top center',
+        textfont: { color: 'rgba(255,255,255,0.7)', size: 10 },
+        marker: { color: colors, size: 10, line: { color: 'rgba(255,255,255,0.3)', width: 1 } },
+        hovertemplate: '%{text}<br>Edge: %{x:.1f}%<br>Conf: %{y:.1f}<extra></extra>',
+    }], {
         ...PLOTLY_LAYOUT,
-        xaxis: {
-            ...PLOTLY_LAYOUT.xaxis,
-            title: { text: 'Edge (%)', font: { color: 'rgba(255,255,255,0.6)', size: 11 } },
-            tickformat: '.1f',
-            range: [0, maxEdge + xPad],
-        },
-        yaxis: {
-            ...PLOTLY_LAYOUT.yaxis,
-            automargin: true,
-        },
-        bargap: 0.3,
-    };
-
-    Plotly.react(el, [trace], layout, PLOTLY_CONFIG);
+        xaxis: { ...PLOTLY_LAYOUT.xaxis, title: { text: 'Edge (%)', font: { color: 'rgba(255,255,255,0.6)', size: 11 } }, tickformat: '.1f', range: [0, Math.max(p90 * 1.2, 10)] },
+        yaxis: { ...PLOTLY_LAYOUT.yaxis, title: { text: 'Confidence', font: { color: 'rgba(255,255,255,0.6)', size: 11 } }, range: [Math.min(...confs) - 2, Math.max(...confs) + 3] },
+    }, PLOTLY_CONFIG);
 }
 
-// ─── Edge heatmap ───────────────────────────────────────────────────────────
-
-/**
- * Render a Plotly heatmap of edge over time (x=date, y=city, z=edge).
- * Called when history has 3+ unique dates.
- *
- * @param {Array}  history     - objects with .city, .scan_date, .edge
- * @param {string} containerId
- * @param {string} labelId     - element id for the chart2 label
- */
 function edgeHeatmap(history, containerId, labelId) {
     const el = document.getElementById(containerId);
     if (!el) return;
-
     const labelEl = document.getElementById(labelId);
-    if (labelEl) labelEl.textContent = 'Edge Heatmap — City \u00d7 Date';
+    if (labelEl) labelEl.textContent = 'Edge Heatmap \u2014 City \u00d7 Date';
 
-    // Build a 2D structure: cities × dates
     const citySet = new Set();
     const dateSet = new Set();
     history.forEach(h => { citySet.add(h.city); dateSet.add(h.scan_date); });
-
     const cities = [...citySet].sort();
-    const dates  = [...dateSet].sort();
+    const dates = [...dateSet].sort();
 
-    // z[i][j] = edge for cities[i] on dates[j] (null if missing)
     const lookup = {};
     history.forEach(h => { lookup[`${h.city}|${h.scan_date}`] = h.edge; });
 
@@ -258,166 +250,50 @@ function edgeHeatmap(history, containerId, labelId) {
         })
     );
 
-    const trace = {
-        type: 'heatmap',
-        x: dates,
-        y: cities,
-        z,
-        colorscale: [
-            [0,   '#e74c3c'],
-            [0.5, '#1a2332'],
-            [1,   '#2ecc71'],
-        ],
-        zmid: 0,
-        colorbar: {
-            tickformat: '+.0f',
-            ticksuffix: '%',
-            thickness: 12,
-            len: 0.8,
-            tickfont: { color: 'rgba(255,255,255,0.7)', size: 10 },
-        },
+    Plotly.react(el, [{
+        type: 'heatmap', x: dates, y: cities, z, zmid: 0,
+        colorscale: [[0, '#e74c3c'], [0.5, '#1a2332'], [1, '#2ecc71']],
+        colorbar: { tickformat: '+.0f', ticksuffix: '%', thickness: 12, len: 0.8, tickfont: { color: 'rgba(255,255,255,0.7)', size: 10 } },
         hovertemplate: '%{y} on %{x}<br>Edge: %{z:+.1f}%<extra></extra>',
-    };
-
-    const layout = {
+    }], {
         ...PLOTLY_LAYOUT,
         xaxis: { ...PLOTLY_LAYOUT.xaxis, type: 'category', automargin: true },
         yaxis: { ...PLOTLY_LAYOUT.yaxis, automargin: true },
-    };
-
-    Plotly.react(el, [trace], layout, PLOTLY_CONFIG);
+    }, PLOTLY_CONFIG);
 }
 
-// ─── Confidence-vs-Edge scatter ─────────────────────────────────────────────
+// --- Signal summary ---
 
-/**
- * Render a Plotly scatter of confidence vs edge.
- * Called when history has fewer than 3 unique dates.
- *
- * @param {Array}  markets     - market objects with .city, .edge, .confidence
- * @param {string} containerId
- * @param {string} labelId
- */
-function confidenceScatter(markets, containerId, labelId) {
-    const el = document.getElementById(containerId);
-    if (!el) return;
-
-    const labelEl = document.getElementById(labelId);
-    if (labelEl) labelEl.textContent = 'Confidence vs Edge';
-
-    if (!markets || markets.length === 0) {
-        el.innerHTML = '<div class="chart-empty">No data</div>';
-        return;
-    }
-
-    // Use absolute edge values — direction shown by color
-    const edges  = markets.map(m => parseFloat((Math.abs(m.edge) * 100).toFixed(2)));
-    const confs  = markets.map(m => m.confidence);
-    const cities = markets.map(m => m.city);
-    const colors = markets.map(m => m.edge >= 0 ? '#2ecc71' : '#e74c3c');
-
-    const trace = {
-        type: 'scatter',
-        mode: 'markers+text',
-        x: edges,
-        y: confs,
-        text: cities,
-        textposition: 'top center',
-        textfont: { color: 'rgba(255,255,255,0.7)', size: 10 },
-        marker: {
-            color: colors,
-            size: 10,
-            line: { color: 'rgba(255,255,255,0.3)', width: 1 },
-        },
-        hovertemplate: '%{text}<br>Edge: %{x:.1f}%<br>Conf: %{y}<extra></extra>',
-    };
-
-    // Cap x-axis at 90th percentile to prevent outliers from compressing the chart
-    const sorted = [...edges].sort((a, b) => a - b);
-    const p90 = sorted[Math.floor(sorted.length * 0.9)] || sorted[sorted.length - 1];
-    const xMax = Math.max(p90 * 1.2, 10);
-
-    const layout = {
-        ...PLOTLY_LAYOUT,
-        xaxis: {
-            ...PLOTLY_LAYOUT.xaxis,
-            title: { text: 'Edge (%)', font: { color: 'rgba(255,255,255,0.6)', size: 11 } },
-            tickformat: '.1f',
-            range: [0, xMax],
-        },
-        yaxis: {
-            ...PLOTLY_LAYOUT.yaxis,
-            title: { text: 'Confidence', font: { color: 'rgba(255,255,255,0.6)', size: 11 } },
-            range: [Math.min(...confs) - 2, Math.max(...confs) + 3],
-        },
-    };
-
-    Plotly.react(el, [trace], layout, PLOTLY_CONFIG);
-}
-
-// ─── Signal summary footer ──────────────────────────────────────────────────
-
-/**
- * Update the #signal-summary footer element with counts stored in window._signalCounts.
- */
 function updateSignalSummary() {
-    const el = document.getElementById('signal-summary');
-    if (!el) return;
-
-    const pc = window._signalCounts.precip || { total: 0, tradeworthy: 0 };
-    const tc = window._signalCounts.temp   || { total: 0, tradeworthy: 0 };
-
-    el.innerHTML = `
-        <div class="metric-card metric-neutral">
-            <div class="metric-label">Precip Signals</div>
-            <div class="metric-value mono">${pc.total}</div>
-            <div class="metric-subtitle">${pc.tradeworthy} trade-worthy</div>
-        </div>
-        <div class="metric-card metric-neutral">
-            <div class="metric-label">Temp Signals</div>
-            <div class="metric-value mono">${tc.total}</div>
-            <div class="metric-subtitle">${tc.tradeworthy} trade-worthy</div>
-        </div>
-        <div class="metric-card metric-accent">
-            <div class="metric-label">Trade-Worthy</div>
-            <div class="metric-value mono">${pc.tradeworthy + tc.tradeworthy}</div>
-            <div class="metric-subtitle">Total signals</div>
-        </div>`;
+    // No longer rendered as separate section — badge per market type is enough
 }
 
-// ─── Main entry ─────────────────────────────────────────────────────────────
+// --- Main entry ---
 
-/**
- * Render the full markets section for a given type.
- *
- * @param {Object} data - Response from /api/markets/{type}
- *   { scan_time, markets: [ { city, ticker, threshold, model_prob, market_price,
- *                              edge, direction, confidence, method, days_left } ] }
- * @param {string} type - "precip" or "temp"
- */
 async function renderMarkets(data, type) {
     const { scan_time, markets = [] } = data;
+    _marketData[type] = markets;
+    _pageState[type] = _pageState[type] || 1;
 
-    // 1. Scan timestamp
+    // Scan timestamp
     const scanTimeEl = document.getElementById(`${type}-scan-time`);
     if (scanTimeEl) {
         scanTimeEl.textContent = scan_time ? `Last scan: ${fmtScanTime(scan_time)}` : '';
     }
 
-    // 2. Data table (sortable)
+    // Table
     const tableEl = document.getElementById(`${type}-table`);
     if (tableEl) {
         tableEl.innerHTML = marketsTable(markets, type);
-        attachSortHandlers(type, markets);
+        attachHandlers(type);
     }
 
-    // 3. Edge bar chart
+    // Edge bar chart
     edgeBarChart(markets, `${type}-edge-chart`);
 
-    // 4. Heatmap or scatter — fetch history first
+    // Heatmap or scatter
     const heatmapId = `${type}-heatmap-chart`;
-    const labelId   = `${type}-chart2-label`;
-
+    const labelId = `${type}-chart2-label`;
     try {
         const resp = await fetch(`/api/markets/${type}/history`);
         if (resp.ok) {
@@ -429,34 +305,23 @@ async function renderMarkets(data, type) {
                 confidenceScatter(markets, heatmapId, labelId);
             }
         } else {
-            // Fallback to scatter on API error
             confidenceScatter(markets, heatmapId, labelId);
         }
     } catch (_) {
-        // Fallback to scatter on network error
         confidenceScatter(markets, heatmapId, labelId);
     }
 
-    // 5. Signal badge — trade-worthy: edge > 7% AND confidence >= 50
+    // Signal badge
     const tradeworthy = markets.filter(m => m.edge > 0.07 && m.confidence >= 50);
     const badgeEl = document.getElementById(`${type}-signal-badge`);
     if (badgeEl) {
         const count = tradeworthy.length;
         const label = count === 1 ? '1 trade-worthy signal' : `${count} trade-worthy signals`;
-        const badgeVariant = count > 0 ? 'signal-badge signal-badge-active' : 'signal-badge signal-badge-none';
-        badgeEl.innerHTML = `<span class="${badgeVariant}">${label}</span>`;
+        const variant = count > 0 ? 'signal-badge signal-badge-active' : 'signal-badge signal-badge-none';
+        badgeEl.innerHTML = `<span class="${variant}">${label}</span>`;
     }
 
-    // 6. Store signal counts for footer
-    window._signalCounts[type] = {
-        total: markets.length,
-        tradeworthy: tradeworthy.length,
-    };
-
-    // Update footer summary after every render
-    updateSignalSummary();
+    window._signalCounts[type] = { total: markets.length, tradeworthy: tradeworthy.length };
 }
-
-// ─── Exports ─────────────────────────────────────────────────────────────────
 
 export { renderMarkets };

@@ -4,13 +4,12 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Weather Edge</title>
-    <link rel="stylesheet" href="/static/css/main.css">
+    <link rel="stylesheet" href="/static/css/main.css?v=4">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Merriweather:wght@700;900&family=Roboto:wght@300;400;500;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
     <script src="https://cdn.plot.ly/plotly-2.35.0.min.js" charset="utf-8"></script>
 </head>
 <body>
-    <!-- Header -->
     <header class="we-header">
         <img src="/static/assets/logo.svg" alt="WE" class="we-header-logo">
         <div class="we-header-text">
@@ -18,7 +17,7 @@
             <p class="we-header-subtitle">Automated Weather Market Trading Terminal</p>
         </div>
         <div class="we-header-right">
-            <button class="we-refresh-btn" id="refresh-btn" title="Refresh data">↻</button>
+            <button class="we-refresh-btn" id="refresh-btn" title="Refresh data"><span class="we-refresh-icon">&#8635;</span></button>
             <div class="we-header-meta">
                 <span id="mode-badge" class="we-mode-badge"></span>
                 <span id="header-timestamp" class="we-timestamp"></span>
@@ -27,99 +26,83 @@
     </header>
 
     <main class="we-page">
-    <!-- Triptych: 3 summary cards -->
-    <div class="triptych-row">
-        <div class="triptych-card">
-            <div class="triptych-label">Total Equity</div>
-            <div class="triptych-value" id="tri-equity">—</div>
-            <div class="triptych-detail" id="tri-equity-detail"></div>
-            <div class="triptych-visual" id="equity-sparkline"></div>
+        <!-- Triptych -->
+        <div class="triptych-row">
+            <div class="triptych-card">
+                <div class="triptych-label">Total Equity</div>
+                <div class="triptych-value" id="tri-equity">&mdash;</div>
+                <div class="triptych-detail" id="tri-equity-detail"></div>
+                <div class="triptych-visual" id="equity-sparkline"></div>
+            </div>
+            <div class="triptych-card">
+                <div class="triptych-label">Open Positions</div>
+                <div class="triptych-value" id="tri-positions">&mdash;</div>
+                <div class="triptych-detail" id="tri-positions-detail"></div>
+            </div>
+            <div class="triptych-card">
+                <div class="triptych-label">Unrealized P&amp;L</div>
+                <div class="triptych-value" id="tri-pnl">&mdash;</div>
+                <div class="triptych-detail" id="tri-pnl-detail"></div>
+                <div class="triptych-visual" id="health-badge"></div>
+            </div>
         </div>
-        <div class="triptych-card">
-            <div class="triptych-label">Record</div>
-            <div class="triptych-value" id="tri-record">—</div>
-            <div class="triptych-detail" id="tri-record-detail"></div>
-            <div class="triptych-visual" id="daily-pnl-chart"></div>
-        </div>
-        <div class="triptych-card">
-            <div class="triptych-label">Settled P&L</div>
-            <div class="triptych-value" id="tri-pnl">—</div>
-            <div class="triptych-detail" id="tri-pnl-detail"></div>
-            <div class="triptych-visual" id="health-badge"></div>
-        </div>
-    </div>
 
-    <!-- Two-column main area -->
-    <div class="main-two-col">
-        <!-- Wide column: positions + temp markets -->
-        <div class="main-wide">
-            <!-- Open Positions -->
-            <section id="portfolio-section">
-                <h2>Open Positions</h2>
-                <div id="portfolio-balance" class="metric-row"></div>
-                <div id="open-positions-table"></div>
-                <div id="open-positions-caption" class="caption"></div>
-            </section>
+        <!-- Open Positions -->
+        <section id="portfolio-section">
+            <h2>Open Positions</h2>
+            <div id="open-positions-table"></div>
+        </section>
 
-            <hr class="we-divider">
+        <hr class="we-divider">
 
-            <!-- Temperature Markets -->
-            <section id="temp-section">
-                <h2>Temperature Markets</h2>
-                <p class="section-desc">Daily high temperature contracts across US cities.</p>
-                <div class="scan-meta">
-                    <span id="temp-scan-time" class="scan-time"></span>
-                    <button class="force-rescan-btn" id="temp-rescan">Force Rescan</button>
+        <!-- Temperature Markets -->
+        <section id="temp-section">
+            <h2>Temperature Markets</h2>
+            <div class="scan-meta">
+                <span id="temp-scan-time" class="scan-time"></span>
+                <button class="force-rescan-btn" id="temp-rescan">Force Rescan</button>
+            </div>
+            <div id="temp-table"></div>
+            <div id="temp-signal-badge"></div>
+            <div class="chart-row">
+                <div class="chart-card">
+                    <div class="chart-label">Edge by City</div>
+                    <div id="temp-edge-chart"></div>
                 </div>
-                <div id="temp-table"></div>
-                <div class="chart-row">
-                    <div class="chart-card">
-                        <div class="chart-label">Edge by City</div>
-                        <div id="temp-edge-chart"></div>
-                    </div>
-                    <div class="chart-card">
-                        <div class="chart-label" id="temp-chart2-label">Edge Heatmap — City x Date</div>
-                        <div id="temp-heatmap-chart"></div>
-                    </div>
+                <div class="chart-card">
+                    <div class="chart-label" id="temp-chart2-label">Confidence vs Edge</div>
+                    <div id="temp-heatmap-chart"></div>
                 </div>
-                <div id="temp-signal-badge"></div>
-            </section>
-        </div>
+            </div>
+        </section>
 
-        <!-- Narrow column: precip + risk + signals -->
-        <div class="main-narrow">
-            <!-- Precipitation Markets -->
-            <section id="precip-section">
-                <h2>Precipitation</h2>
-                <p class="section-desc">Monthly cumulative rainfall contracts.</p>
-                <div class="scan-meta">
-                    <span id="precip-scan-time" class="scan-time"></span>
-                    <button class="force-rescan-btn" id="precip-rescan">Force Rescan</button>
+        <hr class="we-divider">
+
+        <!-- Precipitation Markets -->
+        <section id="precip-section">
+            <h2>Precipitation Markets</h2>
+            <div class="scan-meta">
+                <span id="precip-scan-time" class="scan-time"></span>
+                <button class="force-rescan-btn" id="precip-rescan">Force Rescan</button>
+            </div>
+            <div id="precip-table"></div>
+            <div id="precip-signal-badge"></div>
+            <div class="chart-row">
+                <div class="chart-card">
+                    <div class="chart-label">Edge by City</div>
+                    <div id="precip-edge-chart"></div>
                 </div>
-                <div id="precip-table"></div>
-                <div class="chart-row chart-row-stack">
-                    <div class="chart-card">
-                        <div class="chart-label">Edge by City</div>
-                        <div id="precip-edge-chart"></div>
-                    </div>
-                    <div class="chart-card">
-                        <div class="chart-label" id="precip-chart2-label">Edge Heatmap</div>
-                        <div id="precip-heatmap-chart"></div>
-                    </div>
+                <div class="chart-card">
+                    <div class="chart-label" id="precip-chart2-label">Confidence vs Edge</div>
+                    <div id="precip-heatmap-chart"></div>
                 </div>
-                <div id="precip-signal-badge"></div>
-            </section>
+            </div>
+        </section>
 
-            <hr class="we-divider">
-
-            <div id="signal-summary" class="metric-row metric-row-narrow"></div>
-            <div id="risk-controls" class="risk-footer"></div>
-        </div>
-    </div>
-
+        <!-- Risk Controls -->
+        <div id="risk-controls" class="risk-footer"></div>
     </main>
 
-    <!-- JS modules -->
-    <script type="module" src="/static/js/app.js"></script>
+    <script type="module" src="/static/js/app.js?v=4"></script>
 </body>
 </html>

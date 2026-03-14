@@ -443,12 +443,13 @@ section > h2 {
 .we-refresh-btn:active {
   transform: scale(0.93);
 }
-.we-refresh-btn.spinning .we-refresh-icon, .spinning .we-refresh-btn .we-refresh-icon, .we-refresh-btn.spinning {
+.we-refresh-btn.spinning .we-refresh-icon {
+  display: inline-block;
   animation: spin 0.8s linear infinite;
 }
 
-.spinning {
-  animation: spin 0.8s linear infinite;
+.we-refresh-icon {
+  display: inline-block;
 }
 
 .we-mode-badge {
@@ -1284,6 +1285,62 @@ section > h2 {
 }
 .page-footer a:hover {
   color: #45748C;
+}
+
+/* Pagination */
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 16px;
+  background: #1f2b3d;
+  border-top: 1px solid #2a3a4e;
+  font-size: 12px;
+}
+
+.pagination-info {
+  font-family: "JetBrains Mono", "Fira Mono", monospace;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.45);
+  letter-spacing: 0.03em;
+}
+
+.pagination-buttons {
+  display: flex;
+  gap: 8px;
+}
+
+.pagination-btn {
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 12px;
+  background: #1a2332;
+  border: 1px solid #2a3a4e;
+  border-radius: 4px;
+  color: rgba(255, 255, 255, 0.6);
+  font-family: "Roboto", sans-serif;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+.pagination-btn:hover:not(:disabled) {
+  background: #45748C;
+  color: #fff;
+  border-color: #45748C;
+}
+.pagination-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+@media (max-width: 600px) {
+  .pagination {
+    flex-direction: column;
+    gap: 8px;
+    align-items: flex-start;
+  }
 }
 
 /*# sourceMappingURL=main.css.map */

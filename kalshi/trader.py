@@ -28,10 +28,8 @@ def _load_credentials():
 
 
 def _sign_request(method: str, path: str) -> dict:
-    """Generate auth headers for a Kalshi API request."""
     _load_credentials()
     timestamp_ms = str(int(time.time() * 1000))
-    # Strip query params from path for signing
     sign_path = path.split("?")[0]
     message = f"{timestamp_ms}{method.upper()}{sign_path}"
     signature = _private_key.sign(
@@ -51,7 +49,6 @@ def _sign_request(method: str, path: str) -> dict:
 
 
 def _get(path: str, params: dict | None = None) -> dict:
-    """Authenticated GET request to Kalshi API."""
     if params:
         qs = "&".join(f"{k}={v}" for k, v in params.items())
         full_path = f"{path}?{qs}"
@@ -68,7 +65,6 @@ def get_balance() -> dict:
 
 
 def get_positions(limit: int = 100, settlement_status: str = "unsettled") -> list:
-    """Get current portfolio positions."""
     data = _get("/trade-api/v2/portfolio/positions", {
         "limit": limit,
         "settlement_status": settlement_status,
@@ -77,13 +73,11 @@ def get_positions(limit: int = 100, settlement_status: str = "unsettled") -> lis
 
 
 def get_orders(limit: int = 50, status: str = "resting") -> list:
-    """Get orders by status (resting, canceled, executed)."""
     data = _get("/trade-api/v2/portfolio/orders", {"limit": limit, "status": status})
     return data.get("orders", [])
 
 
 def _post_order(ticker: str, action: str, side: str, price_cents: int, count: int) -> dict:
-    """Place an order (buy or sell) on Kalshi."""
     path = "/trade-api/v2/portfolio/orders"
     headers = _sign_request("POST", path)
     body = {
@@ -109,24 +103,21 @@ def _post_order(ticker: str, action: str, side: str, price_cents: int, count: in
 
 
 def place_order(ticker: str, side: str, price_cents: int, count: int) -> dict:
-    """Place a BUY limit order on Kalshi."""
     return _post_order(ticker, "buy", side, price_cents, count)
 
 
 def sell_order(ticker: str, side: str, price_cents: int, count: int) -> dict:
-    """Place a SELL limit order to close a position."""
     return _post_order(ticker, "sell", side, price_cents, count)
 
 
-_scan_spent = 0.0  # tracks dollars spent in current scan cycle
-_resting_buy_tickers: set[str] | None = None  # cached per scan cycle
+_scan_spent = 0.0
+_resting_buy_tickers: set[str] | None = None
 
 from risk.bankroll import BankrollTracker
 from risk.circuit_breaker import CircuitBreaker
 
 
 def _init_bankroll() -> BankrollTracker:
-    """Initialize bankroll from Kalshi API, fall back to conservative default."""
     try:
         bal = get_balance()
         cash = bal.get("balance", 0) / 100.0
@@ -148,11 +139,9 @@ _circuit_breaker = CircuitBreaker()
 
 
 def reset_scan_budget():
-    """Reset per-scan spending tracker. Call at start of each scan."""
     global _scan_spent, _resting_buy_tickers
     _scan_spent = 0.0
-    _resting_buy_tickers = None  # force re-fetch next signal
-    # Refresh bankroll from API (non-fatal if offline)
+    _resting_buy_tickers = None
     try:
         bal = get_balance()
         _bankroll_tracker.update_from_api(
@@ -164,24 +153,14 @@ def reset_scan_budget():
 
 
 def execute_kalshi_signal(market: dict, city: str, model_prob: float, market_prob: float, edge: float, direction: str, confidence: float = 0, existing_contracts: int = 0, kelly_floor: float | None = None):
-    """Execute a trade on Kalshi based on a signal.
-
-    Args:
-        existing_contracts: number of contracts we already hold on this ticker.
-            Used to enforce per-event caps and prevent stacking.
-        kelly_floor: override the base Kelly multiplier (e.g. 0.35 for same-day).
-    """
     global _scan_spent
-    from config import PAPER_MODE, FRACTIONAL_KELLY
-    from alerts.telegram_alert import send_signal_alert
-    from risk.sizer import compute_size
+    from config import PAPER_MODE, FRACTIONAL_KELLY, MAX_BANKROLL_PCT_PER_TRADE
 
     ticker = market.get("ticker", "")
     if not ticker:
         print("No ticker in market data — skipping")
         return
 
-    # Skip if there's already a resting buy order for this ticker
     global _resting_buy_tickers
     if _resting_buy_tickers is None:
         try:
@@ -193,20 +172,17 @@ def execute_kalshi_signal(market: dict, city: str, model_prob: float, market_pro
         print(f"\n  SKIP {ticker} — resting buy order already exists")
         return
 
-    # Determine side: positive edge = buy YES, negative = buy NO
     side = "yes" if edge > 0 else "no"
 
-    # Price in cents
     if edge > 0:
         price_cents = int((market_prob + edge * 0.3) * 100)
     else:
         price_cents = int((1 - market_prob + abs(edge) * 0.3) * 100)
     price_cents = max(1, min(99, price_cents))
 
-    # Same-day markets use a higher Kelly floor
     effective_kelly = kelly_floor if kelly_floor is not None else FRACTIONAL_KELLY
 
-    # Kelly-based position sizing (existing_contracts enforces per-event cap)
+    from risk.sizer import compute_size
     size_result = compute_size(
         model_prob=model_prob,
         market_prob=market_prob,
@@ -219,6 +195,13 @@ def execute_kalshi_signal(market: dict, city: str, model_prob: float, market_pro
         event_contracts=existing_contracts,
     )
 
+    # HARD 2% BANKROLL CAP
+    current_bankroll = _bankroll_tracker.bankroll
+    max_dollars = current_bankroll * MAX_BANKROLL_PCT_PER_TRADE
+    if size_result.dollar_amount > max_dollars:
+        size_result.count = int(max_dollars / (price_cents / 100.0))
+        print(f"  [SAFETY] Reduced size to respect 2% bankroll cap → {size_result.count} contracts")
+
     if size_result.count == 0:
         print(f"\n  SKIP {ticker} — {size_result.limit_reason}")
         return
@@ -226,7 +209,6 @@ def execute_kalshi_signal(market: dict, city: str, model_prob: float, market_pro
     count = size_result.count
     order_cost = size_result.dollar_amount
 
-    # Fee-adjusted edge filter — skip if expected profit after fees is negative
     fee_estimate = 0.035 + (count * 0.01)
     expected_profit = (abs(edge) * count * 1.00) - fee_estimate
     if expected_profit < 0.12:
@@ -250,15 +232,12 @@ def execute_kalshi_signal(market: dict, city: str, model_prob: float, market_pro
         status = order.get("status", "unknown")
         print(f"  Order posted! ID: {order_id} Status: {status}")
 
-        # Track this ticker so we don't duplicate within the same scan cycle
         _resting_buy_tickers.add(ticker)
 
-        # Verify actual fill from response
         fill_qty = int(float(order.get("fill_count_fp", "0") or "0"))
         remaining = int(float(order.get("remaining_count_fp", "0") or "0"))
 
         if fill_qty > 0:
-            # Use actual fill cost if available, else estimate
             taker_cost = float(order.get("taker_fill_cost_dollars", "0") or "0")
             maker_cost = float(order.get("maker_fill_cost_dollars", "0") or "0")
             actual_cost = taker_cost + maker_cost if (taker_cost + maker_cost) > 0 else fill_qty * price_cents / 100.0
@@ -281,7 +260,6 @@ def execute_kalshi_signal(market: dict, city: str, model_prob: float, market_pro
                 city=city,
             )
         else:
-            # Resting — no fill yet, track limit price estimate
             _scan_spent += order_cost
             _bankroll_tracker.record_daily_pnl(-order_cost)
             print(f"  Resting: 0/{count} filled — limit order at {price_cents}¢")
@@ -311,11 +289,6 @@ def execute_kalshi_signal(market: dict, city: str, model_prob: float, market_pro
 
 
 def poll_and_update_fills():
-    """Poll all resting orders and update trades.db with actual fills.
-
-    Called at the end of every scan cycle.
-    Handles partial fills, late fills, and multiple orders safely.
-    """
     try:
         orders = get_orders(status="resting") + get_orders(status="executed")
 

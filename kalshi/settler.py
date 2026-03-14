@@ -42,10 +42,10 @@ def _fetch_market_result(ticker: str) -> dict | None:
 def _is_exit_fill(side: str) -> bool:
     """Return True if the fill side represents an exit (sell/close), not an entry.
 
-    Exit fills: sell_yes, sell_no, yes, no
-    Entry fills: buy_yes, buy_no
+    Exit fills: sell_yes, sell_no
+    Entry fills: buy_yes, buy_no, or legacy bare "yes", "no"
     """
-    return side in ("sell_yes", "sell_no", "yes", "no")
+    return side.startswith("sell")
 
 
 def _calculate_pnl(side: str, fill_price: int, fill_qty: int, result: str) -> float:
@@ -68,13 +68,13 @@ def _calculate_pnl(side: str, fill_price: int, fill_qty: int, result: str) -> fl
 
     price_cents = fill_price
 
-    if side == "buy_yes":
+    if side in ("buy_yes", "yes"):
         if result == "yes":
             return fill_qty * (100 - price_cents) / 100.0  # win
         else:
             return -fill_qty * price_cents / 100.0  # lose
 
-    elif side == "buy_no":
+    elif side in ("buy_no", "no"):
         if result == "no":
             return fill_qty * (100 - price_cents) / 100.0  # win
         else:

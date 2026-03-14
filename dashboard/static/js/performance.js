@@ -1,7 +1,5 @@
 // dashboard/static/js/performance.js
-// Triptych card renderers: equity sparkline, daily P&L bars, health badge.
-
-// ─── Plotly theme constants (mirrors markets.js) ─────────────────────────────
+// Triptych card renderers: equity sparkline, positions count, unrealized P&L.
 
 const PLOTLY_LAYOUT = {
     paper_bgcolor: 'rgba(0,0,0,0)',
@@ -14,8 +12,6 @@ const PLOTLY_LAYOUT = {
 
 const PLOTLY_CONFIG = { displayModeBar: false, responsive: true, staticPlot: true };
 
-// ─── Equity Sparkline ────────────────────────────────────────────────────────
-
 function equitySparkline(curve, containerId) {
     const el = document.getElementById(containerId);
     if (!el || !curve || curve.length === 0) return;
@@ -24,59 +20,19 @@ function equitySparkline(curve, containerId) {
     const equities = curve.map(d => d.equity);
 
     const trace = {
-        x: dates,
-        y: equities,
-        type: 'scatter',
-        mode: 'lines',
+        x: dates, y: equities, type: 'scatter', mode: 'lines',
         line: { color: '#10b981', width: 2 },
-        fill: 'tozeroy',
-        fillcolor: 'rgba(16, 185, 129, 0.15)',
+        fill: 'tozeroy', fillcolor: 'rgba(16, 185, 129, 0.15)',
         hoverinfo: 'skip',
     };
 
     const layout = {
-        ...PLOTLY_LAYOUT,
-        height: 50,
+        ...PLOTLY_LAYOUT, height: 50,
         yaxis: { visible: false, range: [Math.min(...equities) * 0.98, Math.max(...equities) * 1.02] },
     };
 
     Plotly.newPlot(el, [trace], layout, PLOTLY_CONFIG);
 }
-
-// ─── Daily P&L Bar Chart ─────────────────────────────────────────────────────
-
-function dailyPnlChart(settledDaily, containerId) {
-    const el = document.getElementById(containerId);
-    if (!el || !settledDaily || settledDaily.length === 0) return;
-
-    const dates = settledDaily.map(d => d.date);
-    const pnls = settledDaily.map(d => d.pnl);
-    const colors = pnls.map(p => p >= 0 ? '#10b981' : '#ef4444');
-    const hoverText = settledDaily.map(d =>
-        `${d.date}<br>${d.wins}W / ${d.losses}L<br>P&L: $${d.pnl.toFixed(2)}`
-    );
-
-    const trace = {
-        x: dates,
-        y: pnls,
-        type: 'bar',
-        marker: { color: colors, line: { width: 0 } },
-        hovertemplate: '%{text}<extra></extra>',
-        text: hoverText,
-    };
-
-    const layout = {
-        ...PLOTLY_LAYOUT,
-        height: 50,
-        xaxis: { visible: false },
-        yaxis: { visible: false, zeroline: true, zerolinecolor: 'rgba(255,255,255,0.15)', zerolinewidth: 1 },
-        bargap: 0.3,
-    };
-
-    Plotly.newPlot(el, [trace], layout, PLOTLY_CONFIG);
-}
-
-// ─── Health Badge ────────────────────────────────────────────────────────────
 
 async function renderHealthBadge(containerId) {
     const el = document.getElementById(containerId);
@@ -85,78 +41,51 @@ async function renderHealthBadge(containerId) {
     try {
         const resp = await fetch('/api/health');
         const data = await resp.json();
-
+        const status = data.status || data.overall || 'unknown';
         const colors = { healthy: '#10b981', warn: '#f59e0b', critical: '#ef4444' };
-        const labels = {
-            healthy: 'HEALTHY',
-            warn: `${data.warning_count} WARNING${data.warning_count !== 1 ? 'S' : ''}`,
-            critical: `${data.critical_count} CRITICAL`,
-        };
-
-        const color = colors[data.overall] || '#666';
-        const label = labels[data.overall] || data.overall.toUpperCase();
-
-        // Build detail list for tooltip
-        let details = '';
-        if (data.overall !== 'healthy') {
-            const problems = [];
-            for (const [, checks] of Object.entries(data.checks)) {
-                for (const c of checks) {
-                    if (c.status !== 'ok') {
-                        problems.push(`${c.name}: ${c.detail}`);
-                    }
-                }
-            }
-            details = `<div class="health-details" style="margin-top:6px;font-size:10px;color:rgba(255,255,255,0.5);line-height:1.5;">${problems.map(p => `<div>${p}</div>`).join('')}</div>`;
-        }
-
-        el.innerHTML = `<div style="display:inline-flex;align-items:center;gap:6px;padding:4px 12px;border-radius:12px;background:${color}22;border:1px solid ${color}55;color:${color};font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;">${label}</div>${details}`;
-    } catch (e) {
+        const color = colors[status] || '#666';
+        const label = status.toUpperCase();
+        el.innerHTML = `<div style="display:inline-flex;align-items:center;gap:6px;padding:4px 12px;border-radius:12px;background:${color}22;border:1px solid ${color}55;color:${color};font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;">${label}</div>`;
+    } catch (_) {
         el.innerHTML = '<span style="color:rgba(255,255,255,0.3);font-size:11px;">Health check unavailable</span>';
     }
 }
 
-// ─── Triptych Renderer ───────────────────────────────────────────────────────
+function renderTriptych(portfolio, performance, config) {
+    const { balance = {}, open_positions = [] } = portfolio;
+    const maxPositions = (config && config.max_positions_total) || 15;
 
-function renderTriptych(portfolio, performance) {
-    const { balance, settled } = portfolio;
-
-    // Equity card
+    // Card 1: Equity
     const eqVal = document.getElementById('tri-equity');
     const eqDet = document.getElementById('tri-equity-detail');
-    if (eqVal) eqVal.textContent = `$${balance.equity.toFixed(2)}`;
-    if (eqDet) eqDet.textContent = `$${balance.cash.toFixed(0)} cash + $${balance.positions.toFixed(0)} positions`;
+    if (eqVal) eqVal.textContent = `$${(balance.equity || 0).toFixed(2)}`;
+    if (eqDet) eqDet.textContent = `$${(balance.cash || 0).toFixed(0)} cash + $${(balance.positions || 0).toFixed(0)} positions`;
 
-    // Record card
-    const recVal = document.getElementById('tri-record');
-    const recDet = document.getElementById('tri-record-detail');
-    if (recVal) recVal.textContent = `${settled.wins}W / ${settled.losses}L`;
-    if (recDet) recDet.textContent = `${settled.hit_rate.toFixed(1)}% hit rate`;
+    // Card 2: Open Positions count
+    const posVal = document.getElementById('tri-positions');
+    const posDet = document.getElementById('tri-positions-detail');
+    const totalValue = open_positions.reduce((s, p) => s + (p.value || 0), 0);
+    if (posVal) posVal.textContent = `${open_positions.length} / ${maxPositions}`;
+    if (posDet) posDet.textContent = totalValue > 0 ? `$${totalValue.toFixed(2)} market value` : 'No open exposure';
 
-    // P&L card
+    // Card 3: Unrealized P&L (from trades.db cost basis vs current exposure)
     const pnlVal = document.getElementById('tri-pnl');
     const pnlDet = document.getElementById('tri-pnl-detail');
+    const unrealized = open_positions.reduce((s, p) => s + (p.pnl || 0), 0);
+    const totalFees = open_positions.reduce((s, p) => s + (p.fees || 0), 0);
     if (pnlVal) {
-        const pnl = settled.net_pnl;
-        pnlVal.textContent = `${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}`;
-        pnlVal.className = `triptych-value ${pnl >= 0 ? 'val-positive' : 'val-negative'}`;
+        pnlVal.textContent = `${unrealized >= 0 ? '+' : ''}$${unrealized.toFixed(2)}`;
+        pnlVal.className = `triptych-value ${unrealized >= 0 ? 'val-positive' : 'val-negative'}`;
     }
-    if (pnlDet) pnlDet.textContent = `Fees: $${settled.fees.toFixed(2)}`;
+    if (pnlDet) pnlDet.textContent = totalFees > 0 ? `Fees: $${totalFees.toFixed(2)}` : '';
 
     // Sparkline
-    if (performance.equity_curve && performance.equity_curve.length > 0) {
+    if (performance && performance.equity_curve && performance.equity_curve.length > 0) {
         equitySparkline(performance.equity_curve, 'equity-sparkline');
-    }
-
-    // Daily P&L bars
-    if (performance.settled_daily && performance.settled_daily.length > 0) {
-        dailyPnlChart(performance.settled_daily, 'daily-pnl-chart');
     }
 
     // Health badge
     renderHealthBadge('health-badge');
 }
-
-// ─── Exports ──────────────────────────────────────────────────────────────────
 
 export { renderTriptych };

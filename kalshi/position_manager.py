@@ -39,7 +39,8 @@ SAMEDAY_MIN_EDGE = 0.02       # tighter: 2% edge is noise on a locked forecast
 SAMEDAY_LOSS_CUT = -0.03      # cut at -3% — it's not coming back
 
 # Fee floor — don't sell if net proceeds after fees < this amount
-MIN_EXIT_PROCEEDS = 0.10      # $0.10 minimum net after fees to bother selling
+MIN_EXIT_PROCEEDS = 0.50      # $0.50 minimum net after fees to bother selling
+MIN_SELL_CENTS = 10           # never sell a contract below 10¢ — hold to settlement instead
 
 # Fortify thresholds — add to winning positions
 FORTIFY_MIN_EDGE = ALERT_THRESHOLD  # edge must still be above entry threshold
@@ -234,8 +235,8 @@ def evaluate_position(ticker: str, qty: float, market_data: dict) -> dict:
     # --- Helper: compute sell price in cents for our side ---
     def _sell_cents():
         if side == "yes":
-            return max(1, int(current_yes_price * 100) - 1)
-        return max(1, int((1 - current_yes_price) * 100) - 1)
+            return max(MIN_SELL_CENTS, int(current_yes_price * 100) - 1)
+        return max(MIN_SELL_CENTS, int((1 - current_yes_price) * 100) - 1)
 
     # --- Helper: check if selling beats holding to settlement ---
     def _sell_beats_settlement(sell_price_cents: int) -> bool:
@@ -250,92 +251,29 @@ def evaluate_position(ticker: str, qty: float, market_data: dict) -> dict:
 
         return sell_proceeds > expected_settlement
 
-    # --- Decision logic ---
+    # --- Decision logic (simplified 2026-03-14) ---
+    # Binary contracts settle at $0 or $1. The model wins 53% of the time.
+    # Active exits were destroying edge by selling at terrible prices.
+    # New rule: hold to settlement unless locking in a clear profit.
 
-    # Same-day with positive edge: ALWAYS hold to settlement.
-    # Selling incurs fees and the forecast is locked — let it settle.
-    if is_same_day and edge >= 0:
-        result["action"] = "hold"
-        result["reason"] = f"HOLD TO SETTLE [{time_label}] — edge {edge:+.1%}, forecast locked"
-        return result
-
-    # Profit take: market moved strongly in our favor (multi-day only)
-    # Same-day positions should settle, not sell at 92c and pay fees.
+    # Profit take: our side is at 90¢+ (multi-day only, sameday just settles)
     if not is_same_day:
         if side == "yes" and current_yes_price >= PROFIT_TAKE_PRICE:
-            sell_price = int(current_yes_price * 100) - 1
+            sell_price = max(MIN_SELL_CENTS, int(current_yes_price * 100) - 1)
             if _sell_beats_settlement(sell_price):
                 result["action"] = "exit"
                 result["reason"] = f"PROFIT TAKE — YES at {current_yes_price:.0%}"
                 result["sell_price_cents"] = sell_price
                 return result
         if side == "no" and current_yes_price <= (1 - PROFIT_TAKE_PRICE):
-            sell_price = int((1 - current_yes_price) * 100) - 1
+            sell_price = max(MIN_SELL_CENTS, int((1 - current_yes_price) * 100) - 1)
             if _sell_beats_settlement(sell_price):
                 result["action"] = "exit"
                 result["reason"] = f"PROFIT TAKE — NO near certain (YES at {current_yes_price:.0%})"
                 result["sell_price_cents"] = sell_price
                 return result
 
-    # Trailing stop: price peaked and is dropping back (multi-day only)
-    # Same-day: forecast is locked, price noise doesn't change the outcome
-    if not is_same_day:
-        trail_reason = check_trailing_stop(ticker, side, our_price_cents, days_ahead)
-        if trail_reason:
-            sell_price = max(1, our_price_cents - 1)
-            if _sell_beats_settlement(sell_price):
-                result["action"] = "exit"
-                result["reason"] = trail_reason
-                result["sell_price_cents"] = sell_price
-                return result
-
-    # Loss cut: model disagrees with our position
-    if edge < loss_threshold:
-        sell_price = max(1, _sell_cents() - 1)
-        # Only sell if it actually saves money vs letting it settle as a loss
-        sell_fee = 0.035 + (abs_qty * 0.01)
-        sell_proceeds = (sell_price * abs_qty / 100.0) - sell_fee
-        if sell_proceeds >= MIN_EXIT_PROCEEDS:
-            urgency = "LOCKED FORECAST" if is_same_day else "EDGE FLIPPED"
-            result["action"] = "exit"
-            result["reason"] = f"{urgency} [{time_label}] — {edge:+.1%} against us"
-            result["sell_price_cents"] = sell_price
-            return result
-        else:
-            # Selling costs more in fees than we'd recover — hold and accept the loss
-            result["action"] = "hold"
-            result["reason"] = f"HOLD (fee > proceeds) [{time_label}] — edge {edge:+.1%}"
-            return result
-
-    # Edge evaporated: not worth the capital tie-up (multi-day only)
-    # Same-day: just let it settle, edge is small either way
-    if not is_same_day and abs(edge) < min_edge:
-        sell_price = _sell_cents()
-        sell_fee = 0.035 + (abs_qty * 0.01)
-        sell_proceeds = (sell_price * abs_qty / 100.0) - sell_fee
-        if sell_proceeds >= MIN_EXIT_PROCEEDS and _sell_beats_settlement(sell_price):
-            result["action"] = "exit"
-            result["reason"] = f"EDGE GONE [{time_label}] — only {edge:+.1%} remaining"
-            result["sell_price_cents"] = sell_price
-            return result
-
-    # Confidence dropped below threshold (multi-day only)
-    if not is_same_day and confidence < CONFIDENCE_THRESHOLD * 0.7:
-        sell_price = _sell_cents()
-        sell_fee = 0.035 + (abs_qty * 0.01)
-        sell_proceeds = (sell_price * abs_qty / 100.0) - sell_fee
-        if sell_proceeds >= MIN_EXIT_PROCEEDS and _sell_beats_settlement(sell_price):
-            result["action"] = "exit"
-            result["reason"] = f"LOW CONFIDENCE [{time_label}] — {confidence:.1f}% (need {CONFIDENCE_THRESHOLD * 0.7:.0f}%)"
-            result["sell_price_cents"] = sell_price
-            return result
-
-    # Fortify: edge is still strong — add to the position (multi-day only)
-    if edge >= FORTIFY_MIN_EDGE and confidence >= FORTIFY_MIN_CONFIDENCE and not is_same_day:
-        result["action"] = "fortify"
-        result["reason"] = f"FORTIFY [{time_label}] — edge {edge:+.1%}, conf {confidence:.1f}%"
-        return result
-
+    # Everything else: hold to settlement
     result["action"] = "hold"
     result["reason"] = f"HOLD [{time_label}] — edge {edge:+.1%}, conf {confidence:.1f}%"
     return result

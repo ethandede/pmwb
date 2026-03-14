@@ -17,34 +17,46 @@ from weather.multi_model import fuse_precip_forecast
 from weather.forecast import calculate_remaining_month_days
 from config import MAX_ENSEMBLE_HORIZON_DAYS, MIN_VOLUME_24H, MIN_OPEN_INTEREST
 from config import SAMEDAY_EDGE_THRESHOLD, SAMEDAY_CONFIDENCE_THRESHOLD, SAMEDAY_KELLY_FLOOR
+from config import MIN_TRADE_EDGE, MAX_POSITIONS_TOTAL, SKIP_RAIN_MARKETS
 
 console = Console()
 
 
 def _is_liquid(market: dict) -> bool:
-    """Check if a market has sufficient liquidity to trade."""
     volume = float(market.get("volume_24h_fp", "0") or "0")
     oi = float(market.get("open_interest_fp", "0") or "0")
     return volume > MIN_VOLUME_24H or oi > MIN_OPEN_INTEREST
 
 
 def _buckets_overlap(lo1, hi1, lo2, hi2) -> bool:
-    """Check if two temperature buckets overlap or are adjacent (within 2°)."""
-    # Convert None bounds to extremes
     a_lo = lo1 if lo1 is not None else -999
     a_hi = hi1 if hi1 is not None else 999
     b_lo = lo2 if lo2 is not None else -999
     b_hi = hi2 if hi2 is not None else 999
-    # Overlap or adjacent within 2 degrees
     return a_lo < b_hi + 2 and b_lo < a_hi + 2
 
 
-def _get_existing_positions() -> dict[str, int]:
-    """Fetch open positions AND resting buy orders → {ticker: abs_qty}.
+def _get_recently_sold_tickers(cooldown_minutes: int = 60) -> set:
+    """Return tickers sold within the cooldown window. Prevents re-entry churn."""
+    try:
+        import sqlite3
+        from pathlib import Path
+        db = Path("data/trades.db")
+        if not db.exists():
+            return set()
+        conn = sqlite3.connect(str(db))
+        cutoff = (datetime.now(timezone.utc) - __import__("datetime").timedelta(minutes=cooldown_minutes)).isoformat()
+        rows = conn.execute(
+            "SELECT DISTINCT ticker FROM trades WHERE side LIKE 'sell_%' AND fill_time > ? AND fill_qty > 0",
+            (cutoff,),
+        ).fetchall()
+        conn.close()
+        return {r[0] for r in rows}
+    except Exception:
+        return set()
 
-    Counts both filled positions and resting buy orders so the per-event cap
-    prevents duplicate entries across scan cycles.
-    """
+
+def _get_existing_positions() -> dict[str, int]:
     result: dict[str, int] = {}
     try:
         from kalshi.trader import get_positions, get_orders
@@ -55,8 +67,6 @@ def _get_existing_positions() -> dict[str, int]:
                 result[p.get("ticker", "")] = qty
     except Exception:
         pass
-
-    # Also count resting buy orders (unfilled entries from previous cycles)
     try:
         from kalshi.trader import get_orders
         resting = get_orders(status="resting")
@@ -68,7 +78,6 @@ def _get_existing_positions() -> dict[str, int]:
                     result[ticker] = result.get(ticker, 0) + remaining
     except Exception:
         pass
-
     return result
 
 
@@ -76,10 +85,15 @@ def run_scanner():
     console.print("[bold cyan]Weather Edge Scanner — Bidirectional Signals[/bold cyan]\n")
     reset_scan_budget()
 
-    # Fetch existing positions once for deduplication
     held_positions = _get_existing_positions()
+    recently_sold = _get_recently_sold_tickers(cooldown_minutes=60)
+    if len(held_positions) >= MAX_POSITIONS_TOTAL:
+        console.print(f"[red]MAX POSITIONS REACHED ({len(held_positions)}/{MAX_POSITIONS_TOTAL}) — skipping all new trades this cycle[/red]")
+        return
     if held_positions:
-        console.print(f"[dim]Existing positions: {len(held_positions)} tickers[/dim]")
+        console.print(f"[dim]Existing positions: {len(held_positions)}/{MAX_POSITIONS_TOTAL} tickers[/dim]")
+    if recently_sold:
+        console.print(f"[dim]Re-entry cooldown: {len(recently_sold)} tickers sold in last 60min[/dim]")
 
     console.print("Fetching weather markets from Gamma API...")
     markets = get_active_weather_markets()
@@ -116,7 +130,6 @@ def run_scanner():
 
         yes_price = float(outcome_prices[0])
 
-        # Find city with unit support
         q_lower = q.lower()
         city_key = None
         for key, data in CITIES.items():
@@ -128,14 +141,12 @@ def run_scanner():
         city = CITIES[city_key]
         unit = city.get("unit", "f")
 
-        # Parse bucket from question
         bucket = parse_bucket(q)
         if not bucket:
             console.print(f"[dim]Skipped (no bucket parse): {q}[/dim]")
             continue
         low, high = bucket
 
-        # Get ensemble forecast with correct unit
         try:
             temps = get_ensemble_max_temps(city["lat"], city["lon"], days_ahead=1, unit=unit)
         except Exception as e:
@@ -148,7 +159,6 @@ def run_scanner():
         model_prob = get_bucket_prob(temps, low, high)
         edge = model_prob - yes_price
 
-        # Dutch book quick check
         sum_prices = sum(float(p) for p in outcome_prices) if len(outcome_prices) > 1 else 1.0
         dutch = sum_prices < DUTCH_BOOK_THRESHOLD
 
@@ -175,13 +185,8 @@ def run_scanner():
             )
             signals_found += 1
 
-            # Log every signal to CSV
             log_signal(q, city_key, model_prob, yes_price, edge, direction, dutch, PAPER_MODE, confidence=0, ticker="")
 
-            # Polymarket trading disabled (account geo-blocked)
-            # Signals still logged to CSV for analysis
-
-    # --- Kalshi Markets ---
     console.print("\nFetching weather markets from Kalshi API...")
     kalshi_markets = get_kalshi_weather_markets()
     console.print(f"Found {len(kalshi_markets)} Kalshi temp markets\n")
@@ -189,12 +194,10 @@ def run_scanner():
     month = datetime.now(timezone.utc).month
     today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
-    # Track positions per city/date to avoid correlated bets
-    city_date_positions = {}  # (city, date, temp_type) -> list of (side, bucket)
+    city_date_positions = {}
 
-    # --- Phase 1: Score all temp markets, collect tradeable signals ---
     tradeable_temp_signals = []
-    all_displayed_temp_signals = []   # every signal with |edge| >= SHOW_THRESHOLD
+    all_displayed_temp_signals = []
 
     for market in kalshi_markets:
         title = market.get("title", "") + " " + market.get("subtitle", "")
@@ -210,20 +213,18 @@ def run_scanner():
             continue
         low, high = bucket
 
-        # Calculate days ahead from ticker date
         ticker = market.get("ticker", "")
         target_date = parse_ticker_date(ticker)
         if target_date and target_date == today_str:
-            days_ahead = 0  # Same-day market — use current observations
+            days_ahead = 0
         elif target_date and target_date > today_str:
             from datetime import timedelta
             target_dt = datetime.strptime(target_date, "%Y-%m-%d").date()
             today_dt = datetime.now(timezone.utc).date()
             days_ahead = (target_dt - today_dt).days
         else:
-            days_ahead = 1  # Fallback
+            days_ahead = 1
 
-        # Multi-model fusion
         temp_type = market.get("_temp_type", "max")
         try:
             model_prob, confidence, details = fuse_forecast(
@@ -235,7 +236,6 @@ def run_scanner():
             console.print(f"[red]Fusion error for {city_key}: {e}[/red]")
             continue
 
-        # Log per-model forecast temps for bias resolution
         ticker = market.get("ticker", "")
         target_date = parse_ticker_date(ticker)
         if target_date:
@@ -245,6 +245,10 @@ def run_scanner():
                     log_forecast(city_key, target_date, model_name, temp_val, temp_type)
 
         edge = model_prob - yes_price
+
+        # HARD RAIN SKIP + MIN EDGE FILTER
+        if SKIP_RAIN_MARKETS and ("Rain in" in title.lower() or "precip" in title.lower()):
+            continue
 
         if abs(edge) >= SHOW_THRESHOLD:
             direction = "BUY YES" if edge > 0 else "SELL YES"
@@ -270,10 +274,8 @@ def run_scanner():
             )
             signals_found += 1
 
-            # Log to CSV
             log_signal(title, city_key + " (kalshi)", model_prob, yes_price, edge, direction, False, PAPER_MODE, confidence=confidence, ticker=ticker)
 
-            # Track every displayed signal for cache
             all_displayed_temp_signals.append({
                 "market": market, "title": title, "city_key": city_key,
                 "model_prob": model_prob, "yes_price": yes_price, "edge": edge,
@@ -283,15 +285,12 @@ def run_scanner():
                 "is_sameday": (days_ahead == 0),
             })
 
-            # Same-day markets: forecasts are near-locked, use relaxed thresholds
             is_sameday = (days_ahead == 0)
-            edge_gate = SAMEDAY_EDGE_THRESHOLD if is_sameday else ALERT_THRESHOLD
+            edge_gate = SAMEDAY_EDGE_THRESHOLD if is_sameday else MIN_TRADE_EDGE
             conf_gate = SAMEDAY_CONFIDENCE_THRESHOLD if is_sameday else CONFIDENCE_THRESHOLD
             kelly_floor = SAMEDAY_KELLY_FLOOR if is_sameday else None
 
-            # Collect tradeable signals for priority sorting
             if abs(edge) >= edge_gate and confidence >= conf_gate and _is_liquid(market):
-                # Rank by |edge| * confidence — best signals trade first
                 rank_score = abs(edge) * confidence
                 tradeable_temp_signals.append({
                     "market": market, "title": title, "city_key": city_key,
@@ -303,17 +302,23 @@ def run_scanner():
                     "rank_score": rank_score,
                 })
 
-    # --- Phase 2: Execute temp signals in priority order (strongest first) ---
     tradeable_temp_signals.sort(key=lambda s: s["rank_score"], reverse=True)
     if tradeable_temp_signals:
         console.print(f"\n[bold]Executing {len(tradeable_temp_signals)} temp signals (sorted by strength)[/bold]")
 
     for sig in tradeable_temp_signals:
+        if len(held_positions) >= MAX_POSITIONS_TOTAL:
+            console.print(f"[red]MAX POSITIONS REACHED ({len(held_positions)}/{MAX_POSITIONS_TOTAL}) — stopping execution[/red]")
+            break
+
+        if sig["ticker"] in recently_sold:
+            console.print(f"[yellow]  COOLDOWN {sig['ticker']} — sold recently, skipping re-entry[/yellow]")
+            continue
+
         pos_key = (sig["city_key"], sig["target_date"] or "unknown", sig["temp_type"])
         side = "yes" if sig["edge"] > 0 else "no"
         existing = city_date_positions.get(pos_key, [])
 
-        # Only skip if opposite side on an overlapping/adjacent bucket
         skip = False
         for prev_side, prev_bucket in existing:
             if prev_side != side:
@@ -332,13 +337,11 @@ def run_scanner():
             )
             execute_kalshi_signal(sig["market"], sig["city_key"], sig["model_prob"], sig["yes_price"], sig["edge"], sig["direction"], sig["confidence"], existing_contracts=held_positions.get(sig["ticker"], 0), kelly_floor=sig["kelly_floor"])
 
-    # --- Kalshi Precipitation Markets ---
     precip_markets = get_kalshi_precip_markets()
     console.print(f"\n  Found {len(precip_markets)} precip markets")
 
-    # --- Phase 1: Score all precip markets, collect tradeable signals ---
     tradeable_precip_signals = []
-    all_displayed_precip_signals = []  # every signal with |edge| >= SHOW_THRESHOLD
+    all_displayed_precip_signals = []
 
     for market in precip_markets:
         ticker = market.get("ticker", "")
@@ -350,7 +353,6 @@ def run_scanner():
         if yes_price is None:
             continue
 
-        # Monthly contracts: cap forecast window at ensemble horizon
         remaining_days = calculate_remaining_month_days()
         forecast_days = min(remaining_days, MAX_ENSEMBLE_HORIZON_DAYS)
         if forecast_days <= 0:
@@ -366,24 +368,17 @@ def run_scanner():
                 threshold=threshold, forecast_days=forecast_days,
                 liquidity_score=_get_liquidity_score(market),
             )
-            # Adjust probability for blind days using climatological base rates
             if blind_days > 0:
                 from weather.climate import estimate_blind_day_precip
                 blind_expected, blind_std = estimate_blind_day_precip(
                     city_key, month, market["_lat"], market["_lon"], blind_days,
                 )
-                # Shift the effective threshold down by expected blind-day precip
-                # If threshold=3" and blind days expect 0.45", model only needs to
-                # see 2.55" in the forecast window to hit 3" total
                 adjusted_threshold = max(0.0, threshold - blind_expected)
                 if adjusted_threshold != threshold:
-                    # Re-run fusion with adjusted threshold
                     model_prob_adj, _, _ = fuse_precip_forecast(
                         market["_lat"], market["_lon"], city_key, month,
                         threshold=adjusted_threshold, forecast_days=forecast_days,
                     )
-                    # Blend: weight toward adjusted prob, but discount by uncertainty
-                    # More blind days = more uncertainty = lower confidence
                     coverage = forecast_days / max(remaining_days, 1)
                     model_prob = model_prob_adj
                     confidence = confidence * coverage
@@ -397,6 +392,9 @@ def run_scanner():
 
         edge = model_prob - yes_price
 
+        if SKIP_RAIN_MARKETS:
+            continue
+
         if abs(edge) >= SHOW_THRESHOLD:
             direction = "BUY YES" if edge > 0 else "SELL YES"
             edge_color = "green" if edge > 0 else "red"
@@ -408,7 +406,6 @@ def run_scanner():
             log_signal(title, city_key + " (kalshi)", model_prob, yes_price, edge, direction, False, PAPER_MODE, confidence=confidence, ticker=ticker)
             signals_found += 1
 
-            # Track every displayed signal for cache
             all_displayed_precip_signals.append({
                 "market": market, "city_key": city_key, "model_prob": model_prob,
                 "yes_price": yes_price, "edge": edge, "direction": direction,
@@ -424,16 +421,16 @@ def run_scanner():
                     "rank_score": rank_score,
                 })
 
-    # --- Phase 2: Execute precip signals in priority order ---
     tradeable_precip_signals.sort(key=lambda s: s["rank_score"], reverse=True)
     if tradeable_precip_signals:
         console.print(f"\n[bold]Executing {len(tradeable_precip_signals)} precip signals (sorted by strength)[/bold]")
 
     for sig in tradeable_precip_signals:
+        if sig["ticker"] in recently_sold:
+            console.print(f"[yellow]  COOLDOWN {sig['ticker']} — sold recently, skipping re-entry[/yellow]")
+            continue
         execute_kalshi_signal(sig["market"], sig["city_key"], sig["model_prob"], sig["yes_price"], sig["edge"], sig["direction"], confidence=sig["confidence"], existing_contracts=held_positions.get(sig["ticker"], 0))
 
-    # === CACHE SCAN RESULTS ===
-    # Cache ALL displayed signals (|edge| >= SHOW_THRESHOLD), not just tradeable ones
     try:
         from dashboard.ticker_map import ticker_to_city
         init_scan_cache_db()
@@ -480,7 +477,6 @@ def run_scanner():
     except Exception as e:
         console.print(f"  [Cache] Error writing scan cache: {e}")
 
-    # === RESTING ORDER FILL POLLER ===
     from kalshi.trader import poll_and_update_fills
     poll_and_update_fills()
 
