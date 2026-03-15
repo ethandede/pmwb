@@ -1,11 +1,11 @@
 // dashboard/static/js/app.js
-import { renderPortfolio } from './portfolio.js?v=21';
-import { renderMarkets } from './markets.js?v=21';
-import { renderTriptych } from './performance.js?v=21';
-import { renderActivity } from './activity.js?v=21';
-import { renderSettled } from './settled.js?v=21';
-import { renderScorecard, renderTrends, renderRecommendations, renderActions } from './analytics.js?v=21';
-import { renderResting } from './resting.js?v=21';
+import { renderPortfolio } from './portfolio.js?v=22';
+import { renderMarkets } from './markets.js?v=22';
+import { renderTriptych } from './performance.js?v=22';
+import { renderActivity } from './activity.js?v=22';
+import { renderSettled } from './settled.js?v=22';
+import { renderScorecard, renderTrends, renderRecommendations, renderActions } from './analytics.js?v=22';
+import { renderResting } from './resting.js?v=22';
 
 let _configCache = null;
 
@@ -124,7 +124,67 @@ async function forceRescan(marketType) {
     }
 }
 
+// --- Sidebar navigation ---
+function initNav() {
+    const sidebar = document.getElementById('sidebar');
+    const toggle = document.getElementById('sidebar-toggle');
+    const mobileOpen = document.getElementById('sidebar-open');
+    const navItems = document.querySelectorAll('.we-nav-item');
+
+    // Collapse/expand
+    toggle.addEventListener('click', () => {
+        sidebar.classList.toggle('collapsed');
+        localStorage.setItem('sidebar-collapsed', sidebar.classList.contains('collapsed'));
+    });
+
+    // Mobile hamburger
+    if (mobileOpen) {
+        mobileOpen.addEventListener('click', () => {
+            sidebar.classList.toggle('mobile-open');
+        });
+    }
+
+    // Restore collapsed state
+    if (localStorage.getItem('sidebar-collapsed') === 'true') {
+        sidebar.classList.add('collapsed');
+    }
+
+    // View switching
+    navItems.forEach(item => {
+        item.addEventListener('click', (e) => {
+            e.preventDefault();
+            const viewId = item.dataset.view;
+
+            // Update active nav
+            navItems.forEach(n => n.classList.remove('active'));
+            item.classList.add('active');
+
+            // Show active view
+            document.querySelectorAll('.we-view').forEach(v => v.classList.remove('active'));
+            const view = document.getElementById(`view-${viewId}`);
+            if (view) view.classList.add('active');
+
+            // Close mobile sidebar
+            sidebar.classList.remove('mobile-open');
+
+            // Remember
+            localStorage.setItem('active-view', viewId);
+
+            // Trigger Plotly resize for charts that may now be visible
+            setTimeout(() => window.dispatchEvent(new Event('resize')), 100);
+        });
+    });
+
+    // Restore last active view
+    const saved = localStorage.getItem('active-view');
+    if (saved) {
+        const item = document.querySelector(`.we-nav-item[data-view="${saved}"]`);
+        if (item) item.click();
+    }
+}
+
 document.addEventListener('DOMContentLoaded', () => {
+    initNav();
     document.getElementById('refresh-btn').addEventListener('click', refreshAll);
     document.getElementById('precip-rescan').addEventListener('click', () => forceRescan('precip'));
     document.getElementById('temp-rescan').addEventListener('click', () => forceRescan('temp'));

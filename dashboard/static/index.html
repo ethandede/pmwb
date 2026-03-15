@@ -4,171 +4,207 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Weather Edge</title>
-    <link rel="stylesheet" href="/static/css/main.css?v=21">
+    <link rel="stylesheet" href="/static/css/main.css?v=22">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Merriweather:wght@700;900&family=Roboto:wght@300;400;500;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <script src="https://cdn.plot.ly/plotly-2.35.0.min.js" charset="utf-8"></script>
 </head>
-<body>
-    <header class="we-header">
-        <img src="/static/assets/logo.svg" alt="WE" class="we-header-logo">
-        <div class="we-header-text">
-            <h1 class="we-header-title">Weather Edge</h1>
-            <p class="we-header-subtitle">Automated Weather Market Trading Terminal</p>
+<body class="we-app">
+    <!-- Sidebar -->
+    <aside class="we-sidebar" id="sidebar">
+        <div class="we-sidebar-header">
+            <img src="/static/assets/logo.svg" alt="WE" class="we-sidebar-logo">
+            <span class="we-sidebar-title">Weather Edge</span>
+            <button class="we-sidebar-toggle" id="sidebar-toggle" title="Toggle sidebar">
+                <i class="fa-solid fa-angles-left"></i>
+            </button>
         </div>
-        <div class="we-header-right">
-            <button class="we-refresh-btn" id="refresh-btn" title="Refresh data"><span class="we-refresh-icon">&#8635;</span></button>
-            <div class="we-header-meta">
+
+        <nav class="we-nav">
+            <div class="we-nav-group-label">Trading</div>
+            <a class="we-nav-item active" data-view="overview" href="#">
+                <i class="fa-solid fa-gauge-high"></i>
+                <span>Overview</span>
+            </a>
+            <a class="we-nav-item" data-view="positions" href="#">
+                <i class="fa-solid fa-briefcase"></i>
+                <span>Positions</span>
+            </a>
+
+            <div class="we-nav-group-label">Analytics</div>
+            <a class="we-nav-item" data-view="analytics" href="#">
+                <i class="fa-solid fa-chart-line"></i>
+                <span>Analytics</span>
+            </a>
+
+            <div class="we-nav-group-label">Markets</div>
+            <a class="we-nav-item" data-view="markets" href="#">
+                <i class="fa-solid fa-temperature-high"></i>
+                <span>Markets</span>
+            </a>
+
+            <div class="we-nav-group-label">Records</div>
+            <a class="we-nav-item" data-view="history" href="#">
+                <i class="fa-solid fa-clock-rotate-left"></i>
+                <span>History</span>
+            </a>
+        </nav>
+
+        <div class="we-sidebar-footer">
+            <div class="we-sidebar-status">
                 <span id="mode-badge" class="we-mode-badge"></span>
+            </div>
+        </div>
+    </aside>
+
+    <!-- Main content -->
+    <div class="we-main">
+        <!-- Top bar -->
+        <header class="we-topbar">
+            <button class="we-sidebar-open" id="sidebar-open" title="Open menu">
+                <i class="fa-solid fa-bars"></i>
+            </button>
+            <div class="we-topbar-right">
+                <button class="we-refresh-btn" id="refresh-btn" title="Refresh data">
+                    <span class="we-refresh-icon"><i class="fa-solid fa-arrows-rotate"></i></span>
+                </button>
                 <span id="header-timestamp" class="we-timestamp"></span>
             </div>
+        </header>
+
+        <!-- Triptych (always visible) -->
+        <div class="we-page">
+            <div class="triptych-row">
+                <div class="triptych-card">
+                    <div class="triptych-label">Total Equity</div>
+                    <div class="triptych-value" id="tri-equity">&mdash;</div>
+                    <div class="triptych-detail" id="tri-equity-detail"></div>
+                    <div class="triptych-visual" id="equity-sparkline"></div>
+                </div>
+                <div class="triptych-card">
+                    <div class="triptych-label">Open Positions</div>
+                    <div class="triptych-value" id="tri-positions">&mdash;</div>
+                    <div class="triptych-detail" id="tri-positions-detail"></div>
+                </div>
+                <div class="triptych-card">
+                    <div class="triptych-label">Unrealized P&amp;L</div>
+                    <div class="triptych-value" id="tri-pnl">&mdash;</div>
+                    <div class="triptych-detail" id="tri-pnl-detail"></div>
+                    <div class="triptych-visual" id="health-badge"></div>
+                </div>
+            </div>
+
+            <!-- View: Overview -->
+            <div class="we-view active" id="view-overview">
+                <section id="activity-section">
+                    <h2>Activity Log</h2>
+                    <p class="section-desc">Recent trades placed by the bot. Edge and confidence from the scan that triggered each trade.</p>
+                    <div id="activity-table"></div>
+                </section>
+            </div>
+
+            <!-- View: Positions -->
+            <div class="we-view" id="view-positions">
+                <section id="portfolio-section">
+                    <h2>Open Positions</h2>
+                    <p class="section-desc">Event date is when the weather occurs. Markets settle by ~9 AM ET the following morning.</p>
+                    <div id="open-positions-table"></div>
+                </section>
+                <hr class="we-divider">
+                <section id="resting-section">
+                    <h2>Resting Orders</h2>
+                    <p class="section-desc">Unfilled limit orders sitting on the book. Tying up buying power until filled or cancelled.</p>
+                    <div id="resting-table"></div>
+                </section>
+            </div>
+
+            <!-- View: Analytics -->
+            <div class="we-view" id="view-analytics">
+                <section id="scorecard-section">
+                    <h2>Daily Scorecard</h2>
+                    <p class="section-desc">Settlement results and comparison to recent performance.</p>
+                    <div id="scorecard-content"></div>
+                </section>
+                <hr class="we-divider">
+                <section id="trends-section">
+                    <h2>Trends</h2>
+                    <div id="trends-content"></div>
+                </section>
+                <hr class="we-divider">
+                <section id="actions-section">
+                    <h2>Position Manager</h2>
+                    <p class="section-desc">7-day summary of hold/fortify/exit/spread-blocked decisions.</p>
+                    <div id="actions-content"></div>
+                </section>
+                <hr class="we-divider">
+                <section id="recommendations-section">
+                    <h2>Parameter Health</h2>
+                    <p class="section-desc">Data-driven suggestions. Changes require your approval via /optimize.</p>
+                    <div id="recommendations-content"></div>
+                </section>
+            </div>
+
+            <!-- View: Markets -->
+            <div class="we-view" id="view-markets">
+                <section id="temp-section">
+                    <h2>Temperature Markets</h2>
+                    <p class="section-desc">Daily high/low temperature contracts. Edge = model probability minus market price.</p>
+                    <div class="scan-meta">
+                        <span id="temp-scan-time" class="scan-time"></span>
+                        <button class="force-rescan-btn" id="temp-rescan">Force Rescan</button>
+                    </div>
+                    <div id="temp-table"></div>
+                    <div id="temp-signal-badge"></div>
+                    <div class="chart-row">
+                        <div class="chart-card">
+                            <div class="chart-label">Edge by City</div>
+                            <div id="temp-edge-chart"></div>
+                        </div>
+                        <div class="chart-card">
+                            <div class="chart-label" id="temp-chart2-label">Confidence vs Edge</div>
+                            <div id="temp-heatmap-chart"></div>
+                        </div>
+                    </div>
+                </section>
+                <hr class="we-divider">
+                <section id="precip-section">
+                    <h2>Precipitation Markets</h2>
+                    <p class="section-desc">Monthly cumulative rainfall contracts. Threshold in inches.</p>
+                    <div class="scan-meta">
+                        <span id="precip-scan-time" class="scan-time"></span>
+                        <button class="force-rescan-btn" id="precip-rescan">Force Rescan</button>
+                    </div>
+                    <div id="precip-table"></div>
+                    <div id="precip-signal-badge"></div>
+                    <div class="chart-row">
+                        <div class="chart-card">
+                            <div class="chart-label">Edge by City</div>
+                            <div id="precip-edge-chart"></div>
+                        </div>
+                        <div class="chart-card">
+                            <div class="chart-label" id="precip-chart2-label">Confidence vs Edge</div>
+                            <div id="precip-heatmap-chart"></div>
+                        </div>
+                    </div>
+                </section>
+            </div>
+
+            <!-- View: History -->
+            <div class="we-view" id="view-history">
+                <section id="settled-section">
+                    <h2>Settled Trades</h2>
+                    <p class="section-desc">Completed trades with final outcomes. Win = contract settled in your favor.</p>
+                    <div id="settled-summary"></div>
+                    <div id="settled-table"></div>
+                </section>
+            </div>
+
+            <!-- Risk Controls (always visible) -->
+            <div id="risk-controls" class="risk-footer"></div>
         </div>
-    </header>
+    </div>
 
-    <main class="we-page">
-        <!-- Triptych -->
-        <div class="triptych-row">
-            <div class="triptych-card">
-                <div class="triptych-label">Total Equity</div>
-                <div class="triptych-value" id="tri-equity">&mdash;</div>
-                <div class="triptych-detail" id="tri-equity-detail"></div>
-                <div class="triptych-visual" id="equity-sparkline"></div>
-            </div>
-            <div class="triptych-card">
-                <div class="triptych-label">Open Positions</div>
-                <div class="triptych-value" id="tri-positions">&mdash;</div>
-                <div class="triptych-detail" id="tri-positions-detail"></div>
-            </div>
-            <div class="triptych-card">
-                <div class="triptych-label">Unrealized P&amp;L</div>
-                <div class="triptych-value" id="tri-pnl">&mdash;</div>
-                <div class="triptych-detail" id="tri-pnl-detail"></div>
-                <div class="triptych-visual" id="health-badge"></div>
-            </div>
-        </div>
-
-        <!-- Activity Log -->
-        <section id="activity-section">
-            <h2>Activity Log</h2>
-            <p class="section-desc">Recent trades placed by the bot. Edge and confidence from the scan that triggered each trade.</p>
-            <div id="activity-table"></div>
-        </section>
-
-        <hr class="we-divider">
-
-        <!-- Open Positions -->
-        <section id="portfolio-section">
-            <h2>Open Positions</h2>
-            <p class="section-desc">Event date is when the weather occurs. Markets settle by ~9 AM ET the following morning.</p>
-            <div id="open-positions-table"></div>
-        </section>
-
-        <hr class="we-divider">
-
-        <!-- Resting Orders -->
-        <section id="resting-section">
-            <h2>Resting Orders</h2>
-            <p class="section-desc">Unfilled limit orders sitting on the book. Tying up buying power until filled or cancelled.</p>
-            <div id="resting-table"></div>
-        </section>
-
-        <hr class="we-divider">
-
-        <!-- Settled Trades -->
-        <section id="settled-section">
-            <h2>Settled Trades</h2>
-            <p class="section-desc">Completed trades with final outcomes. Win = contract settled in your favor.</p>
-            <div id="settled-summary"></div>
-            <div id="settled-table"></div>
-        </section>
-
-        <hr class="we-divider">
-
-        <!-- Temperature Markets -->
-        <section id="temp-section">
-            <h2>Temperature Markets</h2>
-            <p class="section-desc">Daily high/low temperature contracts. Edge = model probability minus market price.</p>
-            <div class="scan-meta">
-                <span id="temp-scan-time" class="scan-time"></span>
-                <button class="force-rescan-btn" id="temp-rescan">Force Rescan</button>
-            </div>
-            <div id="temp-table"></div>
-            <div id="temp-signal-badge"></div>
-            <div class="chart-row">
-                <div class="chart-card">
-                    <div class="chart-label">Edge by City</div>
-                    <div id="temp-edge-chart"></div>
-                </div>
-                <div class="chart-card">
-                    <div class="chart-label" id="temp-chart2-label">Confidence vs Edge</div>
-                    <div id="temp-heatmap-chart"></div>
-                </div>
-            </div>
-        </section>
-
-        <hr class="we-divider">
-
-        <!-- Precipitation Markets -->
-        <section id="precip-section">
-            <h2>Precipitation Markets</h2>
-            <p class="section-desc">Monthly cumulative rainfall contracts. Threshold in inches.</p>
-            <div class="scan-meta">
-                <span id="precip-scan-time" class="scan-time"></span>
-                <button class="force-rescan-btn" id="precip-rescan">Force Rescan</button>
-            </div>
-            <div id="precip-table"></div>
-            <div id="precip-signal-badge"></div>
-            <div class="chart-row">
-                <div class="chart-card">
-                    <div class="chart-label">Edge by City</div>
-                    <div id="precip-edge-chart"></div>
-                </div>
-                <div class="chart-card">
-                    <div class="chart-label" id="precip-chart2-label">Confidence vs Edge</div>
-                    <div id="precip-heatmap-chart"></div>
-                </div>
-            </div>
-        </section>
-
-        <hr class="we-divider">
-
-        <!-- Analytics: Scorecard -->
-        <section id="scorecard-section">
-            <h2>Daily Scorecard</h2>
-            <p class="section-desc">Settlement results and comparison to recent performance.</p>
-            <div id="scorecard-content"></div>
-        </section>
-
-        <hr class="we-divider">
-
-        <!-- Analytics: Trends -->
-        <section id="trends-section">
-            <h2>Trends</h2>
-            <div id="trends-content"></div>
-        </section>
-
-        <hr class="we-divider">
-
-        <!-- Analytics: Manager Actions -->
-        <section id="actions-section">
-            <h2>Position Manager</h2>
-            <p class="section-desc">7-day summary of hold/fortify/exit/spread-blocked decisions. Non-hold actions shown below.</p>
-            <div id="actions-content"></div>
-        </section>
-
-        <hr class="we-divider">
-
-        <!-- Analytics: Parameter Health -->
-        <section id="recommendations-section">
-            <h2>Parameter Health</h2>
-            <p class="section-desc">Data-driven suggestions. Changes require your approval via /optimize.</p>
-            <div id="recommendations-content"></div>
-        </section>
-
-        <!-- Risk Controls -->
-        <div id="risk-controls" class="risk-footer"></div>
-    </main>
-
-    <script type="module" src="/static/js/app.js?v=21"></script>
+    <script type="module" src="/static/js/app.js?v=22"></script>
 </body>
 </html>
