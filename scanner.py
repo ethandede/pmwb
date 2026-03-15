@@ -91,21 +91,27 @@ def run_scanner():
 
     held_positions = _get_existing_positions()
     recently_sold = _get_recently_sold_tickers(cooldown_minutes=60)
-    if len(held_positions) >= MAX_POSITIONS_TOTAL:
-        console.print(f"[red]MAX POSITIONS REACHED ({len(held_positions)}/{MAX_POSITIONS_TOTAL}) — skipping all new trades this cycle[/red]")
-        return
+    kalshi_maxed = len(held_positions) >= MAX_POSITIONS_TOTAL
+    if kalshi_maxed:
+        console.print(f"[red]MAX POSITIONS REACHED ({len(held_positions)}/{MAX_POSITIONS_TOTAL}) — skipping Kalshi trades this cycle[/red]")
     if held_positions:
         console.print(f"[dim]Existing positions: {len(held_positions)}/{MAX_POSITIONS_TOTAL} tickers[/dim]")
     if recently_sold:
         console.print(f"[dim]Re-entry cooldown: {len(recently_sold)} tickers sold in last 60min[/dim]")
 
-    console.print("Fetching weather markets from Gamma API...")
-    markets = get_active_weather_markets()
-    console.print(f"Found {len(markets)} weather-related markets\n")
+    signals_found = 0
+    all_displayed_temp_signals = []
+    all_displayed_precip_signals = []
 
-    if not markets:
+    if kalshi_maxed:
+        markets, kalshi_markets, precip_markets = [], [], []
+    else:
+        console.print("Fetching weather markets from Gamma API...")
+        markets = get_active_weather_markets()
+        console.print(f"Found {len(markets)} weather-related markets\n")
+
+    if not markets and not kalshi_maxed:
         console.print("[yellow]No weather markets found. Try again later or expand keywords.[/yellow]")
-        return
 
     table = Table(title="Signal Opportunities (|edge| >= 7%)")
     table.add_column("Market", style="cyan", max_width=45)
