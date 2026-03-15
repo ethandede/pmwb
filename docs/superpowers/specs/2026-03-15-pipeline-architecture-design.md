@@ -118,7 +118,17 @@ class CycleState:
     signals: list = field(default_factory=list)
     trades_attempted: int = 0
     errors: list = field(default_factory=list)
+
+    # Observability metrics (cheap, makes dashboard/logging trivial)
+    signals_scored: int = 0
+    signals_filtered: int = 0
+    trades_executed: int = 0
+    total_edge: float = 0.0
 ```
+
+The runner tracks `consecutive_errors` per config name. After `MAX_CONSECUTIVE_ERRORS` (default 5) failed cycles for a single config, the runner logs a warning and skips that config until the next daemon restart. Prevents a single broken API from silently degrading the entire run.
+
+Future consideration: if MarketConfig grows beyond ~25 fields, split into sub-configs (`ForecastConfig`, `SizingConfig`, `ExecutionConfig`) for readability. Not needed at 3 configs / ~20 fields.
 
 ### PipelineRunner
 
