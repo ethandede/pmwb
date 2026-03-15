@@ -1,11 +1,11 @@
 // dashboard/static/js/app.js
-import { renderPortfolio } from './portfolio.js?v=23';
-import { renderMarkets } from './markets.js?v=23';
-import { renderTriptych } from './performance.js?v=23';
-import { renderActivity } from './activity.js?v=23';
-import { renderSettled } from './settled.js?v=23';
-import { renderScorecard, renderTrends, renderRecommendations, renderActions } from './analytics.js?v=23';
-import { renderResting } from './resting.js?v=23';
+import { renderPortfolio } from './portfolio.js?v=25';
+import { renderMarkets } from './markets.js?v=25';
+import { renderTriptych } from './performance.js?v=25';
+import { renderActivity } from './activity.js?v=25';
+import { renderSettled } from './settled.js?v=25';
+import { renderScorecard, renderTrends, renderRecommendations, renderActions } from './analytics.js?v=25';
+import { renderResting } from './resting.js?v=25';
 
 let _configCache = null;
 
