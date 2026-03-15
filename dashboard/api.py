@@ -171,10 +171,30 @@ async def get_portfolio():
                 forecast_high = fc_high[fc_idx] if fc_idx < len(fc_high) else None
                 forecast_low = fc_low[fc_idx] if fc_idx < len(fc_low) else None
 
+                # Predict likely result based on forecast vs contract
+                likely = None
+                side_str = "YES" if qty_fp > 0 else "NO"
+                if forecast_high is not None and len(parts) >= 3:
+                    strike = parts[2]
+                    if strike.startswith("T"):
+                        threshold = float(strike[1:])
+                        temp_above = forecast_high >= threshold
+                        if side_str == "YES":
+                            likely = "WIN" if temp_above else "LOSS"
+                        else:
+                            likely = "LOSS" if temp_above else "WIN"
+                    elif strike.startswith("B"):
+                        threshold = float(strike[1:])
+                        in_bucket = threshold <= forecast_high < threshold + 2
+                        if side_str == "YES":
+                            likely = "WIN" if in_bucket else "LOSS"
+                        else:
+                            likely = "WIN" if not in_bucket else "LOSS"
+
                 open_pos.append({
                     "ticker": ticker,
                     "city": ticker_to_city(ticker),
-                    "side": "YES" if qty_fp > 0 else "NO",
+                    "side": side_str,
                     "contract": contract,
                     "qty": int(qty),
                     "entry": entry,
@@ -185,6 +205,7 @@ async def get_portfolio():
                     "forecast_high": round(forecast_high, 1) if forecast_high is not None else None,
                     "forecast_low": round(forecast_low, 1) if forecast_low is not None else None,
                     "current_temp": round(fc.get("current"), 1) if fc.get("current") is not None else None,
+                    "likely": likely,
                 })
 
         return {

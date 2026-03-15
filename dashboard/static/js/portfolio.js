@@ -9,10 +9,11 @@ let _sortState = { key: 'settles', dir: 'asc', abs: false };
 const COLUMNS = [
     { key: 'settles',       label: 'Event',    num: false },
     { key: 'city',          label: 'City',     num: false },
-    { key: 'contract',      label: 'Contract', num: false },
     { key: 'side',          label: 'Side',     num: false },
+    { key: 'contract',      label: 'Contract', num: false },
     { key: 'forecast_high', label: 'Fcast',    num: true  },
     { key: 'current_temp',  label: 'Now',      num: true  },
+    { key: 'likely',        label: 'Likely',   num: false },
     { key: 'pnl',           label: 'P&L',      num: true  },
 ];
 
@@ -64,10 +65,11 @@ function positionsTable(positions, page) {
         <tr class="${rowClass}">
           <td class="mono">${settles}</td>
           <td>${p.city}</td>
-          <td class="mono">${p.contract || '\u2014'}</td>
           <td>${p.side}</td>
+          <td class="mono">${p.contract || '\u2014'}</td>
           <td class="num mono">${fcast}</td>
           <td class="num mono">${now}</td>
+          <td class="${p.likely === 'WIN' ? 'val-positive' : p.likely === 'LOSS' ? 'val-negative' : ''}">${p.likely || '\u2014'}</td>
           <td class="num mono ${pnlClass}">${p.entry > 0 ? fmtDollar(p.pnl, true) : '\u2014'}</td>
         </tr>`.trim();
     }).join('\n');
