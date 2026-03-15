@@ -111,7 +111,8 @@ def sell_order(ticker: str, side: str, price_cents: int, count: int) -> dict:
     return _post_order(ticker, "sell", side, price_cents, count)
 
 
-_scan_spent = 0.0
+_scan_spent_temp = 0.0
+_scan_spent_precip = 0.0
 _resting_buy_tickers: set[str] | None = None
 
 from risk.bankroll import BankrollTracker
@@ -140,8 +141,9 @@ _circuit_breaker = CircuitBreaker()
 
 
 def reset_scan_budget():
-    global _scan_spent, _resting_buy_tickers
-    _scan_spent = 0.0
+    global _scan_spent_temp, _scan_spent_precip, _resting_buy_tickers
+    _scan_spent_temp = 0.0
+    _scan_spent_precip = 0.0
     _resting_buy_tickers = None
     try:
         bal = get_balance()
@@ -154,7 +156,7 @@ def reset_scan_budget():
 
 
 def execute_kalshi_signal(market: dict, city: str, model_prob: float, market_prob: float, edge: float, direction: str, confidence: float = 0, existing_contracts: int = 0, kelly_floor: float | None = None):
-    global _scan_spent
+    global _scan_spent_temp, _scan_spent_precip
     from config import PAPER_MODE, FRACTIONAL_KELLY, MAX_BANKROLL_PCT_PER_TRADE
 
     ticker = market.get("ticker", "")
@@ -237,6 +239,10 @@ def execute_kalshi_signal(market: dict, city: str, model_prob: float, market_pro
 
     effective_kelly = kelly_floor if kelly_floor is not None else FRACTIONAL_KELLY
 
+    # Separate scan budgets per market type
+    market_type = market.get("_market_type", "temp")
+    _scan_spent = _scan_spent_precip if market_type == "precip" else _scan_spent_temp
+
     from risk.sizer import compute_size
     size_result = compute_size(
         model_prob=model_prob,
@@ -275,11 +281,14 @@ def execute_kalshi_signal(market: dict, city: str, model_prob: float, market_pro
     print(f"\n  [{mode_label}] {side.upper()} {count} contracts @ {price_cents}¢ (${order_cost:.2f})")
     print(f"  Ticker: {ticker} | Edge: {edge:+.1%} | Kelly: {size_result.raw_kelly:.1%} → {size_result.adjusted_kelly:.1%}")
     print(f"  Strategy: {strategy.upper()} | Fee est: ${fee_estimate:.3f}")
-    print(f"  Scan budget: ${_scan_spent:.2f} spent | {size_result.limit_reason}")
+    print(f"  Scan budget: ${_scan_spent:.2f} spent ({market_type}) | {size_result.limit_reason}")
 
     if PAPER_MODE:
         print(f"  PAPER MODE — no order sent.")
-        _scan_spent += order_cost
+        if market_type == "precip":
+            _scan_spent_precip += order_cost
+        else:
+            _scan_spent_temp += order_cost
         return
 
     try:
@@ -300,7 +309,10 @@ def execute_kalshi_signal(market: dict, city: str, model_prob: float, market_pro
             actual_cost = taker_cost + maker_cost if (taker_cost + maker_cost) > 0 else fill_qty * price_cents / 100.0
             actual_price_cents = int(actual_cost / fill_qty * 100) if fill_qty > 0 else price_cents
 
-            _scan_spent += actual_cost
+            if market_type == "precip":
+                _scan_spent_precip += actual_cost
+            else:
+                _scan_spent_temp += actual_cost
             print(f"  Filled: {fill_qty}/{count} @ ~{actual_price_cents}¢ (${actual_cost:.2f})")
 
             init_trades_db(TRADES_DB_PATH)
@@ -316,7 +328,10 @@ def execute_kalshi_signal(market: dict, city: str, model_prob: float, market_pro
                 city=city,
             )
         else:
-            _scan_spent += order_cost
+            if market_type == "precip":
+                _scan_spent_precip += order_cost
+            else:
+                _scan_spent_temp += order_cost
             print(f"  Resting: 0/{count} filled — limit order at {price_cents}¢")
 
             init_trades_db(TRADES_DB_PATH)

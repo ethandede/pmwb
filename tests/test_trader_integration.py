@@ -18,7 +18,8 @@ def test_execute_kalshi_signal_records_fill(tmp_path):
         init_trades_db(db_path)
 
         import kalshi.trader as trader_mod
-        trader_mod._scan_spent = 0.0
+        trader_mod._scan_spent_temp = 0.0
+        trader_mod._scan_spent_precip = 0.0
         trader_mod._bankroll_tracker._cash = 1000.0  # Set known bankroll
         trader_mod._bankroll_tracker._peak = 1000.0
 
@@ -52,7 +53,8 @@ def test_maker_pricing_used_when_bid_ask_available(tmp_path):
         init_trades_db(db_path)
 
         import kalshi.trader as trader_mod
-        trader_mod._scan_spent = 0.0
+        trader_mod._scan_spent_temp = 0.0
+        trader_mod._scan_spent_precip = 0.0
         trader_mod._resting_buy_tickers = set()
         trader_mod._bankroll_tracker._cash = 1000.0
         trader_mod._bankroll_tracker._peak = 1000.0
@@ -94,7 +96,8 @@ def test_taker_pricing_on_large_edge(tmp_path):
         init_trades_db(db_path)
 
         import kalshi.trader as trader_mod
-        trader_mod._scan_spent = 0.0
+        trader_mod._scan_spent_temp = 0.0
+        trader_mod._scan_spent_precip = 0.0
         trader_mod._resting_buy_tickers = set()
         trader_mod._bankroll_tracker._cash = 1000.0
         trader_mod._bankroll_tracker._peak = 1000.0
@@ -135,7 +138,8 @@ def test_fallback_pricing_when_no_bid_ask(tmp_path):
         init_trades_db(db_path)
 
         import kalshi.trader as trader_mod
-        trader_mod._scan_spent = 0.0
+        trader_mod._scan_spent_temp = 0.0
+        trader_mod._scan_spent_precip = 0.0
         trader_mod._resting_buy_tickers = set()
         trader_mod._bankroll_tracker._cash = 1000.0
         trader_mod._bankroll_tracker._peak = 1000.0
@@ -168,7 +172,8 @@ def test_fee_estimate_uses_real_kalshi_formula(tmp_path):
         init_trades_db(db_path)
 
         import kalshi.trader as trader_mod
-        trader_mod._scan_spent = 0.0
+        trader_mod._scan_spent_temp = 0.0
+        trader_mod._scan_spent_precip = 0.0
         trader_mod._resting_buy_tickers = set()
         trader_mod._bankroll_tracker._cash = 1000.0
         trader_mod._bankroll_tracker._peak = 1000.0
