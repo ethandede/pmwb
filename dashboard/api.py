@@ -91,6 +91,36 @@ async def get_portfolio():
 
         cost_basis = _get_cost_basis()
 
+        # Fetch GFS forecasts per city (self-hosted, instant)
+        from kalshi.scanner import WEATHER_SERIES
+        import requests as _req
+        _forecast_cache = {}
+        for prefix, info in WEATHER_SERIES.items():
+            city_name = info["city"]
+            if city_name in _forecast_cache:
+                continue
+            try:
+                unit_param = "fahrenheit" if info.get("unit", "f") == "f" else "celsius"
+                r = _req.get(
+                    f"http://localhost:8080/v1/forecast?latitude={info['lat']}&longitude={info['lon']}"
+                    f"&daily=temperature_2m_max,temperature_2m_min"
+                    f"&hourly=temperature_2m"
+                    f"&models=gfs_seamless&temperature_unit={unit_param}&timezone=auto&forecast_days=3",
+                    timeout=3,
+                )
+                d = r.json()
+                daily = d.get("daily", {})
+                hourly = d.get("hourly", {})
+                hourly_temps = hourly.get("temperature_2m", [])
+                current = hourly_temps[-1] if hourly_temps else None
+                _forecast_cache[city_name] = {
+                    "high": daily.get("temperature_2m_max", [None, None]),
+                    "low": daily.get("temperature_2m_min", [None, None]),
+                    "current": current,
+                }
+            except Exception:
+                _forecast_cache[city_name] = {"high": [None, None], "low": [None, None], "current": None}
+
         open_pos = []
         for p in get_positions():
             qty_fp = float(p.get("position_fp", 0))
@@ -125,6 +155,22 @@ async def get_portfolio():
                         val = float(strike[1:])
                         contract = f"{val:.0f}-{val+2:.0f}\u00b0"
 
+                # Look up forecast for this city
+                city_slug = None
+                for prefix, info in WEATHER_SERIES.items():
+                    if ticker.upper().startswith(prefix.upper()):
+                        city_slug = info["city"]
+                        break
+                fc = _forecast_cache.get(city_slug, {})
+                # Pick forecast day: day 0 for today's event, day 1 for tomorrow's
+                from datetime import date as _date
+                today_str = _date.today().isoformat()
+                fc_idx = 0 if settles <= today_str else 1
+                fc_high = fc.get("high", [None, None])
+                fc_low = fc.get("low", [None, None])
+                forecast_high = fc_high[fc_idx] if fc_idx < len(fc_high) else None
+                forecast_low = fc_low[fc_idx] if fc_idx < len(fc_low) else None
+
                 open_pos.append({
                     "ticker": ticker,
                     "city": ticker_to_city(ticker),
@@ -136,6 +182,9 @@ async def get_portfolio():
                     "pnl": pnl,
                     "fees": round(float(p.get("fees_paid_dollars", 0)), 2),
                     "settles": settles,
+                    "forecast_high": round(forecast_high, 1) if forecast_high is not None else None,
+                    "forecast_low": round(forecast_low, 1) if forecast_low is not None else None,
+                    "current_temp": round(fc.get("current"), 1) if fc.get("current") is not None else None,
                 })
 
         return {

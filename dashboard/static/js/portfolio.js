@@ -7,13 +7,13 @@ let _cachedPositions = [];
 let _sortState = { key: 'settles', dir: 'asc', abs: false };
 
 const COLUMNS = [
-    { key: 'settles',  label: 'Event',    num: false },
-    { key: 'city',     label: 'City',     num: false },
-    { key: 'contract', label: 'Contract', num: false },
-    { key: 'side',     label: 'Side',     num: false },
-    { key: 'qty',      label: 'Qty',      num: true  },
-    { key: 'entry',    label: 'Entry',    num: true  },
-    { key: 'pnl',      label: 'P&L',      num: true  },
+    { key: 'settles',       label: 'Event',    num: false },
+    { key: 'city',          label: 'City',     num: false },
+    { key: 'contract',      label: 'Contract', num: false },
+    { key: 'side',          label: 'Side',     num: false },
+    { key: 'forecast_high', label: 'Fcast',    num: true  },
+    { key: 'current_temp',  label: 'Now',      num: true  },
+    { key: 'pnl',           label: 'P&L',      num: true  },
 ];
 
 function fmtDollar(n, signed = false) {
@@ -35,7 +35,7 @@ function positionsTable(positions, page) {
         <table class="data-table">
           <thead><tr>${headers}</tr></thead>
           <tbody class="table-empty">
-            <tr><td colspan="7">No open positions</td></tr>
+            <tr><td colspan="${COLUMNS.length}">No open positions</td></tr>
           </tbody>
         </table>`.trim();
     }
@@ -58,14 +58,16 @@ function positionsTable(positions, page) {
         const pnlClass = p.pnl > 0 ? 'val-positive' : p.pnl < 0 ? 'val-negative' : 'val-neutral';
         const rowClass = p.pnl > 0 ? 'pnl-positive' : p.pnl < 0 ? 'pnl-negative' : '';
         const settles = p.settles ? p.settles.slice(5) : '\u2014';
+        const fcast = p.forecast_high !== null ? `${p.forecast_high}\u00b0` : '\u2014';
+        const now = p.current_temp !== null ? `${p.current_temp}\u00b0` : '\u2014';
         return `
         <tr class="${rowClass}">
           <td class="mono">${settles}</td>
           <td>${p.city}</td>
           <td class="mono">${p.contract || '\u2014'}</td>
           <td>${p.side}</td>
-          <td class="num mono">${p.qty}</td>
-          <td class="num mono">${p.entry > 0 ? fmtDollar(p.entry) : '\u2014'}</td>
+          <td class="num mono">${fcast}</td>
+          <td class="num mono">${now}</td>
           <td class="num mono ${pnlClass}">${p.entry > 0 ? fmtDollar(p.pnl, true) : '\u2014'}</td>
         </tr>`.trim();
     }).join('\n');
