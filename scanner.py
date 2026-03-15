@@ -18,6 +18,10 @@ from weather.forecast import calculate_remaining_month_days
 from config import MAX_ENSEMBLE_HORIZON_DAYS, MIN_VOLUME_24H, MIN_OPEN_INTEREST
 from config import SAMEDAY_EDGE_THRESHOLD, SAMEDAY_CONFIDENCE_THRESHOLD, SAMEDAY_KELLY_FLOOR
 from config import MIN_TRADE_EDGE, MAX_POSITIONS_TOTAL, SKIP_RAIN_MARKETS
+from ercot.position_manager import run_ercot_manager
+from ercot.hubs import scan_all_hubs
+from ercot.paper_trader import open_position as ercot_open_position, get_open_positions as ercot_get_positions, get_paper_summary as ercot_summary, write_scan_cache as ercot_write_cache
+from config import ERCOT_MIN_EDGE, ERCOT_MIN_CONFIDENCE, ERCOT_PAPER_BANKROLL
 
 console = Console()
 
@@ -434,6 +438,80 @@ def run_scanner():
             console.print(f"[yellow]  COOLDOWN {sig['ticker']} — sold recently, skipping re-entry[/yellow]")
             continue
         execute_kalshi_signal(sig["market"], sig["city_key"], sig["model_prob"], sig["yes_price"], sig["edge"], sig["direction"], confidence=sig["confidence"], existing_contracts=held_positions.get(sig["ticker"], 0))
+
+    # --- ERCOT Solar / Power Price Signal (5 hubs) ---
+    console.print("\n[bold magenta]ERCOT Solar Signals[/bold magenta]")
+
+    # 1. Manage existing positions first
+    hub_signals = run_ercot_manager()
+    if hub_signals is None:
+        hub_signals = scan_all_hubs()
+
+    # 2. Cache signals for dashboard
+    ercot_write_cache(hub_signals)
+
+    # 3. Display hub signal table
+    ercot_table = Table(title="ERCOT Solar Signals (5 hubs)")
+    ercot_table.add_column("Hub", style="cyan")
+    ercot_table.add_column("City", style="green")
+    ercot_table.add_column("Signal", style="bold")
+    ercot_table.add_column("Edge", justify="right")
+    ercot_table.add_column("Solrad", justify="right")
+    ercot_table.add_column("Solar MW", justify="right")
+    ercot_table.add_column("ERCOT$", justify="right")
+    ercot_table.add_column("Conf", justify="right")
+    ercot_table.add_column("Action", style="bold")
+
+    existing_hubs = {p["hub"]: p for p in ercot_get_positions()}
+
+    for sig in hub_signals:
+        sig_color = {"SHORT": "red", "LONG": "green"}.get(sig["signal"], "dim")
+        edge_str = f"[{sig_color}]{sig['edge']:+.2f}[/{sig_color}]"
+
+        # Determine action
+        action = "--"
+        if abs(sig["edge"]) >= ERCOT_MIN_EDGE and sig["confidence"] >= ERCOT_MIN_CONFIDENCE:
+            existing = existing_hubs.get(sig["hub"])
+            if existing:
+                if existing["signal"] == sig["signal"]:
+                    action = f"HOLD (${existing['size_dollars']:.0f})"
+                else:
+                    action = "FLIP"
+            else:
+                action = "OPEN"
+
+        ercot_table.add_row(
+            sig["hub"], sig["city"],
+            f"[{sig_color}]{sig['signal']}[/{sig_color}]",
+            edge_str,
+            f"{sig['expected_solrad_mjm2']:.1f}",
+            f"{sig['actual_solar_mw']:.0f}",
+            f"${sig['current_ercot_price']:.1f}",
+            f"{sig['confidence']}%",
+            action,
+        )
+
+        # 4. Open new positions / handle flips
+        if abs(sig["edge"]) >= ERCOT_MIN_EDGE and sig["confidence"] >= ERCOT_MIN_CONFIDENCE:
+            existing = existing_hubs.get(sig["hub"])
+            if existing and existing["signal"] != sig["signal"]:
+                # Flip: close existing, open new
+                from ercot.paper_trader import close_position as ercot_close
+                ercot_close(existing["id"], sig["current_ercot_price"], sig["signal"], "signal flipped")
+                ercot_open_position(sig, bankroll=ERCOT_PAPER_BANKROLL)
+            elif not existing:
+                ercot_open_position(sig, bankroll=ERCOT_PAPER_BANKROLL)
+
+    console.print(ercot_table)
+
+    # 5. Paper P&L summary
+    summary = ercot_summary()
+    console.print(
+        f"\n[bold magenta]ERCOT Paper:[/bold magenta] "
+        f"{summary['open_count']} open (${summary['open_exposure']:.0f} exposure) | "
+        f"Closed: {summary['wins']}W/{summary['losses']}L | "
+        f"Net P&L: ${summary['total_pnl']:+.2f}"
+    )
 
     try:
         from dashboard.ticker_map import ticker_to_city
