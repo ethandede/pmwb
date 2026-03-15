@@ -63,14 +63,58 @@ def _build_configs() -> tuple:
     from ercot.hubs import fetch_ercot_markets
     from config import ERCOT_HUBS
 
-    # Placeholder functions — will be replaced in Task 12 with real stage functions
-    def _placeholder(*args, **kwargs):
-        raise NotImplementedError("Pipeline stage function not yet implemented")
+    from pipeline.stages import execute_trade
+    from kalshi.position_manager import run_position_manager
+    from kalshi.settler import run_settler
+    from ercot.position_manager import run_ercot_manager
 
-    # Sanity check for temp markets (GFS cross-reference)
     def gfs_temp_sanity(signal) -> bool:
-        """Placeholder — will be extracted from kalshi/trader.py sanity check logic."""
-        return True
+        """GFS cross-reference sanity check for temperature signals.
+
+        Fetches GFS forecast from self-hosted server and blocks trades where
+        the forecast strongly contradicts the signal direction.
+        """
+        try:
+            import requests as _req
+            bucket = signal.market
+            ticker = signal.ticker
+            lat = signal.lat or 0
+            lon = signal.lon or 0
+            unit = signal.market.get("_unit", "f") if signal.market else "f"
+            temp_type = signal.market.get("_temp_type", "max") if signal.market else "max"
+            unit_param = "fahrenheit" if unit == "f" else "celsius"
+            daily_var = f"temperature_2m_{temp_type}"
+
+            r = _req.get(
+                f"http://localhost:8080/v1/forecast?latitude={lat}&longitude={lon}"
+                f"&daily={daily_var}&models=gfs_seamless"
+                f"&temperature_unit={unit_param}&timezone=auto&forecast_days=2",
+                timeout=5,
+            )
+            gfs_temp = r.json().get("daily", {}).get(daily_var, [None])[0]
+            if gfs_temp is None:
+                return True
+
+            # Parse bucket from market data
+            from kalshi.scanner import parse_kalshi_bucket
+            parsed = parse_kalshi_bucket(signal.market) if signal.market else None
+            if not parsed:
+                return True
+            low, high = parsed
+
+            if high is None and low is not None:
+                # "above X" contract
+                if signal.side == "yes" and gfs_temp < low - 3:
+                    return False
+                if signal.side == "no" and gfs_temp > low + 3:
+                    return False
+            elif low is not None and high is not None:
+                mid = (low + high) / 2
+                if signal.side == "yes" and abs(gfs_temp - mid) > 15:
+                    return False
+            return True
+        except Exception:
+            return True  # sanity check is advisory
 
     kalshi_temp = MarketConfig(
         name="kalshi_temp",
@@ -88,13 +132,13 @@ def _build_configs() -> tuple:
         scan_frac=0.10,
         kelly_floor=0.25,
         max_contracts_per_event=10,
-        execute_fn=_placeholder,
+        execute_fn=execute_trade,
         pricing_fn=choose_price_strategy,
-        manage_fn=_placeholder,
+        manage_fn=run_position_manager,
         exit_rules={"reversal_edge": -0.08, "sameday_reversal": -0.15,
                     "profit_take_pct": 0.88, "min_confidence": 70},
         settlement_timeline="daily",
-        settle_fn=_placeholder,
+        settle_fn=run_settler,
     )
 
     kalshi_precip = MarketConfig(
@@ -113,13 +157,13 @@ def _build_configs() -> tuple:
         scan_frac=0.10,
         kelly_floor=0.25,
         max_contracts_per_event=10,
-        execute_fn=_placeholder,
+        execute_fn=execute_trade,
         pricing_fn=choose_price_strategy,
-        manage_fn=_placeholder,
+        manage_fn=run_position_manager,
         exit_rules={"reversal_edge": -0.10, "profit_take_pct": 0.90,
                     "min_confidence": 60},
         settlement_timeline="monthly",
-        settle_fn=_placeholder,
+        settle_fn=run_settler,
     )
 
     ercot = MarketConfig(
@@ -138,13 +182,13 @@ def _build_configs() -> tuple:
         scan_frac=0.10,
         kelly_floor=0.25,
         max_contracts_per_event=3,
-        execute_fn=_placeholder,
+        execute_fn=execute_trade,
         pricing_fn=None,
-        manage_fn=_placeholder,
+        manage_fn=run_ercot_manager,
         exit_rules={"edge_decay_pct": 0.30, "signal_flip": True,
                     "ttl_hours": 24},
         settlement_timeline="hourly",
-        settle_fn=_placeholder,
+        settle_fn=run_ercot_manager,
     )
 
     return kalshi_temp, kalshi_precip, ercot
