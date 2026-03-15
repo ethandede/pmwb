@@ -174,6 +174,40 @@ def execute_kalshi_signal(market: dict, city: str, model_prob: float, market_pro
 
     side = "yes" if edge > 0 else "no"
 
+    # --- Sanity check: does the forecast actually support this trade? ---
+    try:
+        from kalshi.scanner import parse_kalshi_bucket
+        bucket = parse_kalshi_bucket(market)
+        if bucket:
+            low, high = bucket
+            # Quick GFS forecast from self-hosted (instant, no rate limit)
+            import requests as _req
+            unit = market.get("_unit", "f")
+            unit_param = "fahrenheit" if unit == "f" else "celsius"
+            temp_type = market.get("_temp_type", "max")
+            daily_var = f"temperature_2m_{temp_type}"
+            lat, lon = market.get("_lat", 0), market.get("_lon", 0)
+            r = _req.get(f"http://localhost:8080/v1/forecast?latitude={lat}&longitude={lon}&daily={daily_var}&models=gfs_seamless&temperature_unit={unit_param}&timezone=auto&forecast_days=2", timeout=5)
+            gfs_temp = r.json().get("daily", {}).get(daily_var, [None])[0]
+            if gfs_temp is not None:
+                if high is None and low is not None:
+                    # "above X" contract — buying YES means we think temp > threshold
+                    if side == "yes" and gfs_temp < low - 3:
+                        print(f"\n  SANITY BLOCK {ticker} — BUY YES 'above {low}' but GFS says {gfs_temp:.1f} ({low - gfs_temp:.1f}° below)")
+                        return
+                    # buying NO means we think temp < threshold
+                    if side == "no" and gfs_temp > low + 3:
+                        print(f"\n  SANITY BLOCK {ticker} — BUY NO 'above {low}' but GFS says {gfs_temp:.1f} ({gfs_temp - low:.1f}° above)")
+                        return
+                elif low is not None and high is not None:
+                    # bucket contract — buying YES means we think temp lands in [low, high)
+                    mid = (low + high) / 2
+                    if side == "yes" and abs(gfs_temp - mid) > 15:
+                        print(f"\n  SANITY BLOCK {ticker} — BUY YES bucket {low}-{high} but GFS says {gfs_temp:.1f} ({abs(gfs_temp - mid):.1f}° away)")
+                        return
+    except Exception:
+        pass  # sanity check is advisory, never blocks on errors
+
     if edge > 0:
         price_cents = int((market_prob + edge * 0.3) * 100)
     else:
