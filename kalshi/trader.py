@@ -299,7 +299,6 @@ def execute_kalshi_signal(market: dict, city: str, model_prob: float, market_pro
             actual_price_cents = int(actual_cost / fill_qty * 100) if fill_qty > 0 else price_cents
 
             _scan_spent += actual_cost
-            _bankroll_tracker.record_daily_pnl(-actual_cost)
             print(f"  Filled: {fill_qty}/{count} @ ~{actual_price_cents}¢ (${actual_cost:.2f})")
 
             init_trades_db(TRADES_DB_PATH)
@@ -316,7 +315,6 @@ def execute_kalshi_signal(market: dict, city: str, model_prob: float, market_pro
             )
         else:
             _scan_spent += order_cost
-            _bankroll_tracker.record_daily_pnl(-order_cost)
             print(f"  Resting: 0/{count} filled — limit order at {price_cents}¢")
 
             init_trades_db(TRADES_DB_PATH)

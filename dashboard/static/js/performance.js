@@ -52,7 +52,7 @@ async function renderHealthBadge(containerId) {
 }
 
 function renderTriptych(portfolio, performance, config) {
-    const { balance = {}, open_positions = [] } = portfolio;
+    const { balance = {}, open_positions = [], live_positions = [], paper_positions = [], mode = 'LIVE' } = portfolio;
     const maxPositions = (config && config.max_positions_total) || 15;
 
     // Card 1: Equity
@@ -61,12 +61,18 @@ function renderTriptych(portfolio, performance, config) {
     if (eqVal) eqVal.textContent = `$${(balance.equity || 0).toFixed(2)}`;
     if (eqDet) eqDet.textContent = `$${(balance.cash || 0).toFixed(0)} cash + $${(balance.positions || 0).toFixed(0)} positions`;
 
-    // Card 2: Open Positions count
+    // Card 2: Open Positions count — show live positions in paper mode if they exist
     const posVal = document.getElementById('tri-positions');
     const posDet = document.getElementById('tri-positions-detail');
-    const totalValue = open_positions.reduce((s, p) => s + (p.value || 0), 0);
-    if (posVal) posVal.textContent = `${open_positions.length} / ${maxPositions}`;
-    if (posDet) posDet.textContent = totalValue > 0 ? `$${totalValue.toFixed(2)} market value` : 'No open exposure';
+    const displayPositions = mode === 'PAPER' && live_positions.length > 0 ? live_positions : open_positions;
+    const totalValue = displayPositions.reduce((s, p) => s + (p.value || 0), 0);
+    const paperCount = paper_positions.length;
+    if (posVal) posVal.textContent = `${displayPositions.length} / ${maxPositions}`;
+    if (posDet) {
+        let detail = totalValue > 0 ? `$${totalValue.toFixed(2)} market value` : 'No open exposure';
+        if (mode === 'PAPER' && paperCount > 0) detail += ` + ${paperCount} paper`;
+        posDet.textContent = detail;
+    }
 
     // Card 3: Unrealized P&L (from trades.db cost basis vs current exposure)
     const pnlVal = document.getElementById('tri-pnl');
