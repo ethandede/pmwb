@@ -605,6 +605,20 @@ section > h2 {
   line-height: 1.5;
 }
 
+.positions-section { margin-bottom: 8px; }
+.positions-section-label {
+  font-size: 14px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.8);
+  margin: 0 0 8px 0;
+}
+.positions-count {
+  font-size: 12px;
+  font-weight: 400;
+  color: rgba(255, 255, 255, 0.4);
+  margin-left: 4px;
+}
+
 .caption {
   font-size: 11px;
   color: rgba(255, 255, 255, 0.45);

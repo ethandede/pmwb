@@ -1,5 +1,5 @@
 // dashboard/static/js/app.js
-import { renderPortfolio } from './portfolio.js?v=22';
+import { renderPortfolio } from './portfolio.js?v=23';
 import { renderMarkets } from './markets.js?v=22';
 import { renderTriptych } from './performance.js?v=22';
 import { renderActivity } from './activity.js?v=22';

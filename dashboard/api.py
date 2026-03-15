@@ -3,6 +3,7 @@
 Serves JSON API endpoints + static frontend.
 Run: uvicorn dashboard.api:app --host 0.0.0.0 --port 8501
 """
+import re
 import sqlite3
 from pathlib import Path
 from datetime import datetime, timezone
@@ -16,6 +17,7 @@ from dashboard.ticker_map import ticker_to_city
 from dashboard.ercot_api import ercot_router
 
 from kalshi.trader import get_balance, get_positions
+from config import PAPER_MODE
 
 TRADES_DB = Path(__file__).resolve().parent.parent / "data" / "trades.db"
 
@@ -60,6 +62,23 @@ def _get_cost_basis() -> dict:
             basis[ticker] = round(cost_cents / 100.0, 2)
 
     return basis
+
+
+def _get_paper_positions() -> list:
+    """Get open (unsettled) paper positions from trades.db."""
+    if not TRADES_DB.exists():
+        return []
+    conn = sqlite3.connect(str(TRADES_DB))
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        """SELECT ticker, city, side, fill_price, fill_qty, fill_time
+           FROM trades
+           WHERE settlement_outcome IS NULL AND fill_qty > 0
+           ORDER BY fill_time DESC"""
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
 
 # Initialise DBs
 init_scan_cache_db()
@@ -129,6 +148,9 @@ async def get_portfolio():
             except Exception:
                 _forecast_cache[city_name] = {"high": [None, None], "low": [None, None], "current": None}
 
+        from datetime import date as _date
+        today_str = _date.today().isoformat()
+
         open_pos = []
         for p in get_positions():
             qty_fp = float(p.get("position_fp", 0))
@@ -144,7 +166,6 @@ async def get_portfolio():
                 # Parse settlement date and contract from ticker
                 # e.g. KXHIGHNY-26MAR14-T56 → date=2026-03-14, contract=">56°F"
                 # e.g. KXHIGHNY-26MAR14-B51.5 → date=2026-03-14, contract="51-52°F"
-                import re
                 settles = ""
                 contract = ""
                 parts = ticker.split("-")
@@ -172,8 +193,6 @@ async def get_portfolio():
                         break
                 fc = _forecast_cache.get(city_slug, {})
                 # Pick forecast day: day 0 for today's event, day 1 for tomorrow's
-                from datetime import date as _date
-                today_str = _date.today().isoformat()
                 fc_idx = 0 if settles <= today_str else 1
                 fc_high = fc.get("high", [None, None])
                 fc_low = fc.get("low", [None, None])
@@ -217,16 +236,84 @@ async def get_portfolio():
                     "likely": likely,
                 })
 
+        # Paper positions from trades.db (unsettled paper trades)
+        paper_pos = []
+        if PAPER_MODE:
+            for r in _get_paper_positions():
+                ticker = r["ticker"]
+                side_raw = r["side"] or ""
+                is_no = "no" in side_raw
+                side_str = "NO" if is_no else "YES"
+
+                settles = ""
+                contract = ""
+                parts = ticker.split("-")
+                if len(parts) >= 2:
+                    m = re.match(r"(\d{2})([A-Z]{3})(\d{2})", parts[1])
+                    if m:
+                        yr, mon_str, day = m.groups()
+                        months = {"JAN":"01","FEB":"02","MAR":"03","APR":"04","MAY":"05","JUN":"06",
+                                  "JUL":"07","AUG":"08","SEP":"09","OCT":"10","NOV":"11","DEC":"12"}
+                        mon = months.get(mon_str, "01")
+                        settles = f"20{yr}-{mon}-{day}"
+                if len(parts) >= 3:
+                    strike = parts[2]
+                    if strike.startswith("T"):
+                        contract = f">{strike[1:]}\u00b0"
+                    elif strike.startswith("B"):
+                        val = float(strike[1:])
+                        contract = f"{val:.0f}-{val+2:.0f}\u00b0"
+
+                city_slug = None
+                for prefix, info in WEATHER_SERIES.items():
+                    if ticker.upper().startswith(prefix.upper()):
+                        city_slug = info["city"]
+                        break
+                fc = _forecast_cache.get(city_slug, {})
+                fc_idx = 0 if settles <= today_str else 1
+                fc_high = fc.get("high", [None, None])
+                forecast_high = fc_high[fc_idx] if fc_idx < len(fc_high) else None
+
+                likely = None
+                if forecast_high is not None and len(parts) >= 3:
+                    strike = parts[2]
+                    if strike.startswith("T"):
+                        threshold = float(strike[1:])
+                        temp_above = forecast_high >= threshold
+                        likely = ("WIN" if temp_above else "LOSS") if side_str == "YES" else ("LOSS" if temp_above else "WIN")
+                    elif strike.startswith("B"):
+                        threshold = float(strike[1:])
+                        in_bucket = threshold <= forecast_high < threshold + 2
+                        likely = ("WIN" if in_bucket else "LOSS") if side_str == "YES" else ("WIN" if not in_bucket else "LOSS")
+
+                fill_cost = (r["fill_price"] or 0) * (r["fill_qty"] or 0) / 100.0
+                paper_pos.append({
+                    "ticker": ticker,
+                    "city": ticker_to_city(ticker) or (r["city"] or "").replace("_", " ").title(),
+                    "side": side_str,
+                    "contract": contract,
+                    "qty": r["fill_qty"] or 0,
+                    "entry": round((r["fill_price"] or 0) / 100.0, 2),
+                    "value": round(fill_cost, 2),
+                    "settles": settles,
+                    "forecast_high": round(forecast_high, 1) if forecast_high is not None else None,
+                    "likely": likely,
+                })
+
         return {
+            "mode": "PAPER" if PAPER_MODE else "LIVE",
             "balance": {
                 "cash": round(cash, 2),
                 "positions": round(positions_val, 2),
                 "equity": round(equity, 2),
             },
-            "open_positions": open_pos,
+            "live_positions": open_pos,
+            "paper_positions": paper_pos,
+            # Back-compat: open_positions = paper in paper mode, live otherwise
+            "open_positions": paper_pos if PAPER_MODE else open_pos,
         }
     except Exception as e:
-        return {"error": str(e), "balance": {"equity": 0}, "open_positions": []}
+        return {"error": str(e), "balance": {"equity": 0}, "open_positions": [], "live_positions": [], "paper_positions": [], "mode": "PAPER" if PAPER_MODE else "LIVE"}
 
 
 @app.get("/api/markets/{market_type}")

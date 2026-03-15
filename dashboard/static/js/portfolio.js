@@ -1,10 +1,13 @@
 // dashboard/static/js/portfolio.js
-// Renders Open Positions: City | Side | Qty | Entry | P&L (5 cols, sortable, paginated)
+// Renders positions: Live (settling) + Paper sections when in paper mode
 
 const PAGE_SIZE = 10;
 let _currentPage = 1;
+let _liveCurrentPage = 1;
 let _cachedPositions = [];
+let _cachedLivePositions = [];
 let _sortState = { key: 'settles', dir: 'asc', abs: false };
+let _liveSortState = { key: 'settles', dir: 'asc', abs: false };
 
 const COLUMNS = [
     { key: 'settles',       label: 'Event',    num: false },
@@ -23,8 +26,8 @@ function fmtDollar(n, signed = false) {
     return `$${abs}`;
 }
 
-function positionsTable(positions, page) {
-    const st = _sortState;
+function buildTable(positions, page, sortState, paginatorId) {
+    const st = sortState;
     const headers = COLUMNS.map(c => {
         const arrow = st.key === c.key ? (st.dir === 'asc' ? ' \u2191' : ' \u2193') : '';
         return `<th${c.num ? ' class="num"' : ''} data-sort-key="${c.key}" style="cursor:pointer;user-select:none">${c.label}${arrow}</th>`;
@@ -65,8 +68,6 @@ function positionsTable(positions, page) {
     const slice = sorted.slice(start, start + PAGE_SIZE);
 
     const rows = slice.map(p => {
-        const pnlClass = p.pnl > 0 ? 'val-positive' : p.pnl < 0 ? 'val-negative' : 'val-neutral';
-        const rowClass = p.pnl > 0 ? 'pnl-positive' : p.pnl < 0 ? 'pnl-negative' : '';
         const settles = p.settles ? p.settles.slice(5) : '\u2014';
         const fcast = p.forecast_high !== null ? `${p.forecast_high}\u00b0` : '\u2014';
         return `
@@ -84,7 +85,7 @@ function positionsTable(positions, page) {
     let pagination = '';
     if (totalPages > 1) {
         pagination = `
-        <div class="pagination" data-paginator="positions">
+        <div class="pagination" data-paginator="${paginatorId}">
             <span class="pagination-info">Showing ${start + 1}\u2013${Math.min(start + PAGE_SIZE, total)} of ${total}</span>
             <div class="pagination-buttons">
                 <button class="pagination-btn" data-page="${safePage - 1}" ${safePage <= 1 ? 'disabled' : ''}>\u2190 Prev</button>
@@ -100,48 +101,98 @@ function positionsTable(positions, page) {
     </table>${pagination}`.trim();
 }
 
-function attachHandlers() {
-    const container = document.getElementById('open-positions-table');
+function attachSortHandlers(container, sortState, onSort) {
     if (!container) return;
-
     container.querySelectorAll('th[data-sort-key]').forEach(th => {
         th.addEventListener('click', () => {
             const key = th.dataset.sortKey;
-            if (_sortState.key === key) {
-                _sortState = { key, dir: _sortState.dir === 'desc' ? 'asc' : 'desc', abs: false };
+            if (sortState.key === key) {
+                sortState.dir = sortState.dir === 'desc' ? 'asc' : 'desc';
             } else {
                 const col = COLUMNS.find(c => c.key === key);
-                _sortState = { key, dir: col && col.num ? 'desc' : 'asc', abs: false };
+                sortState.key = key;
+                sortState.dir = col && col.num ? 'desc' : 'asc';
+                sortState.abs = false;
             }
-            _currentPage = 1;
-            rerender();
-        });
-    });
-
-    container.querySelectorAll('[data-paginator="positions"] .pagination-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-            const page = parseInt(btn.dataset.page);
-            if (!isNaN(page)) {
-                _currentPage = page;
-                rerender();
-            }
+            onSort();
         });
     });
 }
 
-function rerender() {
-    const el = document.getElementById('open-positions-table');
+function attachPaginationHandlers(container, paginatorId, onPage) {
+    if (!container) return;
+    container.querySelectorAll(`[data-paginator="${paginatorId}"] .pagination-btn`).forEach(btn => {
+        btn.addEventListener('click', () => {
+            const page = parseInt(btn.dataset.page);
+            if (!isNaN(page)) onPage(page);
+        });
+    });
+}
+
+function rerenderPaper() {
+    const el = document.getElementById('paper-positions-table');
     if (el) {
-        el.innerHTML = positionsTable(_cachedPositions, _currentPage);
-        attachHandlers();
+        el.innerHTML = buildTable(_cachedPositions, _currentPage, _sortState, 'paper-positions');
+        attachSortHandlers(el, _sortState, () => { _currentPage = 1; rerenderPaper(); });
+        attachPaginationHandlers(el, 'paper-positions', (p) => { _currentPage = p; rerenderPaper(); });
+    }
+}
+
+function rerenderLive() {
+    const el = document.getElementById('live-positions-table');
+    if (el) {
+        el.innerHTML = buildTable(_cachedLivePositions, _liveCurrentPage, _liveSortState, 'live-positions');
+        attachSortHandlers(el, _liveSortState, () => { _liveCurrentPage = 1; rerenderLive(); });
+        attachPaginationHandlers(el, 'live-positions', (p) => { _liveCurrentPage = p; rerenderLive(); });
     }
 }
 
 function renderPortfolio(data) {
-    const { open_positions = [] } = data;
-    _cachedPositions = open_positions;
-    _currentPage = 1;
-    rerender();
+    const mode = data.mode || 'LIVE';
+    const livePositions = data.live_positions || [];
+    const paperPositions = data.paper_positions || [];
+    // Fall back to open_positions for back-compat
+    const openPositions = data.open_positions || [];
+
+    const container = document.getElementById('open-positions-table');
+    if (!container) return;
+
+    if (mode === 'PAPER') {
+        // Paper mode: show both sections
+        _cachedPositions = paperPositions.length > 0 ? paperPositions : openPositions;
+        _cachedLivePositions = livePositions;
+        _currentPage = 1;
+        _liveCurrentPage = 1;
+
+        let html = '';
+
+        // Live positions settling section (only if there are real positions)
+        if (livePositions.length > 0) {
+            html += `<div class="positions-section">
+                <h3 class="positions-section-label">Live Positions — Settling <span class="positions-count">${livePositions.length}</span></h3>
+                <p class="section-desc">Real positions placed before paper mode. Will clear once Kalshi settles them.</p>
+                <div id="live-positions-table"></div>
+            </div>
+            <hr class="we-divider">`;
+        }
+
+        // Paper positions section
+        html += `<div class="positions-section">
+            <h3 class="positions-section-label">Paper Positions <span class="positions-count">${_cachedPositions.length}</span></h3>
+            <div id="paper-positions-table"></div>
+        </div>`;
+
+        container.innerHTML = html;
+        if (livePositions.length > 0) rerenderLive();
+        rerenderPaper();
+    } else {
+        // Live mode: single section (original behavior)
+        _cachedPositions = openPositions;
+        _currentPage = 1;
+
+        container.innerHTML = `<div id="paper-positions-table"></div>`;
+        rerenderPaper();
+    }
 }
 
 export { renderPortfolio };
