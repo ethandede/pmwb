@@ -423,7 +423,13 @@ def run_position_manager(exchange=None):
             time.sleep(0.2)
 
     if fortifies:
-        from kalshi.trader import execute_kalshi_signal
+        from pipeline.types import Signal, CycleState
+        from pipeline.stages import size_position, execute_trade
+        from risk.bankroll import BankrollTracker
+        from risk.circuit_breaker import CircuitBreaker
+
+        bt = BankrollTracker(initial_bankroll=bankroll)
+        cb = CircuitBreaker()
 
         console.print(f"\n[bold cyan]Fortifying {len(fortifies)} positions...[/bold cyan]\n")
 
@@ -435,15 +441,28 @@ def run_position_manager(exchange=None):
             confidence = result.get("confidence", 0)
             existing_qty = result.get("qty", 0)
             side = result["side"]
-            direction = "BUY YES" if side == "yes" else "BUY NO"
 
             console.print(f"  [{mode_label}] FORTIFY {side.upper()} {ticker} (have {existing_qty}) \u2014 edge {edge:+.1%}, conf {confidence:.1f}%")
 
-            execute_kalshi_signal(
-                market_data, city, model_prob, current_price, edge,
-                direction, confidence=confidence,
-                existing_contracts=existing_qty,
+            price_cents = market_data.get("yes_ask") or market_data.get("last_price") or 50
+            signal = Signal(
+                ticker=ticker, city=city, market_type="kalshi_temp",
+                side=side, model_prob=model_prob, market_prob=current_price,
+                edge=edge, confidence=confidence,
+                price_cents=int(price_cents), days_ahead=result.get("days_ahead", 1),
+                yes_bid=market_data.get("yes_bid"), yes_ask=market_data.get("yes_ask"),
+                market=market_data,
             )
+
+            from pipeline.config import KALSHI_TEMP
+            state = CycleState()
+            size = size_position(KALSHI_TEMP, signal, bt, cb, state)
+            if size.count > 0:
+                trade = execute_trade(KALSHI_TEMP, signal, size, exchange, PAPER_MODE)
+                if trade and trade.count > 0:
+                    console.print(f"    Fortified: {trade.count}x @ {trade.price_cents}\u00a2 (${trade.cost:.2f})")
+            else:
+                console.print(f"    [dim]Fortify skipped: {size.limit_reason}[/dim]")
 
             time.sleep(0.2)
 
