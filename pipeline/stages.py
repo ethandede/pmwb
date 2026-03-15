@@ -162,6 +162,154 @@ def filter_signals(config, signals: list[Signal], held_positions: list,
     return results
 
 
+def sanity_check(config, signal: Signal) -> bool:
+    """Stage 4: Validate signal against reference forecast.
+
+    Returns True if signal passes (or if no sanity function configured).
+    """
+    if config.sanity_fn is None:
+        return True
+    try:
+        return config.sanity_fn(signal)
+    except Exception:
+        return True  # sanity check is advisory, never blocks on errors
+
+
+def size_position(config, signal: Signal, bankroll,
+                  circuit_breaker, cycle_state: CycleState):
+    """Stage 5: Kelly sizing with config's budget and limits.
+
+    Uses the shared risk/sizer.py:compute_size() with config-specific parameters.
+    """
+    from risk.sizer import compute_size
+
+    effective_kelly = config.kelly_floor
+    if config.sameday_overrides and signal.days_ahead == 0:
+        effective_kelly = config.sameday_overrides.get("kelly_floor", config.kelly_floor)
+
+    result = compute_size(
+        model_prob=signal.model_prob,
+        market_prob=signal.market_prob,
+        confidence=signal.confidence,
+        price_cents=signal.price_cents,
+        bankroll_tracker=bankroll,
+        circuit_breaker=circuit_breaker,
+        scan_spent=cycle_state.scan_spent,
+        event_contracts=0,
+        fractional_kelly=effective_kelly,
+    )
+
+    # Hard 2% bankroll cap
+    current_bankroll = bankroll.effective_bankroll()
+    max_dollars = current_bankroll * 0.02
+    if result.dollar_amount > max_dollars and result.count > 0:
+        result.count = max(1, int(max_dollars / (signal.price_cents / 100.0)))
+        result.dollar_amount = result.count * signal.price_cents / 100.0
+
+    return result
+
+
+def execute_trade(config, signal: Signal, size, exchange,
+                  paper_mode: bool) -> TradeResult:
+    """Stage 6: Place order or log paper trade.
+
+    Determines price via config.pricing_fn, checks fee profitability,
+    then either logs (paper) or calls exchange adapter (live).
+    """
+    from kalshi.pricing import kalshi_fee
+    from datetime import datetime, timezone
+
+    # Determine price
+    price_cents = signal.price_cents
+    strategy = "taker"
+    if config.pricing_fn and signal.yes_bid is not None:
+        is_sameday = signal.days_ahead == 0
+        price_result = config.pricing_fn(
+            side=size.side or signal.side,
+            yes_bid=signal.yes_bid,
+            yes_ask=signal.yes_ask,
+            edge=abs(signal.edge),
+            is_same_day=is_sameday,
+        )
+        if price_result and price_result[0] is not None:
+            price_cents = price_result[0]
+            strategy = price_result[1]
+
+    # Fee gate (Kalshi only)
+    if config.exchange == "kalshi":
+        is_taker = strategy in ("taker", "legacy")
+        fee = kalshi_fee(price_cents, size.count, is_taker=is_taker)
+        expected_profit = abs(signal.edge) * size.count - fee
+        if expected_profit < 0.12:
+            return TradeResult(
+                ticker=signal.ticker, side=size.side or signal.side,
+                count=0, price_cents=price_cents, cost=0,
+                order_id="", status="fee_blocked", paper=paper_mode,
+            )
+
+    cost = size.count * price_cents / 100.0
+
+    if paper_mode:
+        # Log paper trade to trades.db
+        from kalshi.fill_tracker import init_trades_db, record_fill
+        init_trades_db("data/trades.db")
+        record_fill(
+            db_path="data/trades.db",
+            order_id=f"paper-{signal.ticker}-{int(datetime.now(timezone.utc).timestamp())}",
+            ticker=signal.ticker,
+            side=f"buy_{size.side or signal.side}",
+            limit_price=price_cents,
+            fill_price=price_cents,
+            fill_qty=size.count,
+            fill_time=datetime.now(timezone.utc).isoformat(),
+            city=signal.city,
+        )
+        return TradeResult(
+            ticker=signal.ticker, side=size.side or signal.side,
+            count=size.count, price_cents=price_cents, cost=cost,
+            order_id="paper", status="paper", paper=True,
+        )
+
+    # Live order
+    resp = exchange.place_order(
+        signal.ticker, "buy", size.side or signal.side, price_cents, size.count,
+    )
+    order = resp.get("order", {})
+    order_id = order.get("order_id", "unknown")
+    status = order.get("status", "unknown")
+
+    fill_qty = int(float(order.get("fill_count_fp", "0") or "0"))
+    if fill_qty > 0:
+        taker_cost = float(order.get("taker_fill_cost_dollars", "0") or "0")
+        maker_cost = float(order.get("maker_fill_cost_dollars", "0") or "0")
+        actual_cost = taker_cost + maker_cost if (taker_cost + maker_cost) > 0 else fill_qty * price_cents / 100.0
+    else:
+        actual_cost = cost
+
+    # Record fill
+    from kalshi.fill_tracker import init_trades_db, record_fill
+    init_trades_db("data/trades.db")
+    actual_price = int(actual_cost / fill_qty * 100) if fill_qty > 0 else price_cents
+    record_fill(
+        db_path="data/trades.db",
+        order_id=order_id,
+        ticker=signal.ticker,
+        side=f"buy_{size.side or signal.side}",
+        limit_price=price_cents,
+        fill_price=actual_price if fill_qty > 0 else 0,
+        fill_qty=fill_qty,
+        fill_time=datetime.now(timezone.utc).isoformat(),
+        city=signal.city,
+    )
+
+    return TradeResult(
+        ticker=signal.ticker, side=size.side or signal.side,
+        count=fill_qty if fill_qty > 0 else size.count,
+        price_cents=price_cents, cost=actual_cost,
+        order_id=order_id, status=status, paper=False,
+    )
+
+
 def _extract_market_prob(market: dict) -> float:
     """Extract YES probability from market data."""
     # Try cents format first

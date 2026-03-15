@@ -1,7 +1,10 @@
 """Tests for pipeline stage functions. All use mocks — no API/forecast calls."""
 from unittest.mock import MagicMock
 from pipeline.types import Signal, CycleState
-from pipeline.stages import fetch_markets, score_signal, filter_signals
+from pipeline.stages import (
+    fetch_markets, score_signal, filter_signals,
+    sanity_check, size_position, execute_trade,
+)
 
 
 def test_fetch_markets_calls_config_fn():
@@ -132,3 +135,91 @@ def test_filter_resting_order_dedup():
     resting = {"KXHIGHNY-26MAR15-T56"}
     filtered = filter_signals(config, [signal], held_positions=[], resting_tickers=resting)
     assert len(filtered) == 0
+
+
+# --- sanity_check tests ---
+
+def test_sanity_check_none_passes():
+    """When config.sanity_fn is None, signal always passes."""
+    config = MagicMock()
+    config.sanity_fn = None
+    signal = _make_signal()
+    assert sanity_check(config, signal) is True
+
+
+def test_sanity_check_calls_fn():
+    """When config.sanity_fn exists, it's called with the signal."""
+    config = MagicMock()
+    config.sanity_fn.return_value = False
+    signal = _make_signal()
+    assert sanity_check(config, signal) is False
+    config.sanity_fn.assert_called_once_with(signal)
+
+
+# --- size_position tests ---
+
+def test_size_position_basic():
+    """size_position returns a SizeResult with nonzero count for good signal."""
+    from risk.bankroll import BankrollTracker
+    from risk.circuit_breaker import CircuitBreaker
+
+    config = MagicMock()
+    config.scan_frac = 0.10
+    config.kelly_floor = 0.25
+    config.max_contracts_per_event = 10
+    config.sameday_overrides = None
+
+    bt = BankrollTracker(initial_bankroll=1000.0)
+    cb = CircuitBreaker()
+    state = CycleState()
+
+    signal = _make_signal(model_prob=0.70, market_prob=0.55, edge=0.15,
+                          confidence=85.0, price_cents=55)
+
+    result = size_position(config, signal, bt, cb, state)
+    assert result.count > 0
+    assert result.dollar_amount > 0
+
+
+def test_size_position_budget_exhausted():
+    """size_position returns 0 when scan budget is exhausted."""
+    from risk.bankroll import BankrollTracker
+    from risk.circuit_breaker import CircuitBreaker
+
+    config = MagicMock()
+    config.scan_frac = 0.10
+    config.kelly_floor = 0.25
+    config.max_contracts_per_event = 10
+    config.sameday_overrides = None
+
+    bt = BankrollTracker(initial_bankroll=1000.0)
+    cb = CircuitBreaker()
+    state = CycleState()
+    state.scan_spent = 999.0  # way over budget
+
+    signal = _make_signal(model_prob=0.70, market_prob=0.55, edge=0.15,
+                          confidence=85.0, price_cents=55)
+
+    result = size_position(config, signal, bt, cb, state)
+    assert result.count == 0
+
+
+# --- execute_trade tests ---
+
+def test_execute_trade_paper_mode():
+    """In paper mode, execute_trade logs but doesn't call exchange."""
+    config = MagicMock()
+    config.pricing_fn = None
+    config.exchange = "kalshi"
+    exchange = MagicMock()
+
+    signal = _make_signal()
+    from risk.sizer import SizeResult
+    size = SizeResult(side="no", count=5, dollar_amount=2.75,
+                      raw_kelly=0.03, adjusted_kelly=0.02,
+                      limit_reason="OK")
+
+    result = execute_trade(config, signal, size, exchange, paper_mode=True)
+    assert result.paper is True
+    assert result.status == "paper"
+    exchange.place_order.assert_not_called()
