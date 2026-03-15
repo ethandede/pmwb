@@ -1,9 +1,18 @@
 // dashboard/static/js/portfolio.js
-// Renders Open Positions: City | Side | Qty | Entry | P&L (5 cols, paginated)
+// Renders Open Positions: City | Side | Qty | Entry | P&L (5 cols, sortable, paginated)
 
 const PAGE_SIZE = 10;
 let _currentPage = 1;
 let _cachedPositions = [];
+let _sortState = { key: 'pnl', dir: 'asc', abs: false };
+
+const COLUMNS = [
+    { key: 'city',  label: 'City',  num: false },
+    { key: 'side',  label: 'Side',  num: false },
+    { key: 'qty',   label: 'Qty',   num: true  },
+    { key: 'entry', label: 'Entry', num: true  },
+    { key: 'pnl',   label: 'P&L',   num: true  },
+];
 
 function fmtDollar(n, signed = false) {
     const abs = Math.abs(n).toFixed(2);
@@ -13,27 +22,35 @@ function fmtDollar(n, signed = false) {
 }
 
 function positionsTable(positions, page) {
-    const headers = `
-        <tr>
-          <th>City</th><th>Side</th>
-          <th class="num">Qty</th><th class="num">Entry</th><th class="num">P&amp;L</th>
-        </tr>`;
+    const st = _sortState;
+    const headers = COLUMNS.map(c => {
+        const arrow = st.key === c.key ? (st.dir === 'asc' ? ' \u2191' : ' \u2193') : '';
+        return `<th${c.num ? ' class="num"' : ''} data-sort-key="${c.key}" style="cursor:pointer;user-select:none">${c.label}${arrow}</th>`;
+    }).join('');
 
     if (!positions || positions.length === 0) {
         return `
         <table class="data-table">
-          <thead>${headers}</thead>
+          <thead><tr>${headers}</tr></thead>
           <tbody class="table-empty">
             <tr><td colspan="5">No open positions</td></tr>
           </tbody>
         </table>`.trim();
     }
 
-    const total = positions.length;
+    // Sort
+    const sorted = [...positions].sort((a, b) => {
+        let va = a[st.key], vb = b[st.key];
+        if (st.abs) { va = Math.abs(va); vb = Math.abs(vb); }
+        if (typeof va === 'string') return st.dir === 'asc' ? va.localeCompare(vb) : vb.localeCompare(va);
+        return st.dir === 'asc' ? va - vb : vb - va;
+    });
+
+    const total = sorted.length;
     const totalPages = Math.ceil(total / PAGE_SIZE);
     const safePage = Math.max(1, Math.min(page, totalPages));
     const start = (safePage - 1) * PAGE_SIZE;
-    const slice = positions.slice(start, start + PAGE_SIZE);
+    const slice = sorted.slice(start, start + PAGE_SIZE);
 
     const rows = slice.map(p => {
         const pnlClass = p.pnl > 0 ? 'val-positive' : p.pnl < 0 ? 'val-negative' : 'val-neutral';
@@ -62,34 +79,53 @@ function positionsTable(positions, page) {
 
     return `
     <table class="data-table">
-      <thead>${headers}</thead>
+      <thead><tr>${headers}</tr></thead>
       <tbody>${rows}</tbody>
     </table>${pagination}`.trim();
 }
 
-function attachPaginationHandlers() {
+function attachHandlers() {
     const container = document.getElementById('open-positions-table');
     if (!container) return;
+
+    container.querySelectorAll('th[data-sort-key]').forEach(th => {
+        th.addEventListener('click', () => {
+            const key = th.dataset.sortKey;
+            if (_sortState.key === key) {
+                _sortState = { key, dir: _sortState.dir === 'desc' ? 'asc' : 'desc', abs: false };
+            } else {
+                const col = COLUMNS.find(c => c.key === key);
+                _sortState = { key, dir: col && col.num ? 'desc' : 'asc', abs: false };
+            }
+            _currentPage = 1;
+            rerender();
+        });
+    });
+
     container.querySelectorAll('[data-paginator="positions"] .pagination-btn').forEach(btn => {
         btn.addEventListener('click', () => {
             const page = parseInt(btn.dataset.page);
             if (!isNaN(page)) {
                 _currentPage = page;
-                renderPortfolio({ open_positions: _cachedPositions });
+                rerender();
             }
         });
     });
 }
 
+function rerender() {
+    const el = document.getElementById('open-positions-table');
+    if (el) {
+        el.innerHTML = positionsTable(_cachedPositions, _currentPage);
+        attachHandlers();
+    }
+}
+
 function renderPortfolio(data) {
     const { open_positions = [] } = data;
     _cachedPositions = open_positions;
-
-    const posTableEl = document.getElementById('open-positions-table');
-    if (posTableEl) {
-        posTableEl.innerHTML = positionsTable(open_positions, _currentPage);
-        attachPaginationHandlers();
-    }
+    _currentPage = 1;
+    rerender();
 }
 
 export { renderPortfolio };

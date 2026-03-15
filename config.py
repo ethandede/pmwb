@@ -20,7 +20,7 @@ CITIES = {
 MIN_TRADE_EDGE = 0.12                    # Only trade |edge| >= 12%
 MAX_POSITIONS_TOTAL = 50                 # Never exceed 50 open positions
 MAX_BANKROLL_PCT_PER_TRADE = 0.02        # Hard 2% bankroll cap per trade
-SKIP_RAIN_MARKETS = True                 # Permanently disable all rain markets
+SKIP_RAIN_MARKETS = False                # Rain markets re-enabled
 
 DAILY_LOSS_BREAKER_PCT = 0.05            # -5% daily P&L stops new entries
 
@@ -43,7 +43,7 @@ MAX_SCAN_BUDGET = 60.0
 MAX_ORDER_USD = 20.0
 
 BIAS_DB_PATH = "data/bias.db"
-CONFIDENCE_THRESHOLD = 50
+CONFIDENCE_THRESHOLD = 60
 FUSION_WEIGHTS = {"ensemble": 0.40, "noaa": 0.35, "hrrr": 0.25}
 HIGH_CONFIDENCE_MULTIPLIER = 1.5
 
