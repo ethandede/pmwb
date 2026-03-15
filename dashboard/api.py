@@ -77,13 +77,15 @@ def _get_paper_positions() -> list:
     conn = sqlite3.connect(str(TRADES_DB))
     conn.row_factory = sqlite3.Row
     rows = conn.execute(
-        """SELECT ticker, city, side, fill_price,
+        """SELECT ticker, city, side,
+                  ROUND(SUM(fill_price * fill_qty) * 1.0 / SUM(fill_qty)) as fill_price,
                   SUM(fill_qty) as fill_qty,
                   MAX(fill_time) as fill_time
            FROM trades
            WHERE settlement_outcome IS NULL
              AND order_id LIKE 'paper-%'
              AND fill_qty > 0
+             AND ticker NOT LIKE 'HB_%'
            GROUP BY ticker, side
            ORDER BY fill_time DESC"""
     ).fetchall()
