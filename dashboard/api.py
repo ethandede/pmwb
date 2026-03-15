@@ -315,6 +315,50 @@ async def get_activity(limit: int = Query(50)):
     return result
 
 
+@app.get("/api/resting")
+async def get_resting():
+    from kalshi.trader import get_orders
+    try:
+        resting = get_orders(status="resting")
+    except Exception as e:
+        return []
+
+    result = []
+    for o in resting:
+        ticker = o.get("ticker", "")
+        action = o.get("action", "")
+        side = o.get("side", "")
+        remaining = int(float(o.get("remaining_count_fp", "0")))
+        if remaining == 0:
+            continue
+        price = o.get("yes_price_dollars") if side == "yes" else o.get("no_price_dollars")
+        price_cents = int(float(price or 0) * 100)
+        created = (o.get("created_time", "")[:16].replace("T", " "))
+
+        # Parse contract from ticker
+        contract = ""
+        parts = ticker.split("-")
+        if len(parts) >= 3:
+            strike = parts[2]
+            if strike.startswith("T"):
+                contract = f">{strike[1:]}\u00b0"
+            elif strike.startswith("B"):
+                val = float(strike[1:])
+                contract = f"{val:.0f}-{val+2:.0f}\u00b0"
+
+        result.append({
+            "city": ticker_to_city(ticker),
+            "action": action.upper(),
+            "side": side.upper(),
+            "contract": contract,
+            "remaining": remaining,
+            "price": price_cents,
+            "created": created,
+        })
+
+    return result
+
+
 @app.get("/api/settled")
 async def get_settled(limit: int = Query(50)):
     if not TRADES_DB.exists():

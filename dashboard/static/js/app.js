@@ -1,9 +1,10 @@
 // dashboard/static/js/app.js
-import { renderPortfolio } from './portfolio.js?v=16';
-import { renderMarkets } from './markets.js?v=16';
-import { renderTriptych } from './performance.js?v=16';
-import { renderActivity } from './activity.js?v=16';
-import { renderSettled } from './settled.js?v=16';
+import { renderPortfolio } from './portfolio.js?v=17';
+import { renderMarkets } from './markets.js?v=17';
+import { renderTriptych } from './performance.js?v=17';
+import { renderActivity } from './activity.js?v=17';
+import { renderSettled } from './settled.js?v=17';
+import { renderResting } from './resting.js?v=17';
 
 let _configCache = null;
 
@@ -46,6 +47,7 @@ async function refreshAll() {
         loadSection('/api/markets/temp', (d) => renderMarkets(d, 'temp'), 'temp-table'),
         loadSection('/api/markets/precip', (d) => renderMarkets(d, 'precip'), 'precip-table'),
         loadSection('/api/activity', renderActivity, 'activity-table'),
+        loadSection('/api/resting', renderResting, 'resting-table'),
         loadSection('/api/settled', renderSettled, 'settled-table'),
     ]);
 

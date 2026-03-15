@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Weather Edge</title>
-    <link rel="stylesheet" href="/static/css/main.css?v=16">
+    <link rel="stylesheet" href="/static/css/main.css?v=17">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Merriweather:wght@700;900&family=Roboto:wght@300;400;500;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
     <script src="https://cdn.plot.ly/plotly-2.35.0.min.js" charset="utf-8"></script>
@@ -61,6 +61,15 @@
             <h2>Open Positions</h2>
             <p class="section-desc">Event date is when the weather occurs. Markets settle by ~9 AM ET the following morning.</p>
             <div id="open-positions-table"></div>
+        </section>
+
+        <hr class="we-divider">
+
+        <!-- Resting Orders -->
+        <section id="resting-section">
+            <h2>Resting Orders</h2>
+            <p class="section-desc">Unfilled limit orders sitting on the book. Tying up buying power until filled or cancelled.</p>
+            <div id="resting-table"></div>
         </section>
 
         <hr class="we-divider">
@@ -125,6 +134,6 @@
         <div id="risk-controls" class="risk-footer"></div>
     </main>
 
-    <script type="module" src="/static/js/app.js?v=16"></script>
+    <script type="module" src="/static/js/app.js?v=17"></script>
 </body>
 </html>
