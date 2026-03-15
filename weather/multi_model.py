@@ -381,6 +381,79 @@ def fuse_forecast(
     return fused_prob, confidence, details
 
 
+# ---------------------------------------------------------------------------
+# ERCOT Solar / Power Price Signal
+# ---------------------------------------------------------------------------
+
+def get_ercot_solar_signal(lat: float, lon: float, hours_ahead: int = 24, ercot_data: dict = None) -> dict:
+    """Solar irradiance → ERCOT power price signal.
+    Returns ready-to-use signal for your position manager.
+
+    Args:
+        ercot_data: optional pre-fetched {"price": float, "solar_mw": float}
+                    to avoid redundant API calls when scanning multiple hubs.
+    """
+
+    # 1. Solar irradiance from Open-Meteo (always per-hub lat/lon)
+    try:
+        url = (
+            f"https://api.open-meteo.com/v1/forecast"
+            f"?latitude={lat}&longitude={lon}"
+            f"&daily=shortwave_radiation_sum"
+            f"&forecast_days=3"
+            f"&timezone=auto"
+        )
+        r = http_get(url, timeout=10)
+        r.raise_for_status()
+        radiation = r.json().get("daily", {}).get("shortwave_radiation_sum", [])
+        target_idx = min(hours_ahead // 24, len(radiation) - 1)
+        expected_solrad = radiation[target_idx] if radiation else 15.0
+    except Exception as e:
+        print(f"  Solar irradiance fetch error: {e}")
+        expected_solrad = 15.0
+
+    # 2. ERCOT market data — use pre-fetched if available
+    if ercot_data is not None:
+        current_price = float(ercot_data.get("price", 40.0))
+        actual_solar_mw = float(ercot_data.get("solar_mw", 0.0))
+    else:
+        try:
+            r = requests.get("https://www.ercot.com/api/public-reports/np6788/rtmLmp", timeout=8)
+            data = r.json()
+            current_price = float(data[-1]["price"]) if data else 40.0
+        except:
+            current_price = 40.0
+        try:
+            r = requests.get("https://www.ercot.com/api/public-reports/np4-738-cd/spp_actual_5min_avg_values", timeout=8)
+            data = r.json()
+            actual_solar_mw = float(data[-1].get("value", 0)) if data else 0.0
+        except Exception as e:
+            print(f"  ERCOT solar gen fetch error: {e}")
+            actual_solar_mw = 12000.0  # match cached fallback
+
+    # 3. Signal logic (tunable)
+    if expected_solrad > 18.0:
+        signal = "SHORT"
+        edge = (expected_solrad - 15.0) / 4.0
+    elif expected_solrad < 10.0:
+        signal = "LONG"
+        edge = (15.0 - expected_solrad) / 4.0
+    else:
+        signal = "NEUTRAL"
+        edge = 0.0
+
+    confidence = 70 if abs(edge) > 1.0 else 50
+
+    return {
+        "signal": signal,
+        "edge": round(edge, 2),
+        "expected_solrad_mjm2": round(expected_solrad, 1),
+        "current_ercot_price": round(current_price, 1),
+        "actual_solar_mw": round(actual_solar_mw, 0),
+        "confidence": confidence,
+    }
+
+
 # fuse_precip_forecast remains 100% unchanged (it already had good clamping)
 def fuse_precip_forecast(
     lat: float, lon: float, city: str, month: int,
