@@ -41,6 +41,17 @@ def init_analytics_db(db_path: str = ANALYTICS_DB):
             PRIMARY KEY (date, bucket_type, bucket_value)
         );
 
+        CREATE TABLE IF NOT EXISTS manager_actions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT,
+            ticker TEXT,
+            city TEXT,
+            action TEXT,
+            reason TEXT,
+            edge REAL,
+            spread REAL
+        );
+
         CREATE TABLE IF NOT EXISTS recommendations (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             created_at TEXT,
@@ -55,6 +66,46 @@ def init_analytics_db(db_path: str = ANALYTICS_DB):
     """)
     conn.commit()
     conn.close()
+
+
+def record_manager_action(ticker: str, city: str, action: str, reason: str,
+                          edge: float = 0, spread: float = 0,
+                          analytics_db: str = ANALYTICS_DB):
+    """Record a position manager decision for analytics."""
+    try:
+        init_analytics_db(analytics_db)
+        conn = _connect(analytics_db)
+        conn.execute("""
+            INSERT INTO manager_actions (timestamp, ticker, city, action, reason, edge, spread)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (datetime.now(timezone.utc).isoformat(), ticker, city, action, reason, edge, spread))
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
+
+def get_action_summary(analytics_db: str = ANALYTICS_DB, days: int = 7) -> dict:
+    """Get summary of position manager actions over the last N days."""
+    try:
+        conn = _connect(analytics_db)
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        rows = conn.execute("""
+            SELECT action, COUNT(*) as count FROM manager_actions
+            WHERE timestamp > ? GROUP BY action
+        """, (cutoff,)).fetchall()
+
+        spread_blocked = conn.execute("""
+            SELECT COUNT(*) as count FROM manager_actions
+            WHERE timestamp > ? AND reason LIKE '%spread%'
+        """, (cutoff,)).fetchone()
+
+        conn.close()
+        summary = {r["action"]: r["count"] for r in rows}
+        summary["spread_blocked"] = spread_blocked["count"] if spread_blocked else 0
+        return summary
+    except Exception:
+        return {}
 
 
 def compute_daily_stats(trades_db: str = TRADES_DB, analytics_db: str = ANALYTICS_DB):

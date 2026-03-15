@@ -101,8 +101,11 @@ def _sell_ev_beats_hold(
     """Strict EV gate: sell-now vs hold-to-settlement after fees.
 
     Returns (beats: bool, advantage_per_contract: float).
+    Sells are posted as maker (resting limit orders), so fee = 0.
     """
-    fee = 0.035 + (qty * 0.01)
+    from kalshi.pricing import kalshi_fee
+    price_cents = int(current_price * 100)
+    fee = kalshi_fee(price_cents, qty, is_taker=False)
     sell_ev = current_price * qty - fee
     hold_ev = our_win_prob * qty
 
@@ -333,6 +336,20 @@ def run_position_manager():
         time.sleep(0.15)
 
         result = evaluate_position(ticker, qty, market_data, bankroll)
+
+        # Record decision for analytics
+        try:
+            from analytics.optimizer import record_manager_action
+            record_manager_action(
+                ticker=ticker,
+                city=result.get("city", ""),
+                action=result["action"],
+                reason=result.get("reason", ""),
+                edge=result.get("edge", 0),
+                spread=0,
+            )
+        except Exception:
+            pass
 
         side = result.get("side", "?").upper()
         side_color = "green" if side == "YES" else "red"

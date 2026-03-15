@@ -117,4 +117,61 @@ function renderRecommendations(data) {
         </table>`;
 }
 
-export { renderScorecard, renderTrends, renderRecommendations };
+function renderActions(data) {
+    const el = document.getElementById('actions-content');
+    if (!el) return;
+
+    const s = data.summary || {};
+    const recent = data.recent || [];
+
+    const holds = s.hold || 0;
+    const exits = s.exit || 0;
+    const fortifies = s.fortify || 0;
+    const spreadBlocked = s.spread_blocked || 0;
+    const total = holds + exits + fortifies;
+
+    let html = `<div class="metric-row" style="grid-template-columns: repeat(5, 1fr);">
+        <div class="metric-card metric-neutral">
+            <div class="metric-label">Hold</div>
+            <div class="metric-value mono">${holds}</div>
+        </div>
+        <div class="metric-card metric-accent">
+            <div class="metric-label">Fortify</div>
+            <div class="metric-value mono">${fortifies}</div>
+        </div>
+        <div class="metric-card ${exits > 0 ? 'metric-negative' : 'metric-neutral'}">
+            <div class="metric-label">Exit</div>
+            <div class="metric-value mono">${exits}</div>
+        </div>
+        <div class="metric-card ${spreadBlocked > 0 ? 'metric-negative' : 'metric-neutral'}">
+            <div class="metric-label">Spread Blocked</div>
+            <div class="metric-value mono">${spreadBlocked}</div>
+        </div>
+        <div class="metric-card metric-neutral">
+            <div class="metric-label">Total Decisions</div>
+            <div class="metric-value mono">${total}</div>
+        </div>
+    </div>`;
+
+    if (recent.length > 0) {
+        const rows = recent.map(r => {
+            const actionClass = r.action === 'fortify' ? 'val-positive' : r.action === 'exit' ? 'val-negative' : '';
+            const time = r.timestamp ? r.timestamp.slice(5, 16).replace('T', ' ') : '\u2014';
+            return `<tr>
+                <td class="mono" style="white-space:nowrap">${time}</td>
+                <td>${r.city || r.ticker}</td>
+                <td class="${actionClass}">${r.action.toUpperCase()}</td>
+                <td>${r.reason}</td>
+            </tr>`;
+        }).join('');
+
+        html += `<table class="data-table" style="margin-top:16px;">
+            <thead><tr><th>Time</th><th>City</th><th>Action</th><th>Reason</th></tr></thead>
+            <tbody>${rows}</tbody>
+        </table>`;
+    }
+
+    el.innerHTML = html;
+}
+
+export { renderScorecard, renderTrends, renderRecommendations, renderActions };

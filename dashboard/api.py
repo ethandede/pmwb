@@ -442,6 +442,42 @@ async def analytics_trends():
     return {"daily": [dict(r) for r in reversed(rows)]}
 
 
+@app.get("/api/analytics/actions")
+async def analytics_actions():
+    if not ANALYTICS_DB.exists():
+        return {"summary": {}, "recent": []}
+    conn = sqlite3.connect(str(ANALYTICS_DB))
+    conn.row_factory = sqlite3.Row
+
+    # Action counts last 7 days
+    cutoff = (datetime.now(timezone.utc) - __import__("datetime").timedelta(days=7)).isoformat()
+    counts = conn.execute("""
+        SELECT action, COUNT(*) as count FROM manager_actions
+        WHERE timestamp > ? GROUP BY action
+    """, (cutoff,)).fetchall()
+
+    spread_blocked = conn.execute("""
+        SELECT COUNT(*) as count FROM manager_actions
+        WHERE timestamp > ? AND reason LIKE '%spread%'
+    """, (cutoff,)).fetchone()
+
+    # Recent non-hold actions
+    recent = conn.execute("""
+        SELECT * FROM manager_actions
+        WHERE action != 'hold' ORDER BY timestamp DESC LIMIT 20
+    """).fetchall()
+
+    conn.close()
+
+    summary = {r["action"]: r["count"] for r in counts}
+    summary["spread_blocked"] = spread_blocked["count"] if spread_blocked else 0
+
+    return {
+        "summary": summary,
+        "recent": [dict(r) for r in recent],
+    }
+
+
 @app.get("/api/analytics/recommendations")
 async def analytics_recommendations():
     if not ANALYTICS_DB.exists():
