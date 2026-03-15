@@ -39,7 +39,7 @@ def score_signal(config, market: dict) -> Signal:
             hours_ahead=24,
             ercot_data=market.get("_ercot_data"),
         )
-        model_prob = 1.0 - forecast_result.get("edge", 0)  # ERCOT edge is direct
+        model_prob = max(0.01, min(0.99, 1.0 - forecast_result.get("edge", 0)))  # clamp to valid probability
         confidence = forecast_result.get("confidence", 50)
         edge = forecast_result.get("edge", 0)
         ercot_signal = forecast_result.get("signal", "NEUTRAL")
