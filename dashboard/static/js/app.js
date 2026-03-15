@@ -1,10 +1,11 @@
 // dashboard/static/js/app.js
-import { renderPortfolio } from './portfolio.js?v=19';
-import { renderMarkets } from './markets.js?v=19';
-import { renderTriptych } from './performance.js?v=19';
-import { renderActivity } from './activity.js?v=19';
-import { renderSettled } from './settled.js?v=19';
-import { renderResting } from './resting.js?v=19';
+import { renderPortfolio } from './portfolio.js?v=20';
+import { renderMarkets } from './markets.js?v=20';
+import { renderTriptych } from './performance.js?v=20';
+import { renderActivity } from './activity.js?v=20';
+import { renderSettled } from './settled.js?v=20';
+import { renderScorecard, renderTrends, renderRecommendations } from './analytics.js?v=20';
+import { renderResting } from './resting.js?v=20';
 
 let _configCache = null;
 
@@ -49,6 +50,9 @@ async function refreshAll() {
         loadSection('/api/activity', renderActivity, 'activity-table'),
         loadSection('/api/resting', renderResting, 'resting-table'),
         loadSection('/api/settled', renderSettled, 'settled-table'),
+        loadSection('/api/analytics/scorecard', renderScorecard, 'scorecard-content'),
+        loadSection('/api/analytics/trends', renderTrends, 'trends-content'),
+        loadSection('/api/analytics/recommendations', renderRecommendations, 'recommendations-content'),
     ]);
 
     btn.classList.remove('spinning');

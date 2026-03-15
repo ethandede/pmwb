@@ -399,6 +399,63 @@ async def get_settled(limit: int = Query(50)):
     return {"summary": summary, "trades": trades}
 
 
+ANALYTICS_DB = Path(__file__).resolve().parent.parent / "data" / "analytics.db"
+
+
+@app.get("/api/analytics/scorecard")
+async def analytics_scorecard():
+    if not ANALYTICS_DB.exists():
+        return {"today": None, "yesterday": None, "rolling_7d": None}
+    conn = sqlite3.connect(str(ANALYTICS_DB))
+    conn.row_factory = sqlite3.Row
+
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    yesterday = (datetime.now(timezone.utc) - __import__("datetime").timedelta(days=1)).strftime("%Y-%m-%d")
+
+    today_row = conn.execute("SELECT * FROM daily_stats WHERE date=?", (today,)).fetchone()
+    yesterday_row = conn.execute("SELECT * FROM daily_stats WHERE date=?", (yesterday,)).fetchone()
+    rolling = conn.execute("""
+        SELECT SUM(wins) as wins, SUM(losses) as losses, SUM(net_pnl) as pnl,
+               AVG(avg_win) as avg_win, AVG(avg_loss) as avg_loss
+        FROM daily_stats WHERE date >= date('now', '-7 days')
+    """).fetchone()
+    conn.close()
+
+    return {
+        "today": dict(today_row) if today_row else None,
+        "yesterday": dict(yesterday_row) if yesterday_row else None,
+        "rolling_7d": dict(rolling) if rolling else None,
+    }
+
+
+@app.get("/api/analytics/trends")
+async def analytics_trends():
+    if not ANALYTICS_DB.exists():
+        return {"daily": []}
+    conn = sqlite3.connect(str(ANALYTICS_DB))
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute("""
+        SELECT date, hit_rate, net_pnl, wins, losses
+        FROM daily_stats ORDER BY date DESC LIMIT 30
+    """).fetchall()
+    conn.close()
+    return {"daily": [dict(r) for r in reversed(rows)]}
+
+
+@app.get("/api/analytics/recommendations")
+async def analytics_recommendations():
+    if not ANALYTICS_DB.exists():
+        return []
+    conn = sqlite3.connect(str(ANALYTICS_DB))
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute("""
+        SELECT * FROM recommendations WHERE status='pending'
+        ORDER BY CASE confidence WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END
+    """).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
 @app.get("/api/health")
 async def health_check():
     return {"status": "healthy", "time": datetime.now(timezone.utc).isoformat()}

@@ -58,6 +58,16 @@ def run_cycle(cycle_num: int):
         console.print(f"[red]Settler error: {e}[/red]")
         traceback.print_exc()
 
+    # --- Phase 3.5: Analytics ---
+    try:
+        from config import ANALYTICS_ENABLED
+        if ANALYTICS_ENABLED:
+            console.print(f"\n[bold]Phase 3.5: Analytics[/bold]")
+            from analytics.optimizer import run_analytics
+            run_analytics()
+    except Exception as e:
+        console.print(f"  [red]Analytics error: {e}[/red]")
+
     # --- Phase 4: Quick balance check + daily equity snapshot ---
     global _last_equity_date
     try:
