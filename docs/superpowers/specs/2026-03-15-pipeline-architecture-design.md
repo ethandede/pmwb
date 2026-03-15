@@ -54,7 +54,6 @@ class MarketConfig:
     sanity_fn: Callable | None         # None = skip sanity check
 
     # Stage 5: Sizing
-    budget_key: str
     scan_frac: float
     kelly_floor: float
     max_contracts_per_event: int
@@ -72,6 +71,8 @@ class MarketConfig:
     settle_fn: Callable
 ```
 
+Note: `budget_key` removed from earlier draft. CycleState is per-config, so budget isolation is structural — no key needed.
+
 ### Signal Dataclass
 
 Typed data structure flowing between stages. Replaces raw dicts with `_market_type` flags.
@@ -88,11 +89,23 @@ class Signal:
     edge: float
     confidence: float
     price_cents: int
-    market: dict                       # raw exchange data for execution
+    days_ahead: int                    # 0 = same-day, used for sameday_overrides
 
+    # Execution-relevant fields (promoted from raw dict for type safety)
+    yes_bid: int | None = None
+    yes_ask: int | None = None
+    lat: float | None = None
+    lon: float | None = None
+
+    # Raw exchange data (fallback for exchange-specific fields)
+    market: dict = field(default_factory=dict)
+
+    # Enriched by later stages
     size: SizeResult | None = None
     trade_result: TradeResult | None = None
 ```
+
+The `market` dict stays attached as a fallback, but pipeline stages use the typed fields. The score stage promotes critical fields from the raw dict into typed Signal fields at creation time.
 
 ### CycleState
 
@@ -119,29 +132,58 @@ class PipelineRunner:
         self.bankroll: BankrollTracker  # shared
         self.circuit_breaker: CircuitBreaker  # shared
 
-    def run_cycle(self):
+    def run_cycle(self, paper_mode: bool):
+        """Called by daemon every 5 min."""
         self.bankroll.sync_from_api()
 
+        # Pre-dispatch: fetch shared state once
+        kalshi = self.exchanges["kalshi"]
+        held_positions = kalshi.get_positions()
+        resting_tickers = {o["ticker"] for o in kalshi.get_orders(status="resting")
+                           if o.get("action") == "buy"}
+        kalshi_position_count = sum(1 for p in held_positions
+                                     if float(p.get("position_fp", 0)) != 0)
+
         for config in self.configs:
+            # Cross-config position limit: skip Kalshi configs when maxed
+            if config.exchange == "kalshi" and kalshi_position_count >= MAX_POSITIONS_TOTAL:
+                continue
+
             state = CycleState()
             exchange = self.exchanges[config.exchange]
-            markets  = fetch_markets(config, exchange)
-            signals  = [score_signal(config, m) for m in markets]
-            filtered = filter_signals(config, signals, held_positions)
-            for signal in filtered:
-                if sanity_check(config, signal):
-                    signal.size = size_position(config, signal, self.bankroll,
-                                                self.circuit_breaker, state)
-                    if signal.size and signal.size.count > 0:
-                        execute_trade(config, signal, signal.size, exchange, paper_mode)
-                        state.scan_spent += signal.size.dollar_amount
 
-        self._manage_positions()
-        self._settle()
-        self._snapshot_equity()
+            try:
+                markets  = fetch_markets(config, exchange)
+                signals  = [score_signal(config, m) for m in markets]
+                filtered = filter_signals(config, signals, held_positions,
+                                          resting_tickers)
+                for signal in filtered:
+                    if sanity_check(config, signal):
+                        signal.size = size_position(config, signal,
+                                                    self.bankroll,
+                                                    self.circuit_breaker,
+                                                    state)
+                        if signal.size and signal.size.count > 0:
+                            execute_trade(config, signal, signal.size,
+                                          exchange, paper_mode)
+                            state.scan_spent += signal.size.dollar_amount
+            except Exception as e:
+                state.errors.append(str(e))
+                print(f"  Pipeline error ({config.name}): {e}")
+
+        # Post-cycle phases (run once, not per config)
+        self._poll_fills(kalshi)       # update resting orders with fill data
+        self._manage_positions()       # exits, fortifies, holds
+        self._settle()                 # resolve settled markets
+        self._snapshot_equity()        # daily equity record
 ```
 
-Cross-config constraints (total Kalshi position limit of 50) are checked in the runner before dispatching configs.
+Key design decisions:
+- `held_positions` and `resting_tickers` are fetched once in pre-dispatch and shared across configs.
+- `kalshi_position_count` gates all Kalshi configs when the global 50-position limit is hit.
+- Errors in one config's pipeline do not abort other configs — caught, logged to `CycleState.errors`, and the next config runs.
+- `_poll_fills()` runs once per cycle after all execution, since it's a Kalshi-global operation that checks for resting order fills and updates trades.db.
+- `paper_mode` is passed as a parameter, not imported from config.py.
 
 ### Exchange Adapters
 
@@ -153,15 +195,20 @@ class KalshiExchange:
     def get_positions(self) -> list[dict]
     def get_orders(self, status="resting") -> list[dict]
     def place_order(self, ticker, side, price_cents, count) -> dict
-    def get_market(self, ticker) -> dict
+    def get_market(self, ticker) -> dict    # used by settler + position manager
     def fetch_events(self, series_ticker) -> list[dict]
+    def poll_fills(self) -> list[dict]      # check resting orders for fills
 
 class ErcotExchange:
-    def fetch_market_data(self) -> dict
-    def get_positions(self) -> list[dict]
+    def fetch_market_data(self) -> dict     # prices, solar, load (cached 5min)
+    def get_positions(self) -> list[dict]   # from ercot_paper.db
     def open_position(self, hub, signal, size, edge, confidence) -> dict
     def close_position(self, position_id, exit_reason, exit_price) -> dict
 ```
+
+`KalshiExchange.get_market(ticker)` replaces the private `_get` import that `kalshi/settler.py` currently uses. The settler will receive the exchange adapter and call `exchange.get_market(ticker)` instead.
+
+The dashboard instantiates its own `KalshiExchange` at import time (stateless — just credentials + HTTP), same pattern as the current direct imports.
 
 ### Pipeline Stages
 
@@ -170,17 +217,30 @@ Plain functions. No classes, no globals. Each takes config + inputs, returns out
 ```python
 def fetch_markets(config, exchange) -> list[dict]
 def score_signal(config, market) -> Signal
-def filter_signals(config, signals, held_positions) -> list[Signal]
+def filter_signals(config, signals, held_positions, resting_tickers) -> list[Signal]
 def sanity_check(config, signal) -> bool
 def size_position(config, signal, bankroll, circuit_breaker, cycle_state) -> SizeResult
 def execute_trade(config, signal, size, exchange, paper_mode) -> TradeResult
 ```
 
+Stage details:
+
+**score_signal** — Calls `config.forecast_fn`, computes edge/confidence, promotes typed fields (ticker, yes_bid, yes_ask, lat, lon, days_ahead) from the raw market dict into the Signal dataclass.
+
+**filter_signals** — Applies in order: (1) edge gate (using `config.sameday_overrides` when `signal.days_ahead == 0`), (2) confidence gate, (3) liquidity gate (volume/OI minimum), (4) re-entry cooldown (recently sold tickers from trades.db), (5) resting order dedup (skip if ticker in `resting_tickers`), (6) cross-contract consistency (temp only — sorts by rank_score, iterates greedily with accumulator to prevent contradictory bets on same city/date).
+
+**sanity_check** — Returns True if `config.sanity_fn is None`. Otherwise calls `config.sanity_fn(signal)`.
+
+**size_position** — Calls existing `risk/sizer.py:compute_size()` with config's `scan_frac` and `cycle_state.scan_spent`. Applies 2% bankroll hard cap.
+
+**execute_trade** — Determines maker/taker price via `config.pricing_fn`. Checks fee-adjusted profit gate ($0.12 minimum). If `paper_mode`, logs to trades.db without API call. Otherwise calls `config.execute_fn` via exchange adapter.
+
 Cross-cutting concerns handled in stages:
-- Cross-contract consistency check: filter stage (temp only, driven by config)
-- Re-entry cooldown: filter stage (queries recently sold tickers)
+- Cross-contract consistency check: filter stage (temp only — config drives whether this runs)
+- Re-entry cooldown: filter stage (queries recently sold tickers from trades.db)
 - Liquidity gate: filter stage (volume/OI minimum)
-- Fee-adjusted profit gate: execute stage ($0.12 minimum)
+- Resting order dedup: filter stage (skip tickers with existing resting buy orders)
+- Fee-adjusted profit gate: execute stage ($0.12 minimum expected profit)
 - 2% bankroll hard cap: size stage
 - Trailing stops: manage stage
 
@@ -202,7 +262,6 @@ KALSHI_TEMP = MarketConfig(
     confidence_gate=60,
     sameday_overrides={"edge": 0.05, "confidence": 45, "kelly_floor": 0.35},
     sanity_fn=gfs_temp_sanity,
-    budget_key="temp",
     scan_frac=0.10,
     kelly_floor=0.25,
     max_contracts_per_event=10,
@@ -232,7 +291,6 @@ KALSHI_PRECIP = MarketConfig(
     confidence_gate=60,
     sameday_overrides=None,
     sanity_fn=None,
-    budget_key="precip",
     scan_frac=0.10,
     kelly_floor=0.25,
     max_contracts_per_event=10,
@@ -253,16 +311,15 @@ ERCOT = MarketConfig(
     name="ercot",
     display_name="ERCOT Solar",
     exchange="ercot",
-    fetch_fn=scan_all_hubs,
+    fetch_fn=fetch_ercot_markets,       # split from scan_all_hubs (raw hub data only)
     series=ERCOT_HUBS,
     bucket_parser=None,
-    forecast_fn=get_ercot_solar_signal,
+    forecast_fn=get_ercot_solar_signal,  # scoring happens in score_signal stage
     fusion_weights=None,
     edge_gate=0.005,
     confidence_gate=50,
     sameday_overrides=None,
     sanity_fn=None,
-    budget_key="ercot",
     scan_frac=0.10,
     kelly_floor=0.25,
     max_contracts_per_event=3,
@@ -276,16 +333,20 @@ ERCOT = MarketConfig(
 )
 ```
 
+Note: `scan_all_hubs` is split into `fetch_ercot_markets` (returns raw hub data + ERCOT market data) and `get_ercot_solar_signal` (used as `forecast_fn` in the score stage). This preserves the 5-minute cache for ERCOT market data while fitting the two-stage fetch/score pipeline.
+
 ## Migration Plan
 
 ### New Files
 
 | File | Purpose |
 |------|---------|
+| `pipeline/__init__.py` | Package init |
 | `pipeline/config.py` | MarketConfig dataclass + 3 config instances |
 | `pipeline/runner.py` | PipelineRunner — cycle orchestrator |
 | `pipeline/stages.py` | 6 stage functions |
 | `pipeline/types.py` | Signal, CycleState, TradeResult dataclasses |
+| `exchanges/__init__.py` | Package init |
 | `exchanges/kalshi.py` | KalshiExchange — API auth, orders, positions, balance |
 | `exchanges/ercot.py` | ErcotExchange — paper DB, positions, market data |
 
@@ -300,11 +361,12 @@ ERCOT = MarketConfig(
 
 | File | Change |
 |------|--------|
-| `daemon.py` | Instantiate PipelineRunner, call `runner.run_cycle()` |
-| `config.py` | Remove market-type constants that moved into MarketConfig |
-| `kalshi/position_manager.py` | Receive exchange adapter instead of importing from trader |
-| `kalshi/settler.py` | Receive exchange adapter |
-| `dashboard/api.py` | Query exchange adapters instead of importing from trader |
+| `daemon.py` | Instantiate PipelineRunner, call `runner.run_cycle(paper_mode)` |
+| `config.py` | Remove market-type constants that moved into MarketConfig. Keep shared values (PAPER_MODE, FRACTIONAL_KELLY, MAX_POSITIONS_TOTAL, etc.) |
+| `kalshi/position_manager.py` | Receive exchange adapter instead of importing from `kalshi/trader.py` |
+| `kalshi/settler.py` | Receive exchange adapter. Replace `_get` import with `exchange.get_market(ticker)` |
+| `dashboard/api.py` | Instantiate own `KalshiExchange` (stateless). Query via adapter instead of importing from `kalshi/trader.py` |
+| `ercot/hubs.py` | Split `scan_all_hubs` into `fetch_ercot_markets` (raw data) + keep solar signal as separate function |
 
 ### Unchanged Files
 
@@ -320,8 +382,12 @@ ERCOT = MarketConfig(
 | `weather/precip_model.py` | Gamma distribution model |
 | `kalshi/scanner.py` | Market fetching functions stay, configs point to them |
 | `kalshi/pricing.py` | Pricing strategy stays, configs point to it |
-| `ercot/hubs.py` | Hub scanning stays, config points to scan_all_hubs |
 | `ercot/position_manager.py` | Logic stays, gets exchange adapter passed in |
+
+### Out of Scope
+
+- **Polymarket** — Current Polymarket scanning (scanner.py lines 108-197) is effectively deprecated and removed in this migration. Will be added as a fourth MarketConfig when ready.
+- **Structured logging** — Current print-based logging is carried over. Structured logging can be added later as a pipeline-level concern.
 
 ## Testing Strategy
 
@@ -335,10 +401,12 @@ test_stages.py:
   test_filter_sameday_override()
   test_filter_cross_contract()
   test_filter_reentry_cooldown()
+  test_filter_resting_order_dedup()
   test_sanity_check_temp()
   test_sanity_check_precip_skipped()
   test_size_respects_budget()
   test_size_circuit_breaker()
+  test_size_2pct_hard_cap()
   test_execute_paper_mode()
   test_execute_fee_gate()
 ```
@@ -355,16 +423,28 @@ test_pipeline_precip.py:
 
 test_pipeline_ercot.py:
   test_full_cycle_ercot()
+
+test_pipeline_runner.py:
+  test_cross_config_position_limit()
+  test_error_in_one_config_doesnt_abort_others()
+  test_fill_polling_runs_once_per_cycle()
 ```
 
 ### What stays untested (already covered)
 
 The `risk/` and `weather/` modules have existing tests and are not changing.
 
+## Error Handling
+
+- Errors in `score_signal` or `sanity_check` for one signal are caught, logged to `CycleState.errors`, and the signal is skipped. Processing continues.
+- Errors in one config's entire pipeline are caught at the config level. Other configs still run.
+- Exchange adapter errors (API failures, timeouts) are caught in the adapter and returned as error results, not raised.
+- The daemon loop's existing error handling around `run_cycle` remains as a final safety net.
+
 ## Success Criteria
 
 1. Adding a new market type requires only a MarketConfig + adapter, no pipeline changes
-2. Bugs in one market type cannot affect another (no shared mutable state)
+2. Bugs in one market type cannot affect another (no shared mutable state between configs)
 3. Each pipeline stage is testable in isolation with mock inputs
 4. Dashboard and analytics work uniformly across market types
 5. ERCOT stays connected to pipeline improvements
