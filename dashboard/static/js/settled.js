@@ -1,5 +1,5 @@
 // dashboard/static/js/settled.js
-// Settled trades: summary + paginated table
+// Settled trades: summary + paginated grid
 
 const PAGE_SIZE = 10;
 let _currentPage = 1;
@@ -16,6 +16,8 @@ const COLUMNS = [
     { key: 'pnl',     label: 'P&L',     num: true  },
 ];
 
+const COLS_CSS = COLUMNS.map(c => c.num ? 'auto' : '1fr').join(' ');
+
 function fmtTime(isoStr) {
     if (!isoStr) return '\u2014';
     try {
@@ -27,13 +29,11 @@ function fmtTime(isoStr) {
 function renderSummary(summary) {
     const el = document.getElementById('settled-summary');
     if (!el) return;
-
     const wins = summary.win || { count: 0, pnl: 0 };
     const losses = summary.loss || { count: 0, pnl: 0 };
     const total = wins.count + losses.count;
     const hitRate = total > 0 ? (wins.count / total * 100).toFixed(1) : '0.0';
     const netPnl = wins.pnl + losses.pnl;
-
     el.innerHTML = `
         <div class="metric-row">
             <div class="metric-card ${netPnl >= 0 ? 'metric-positive' : 'metric-negative'}">
@@ -55,15 +55,18 @@ function renderSummary(summary) {
         </div>`;
 }
 
-function settledTable(items, page) {
+function settledGrid(items, page) {
     const st = _sortState;
     const headers = COLUMNS.map(c => {
         const arrow = st.key === c.key ? (st.dir === 'asc' ? ' \u2191' : ' \u2193') : '';
-        return `<th${c.num ? ' class="num"' : ''} data-sort-key="${c.key}" style="cursor:pointer;user-select:none">${c.label}${arrow}</th>`;
+        return `<span${c.num ? ' class="num"' : ''} data-sort-key="${c.key}" style="cursor:pointer;user-select:none">${c.label}${arrow}</span>`;
     }).join('');
 
     if (!items || items.length === 0) {
-        return `<div class="table-wrap"><table class="data-table"><thead><tr>${headers}</tr></thead><tbody class="table-empty"><tr><td colspan="${COLUMNS.length}">No settled trades yet</td></tr></tbody></table></div>`;
+        return `<div class="data-grid" style="--cols: ${COLS_CSS}">
+            <div class="dg-head">${headers}</div>
+            <div class="dg-empty">No settled trades yet</div>
+        </div>`;
     }
 
     const sorted = [...items].sort((a, b) => {
@@ -83,16 +86,15 @@ function settledTable(items, page) {
     const rows = slice.map(t => {
         const resultClass = t.outcome === 'win' ? 'val-positive' : 'val-negative';
         const pnlClass = t.pnl > 0 ? 'val-positive' : t.pnl < 0 ? 'val-negative' : 'val-neutral';
-        return `
-        <tr>
-          <td class="mono" style="white-space:nowrap">${fmtTime(t.time)}</td>
-          <td>${t.city}</td>
-          <td>${t.side}</td>
-          <td class="num mono">${t.price}\u00a2</td>
-          <td class="num mono">${t.qty}</td>
-          <td class="${resultClass}">${t.outcome === 'win' ? 'WIN' : 'LOSS'}</td>
-          <td class="num mono ${pnlClass}">${t.pnl >= 0 ? '+' : ''}$${Math.abs(t.pnl).toFixed(2)}</td>
-        </tr>`.trim();
+        return `<div class="dg-row">
+          <span class="mono" data-label="Time" style="white-space:nowrap">${fmtTime(t.time)}</span>
+          <span data-label="City">${t.city}</span>
+          <span data-label="Side">${t.side}</span>
+          <span class="num mono" data-label="Entry">${t.price}\u00a2</span>
+          <span class="num mono" data-label="Qty">${t.qty}</span>
+          <span class="${resultClass}" data-label="Result">${t.outcome === 'win' ? 'WIN' : 'LOSS'}</span>
+          <span class="num mono ${pnlClass}" data-label="P&L">${t.pnl >= 0 ? '+' : ''}$${Math.abs(t.pnl).toFixed(2)}</span>
+        </div>`;
     }).join('\n');
 
     let pagination = '';
@@ -107,16 +109,19 @@ function settledTable(items, page) {
         </div>`;
     }
 
-    return `<div class="table-wrap"><table class="data-table"><thead><tr>${headers}</tr></thead><tbody>${rows}</tbody></table></div>${pagination}`;
+    return `<div class="data-grid" style="--cols: ${COLS_CSS}">
+        <div class="dg-head">${headers}</div>
+        ${rows}
+        ${pagination}
+    </div>`;
 }
 
 function attachHandlers() {
     const container = document.getElementById('settled-table');
     if (!container) return;
-
-    container.querySelectorAll('th[data-sort-key]').forEach(th => {
-        th.addEventListener('click', () => {
-            const key = th.dataset.sortKey;
+    container.querySelectorAll('[data-sort-key]').forEach(el => {
+        el.addEventListener('click', () => {
+            const key = el.dataset.sortKey;
             if (_sortState.key === key) {
                 _sortState = { key, dir: _sortState.dir === 'desc' ? 'asc' : 'desc', abs: false };
             } else {
@@ -127,24 +132,17 @@ function attachHandlers() {
             rerender();
         });
     });
-
     container.querySelectorAll('[data-paginator="settled"] .pagination-btn').forEach(btn => {
         btn.addEventListener('click', () => {
             const page = parseInt(btn.dataset.page);
-            if (!isNaN(page)) {
-                _currentPage = page;
-                rerender();
-            }
+            if (!isNaN(page)) { _currentPage = page; rerender(); }
         });
     });
 }
 
 function rerender() {
     const el = document.getElementById('settled-table');
-    if (el) {
-        el.innerHTML = settledTable(_cachedTrades, _currentPage);
-        attachHandlers();
-    }
+    if (el) { el.innerHTML = settledGrid(_cachedTrades, _currentPage); attachHandlers(); }
 }
 
 function renderSettled(data) {

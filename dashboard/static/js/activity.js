@@ -1,5 +1,5 @@
 // dashboard/static/js/activity.js
-// Activity log: recent trades from trades.db (sortable, paginated)
+// Activity log: recent trades (sortable, paginated grid)
 
 const PAGE_SIZE = 10;
 let _currentPage = 1;
@@ -18,6 +18,8 @@ const COLUMNS = [
     { key: 'pnl',        label: 'P&L',      num: true  },
 ];
 
+const COLS_CSS = COLUMNS.map(c => c.num ? 'auto' : '1fr').join(' ');
+
 function fmtTime(isoStr) {
     if (!isoStr) return '\u2014';
     try {
@@ -35,26 +37,20 @@ function fmtEdge(n) {
     return n >= 0 ? `+${pct}%` : `${pct}%`;
 }
 
-function activityTable(items, page) {
+function activityGrid(items, page) {
     const st = _sortState;
     const headers = COLUMNS.map(c => {
         const arrow = st.key === c.key ? (st.dir === 'asc' ? ' \u2191' : ' \u2193') : '';
-        return `<th${c.num ? ' class="num"' : ''} data-sort-key="${c.key}" style="cursor:pointer;user-select:none">${c.label}${arrow}</th>`;
+        return `<span${c.num ? ' class="num"' : ''} data-sort-key="${c.key}" style="cursor:pointer;user-select:none">${c.label}${arrow}</span>`;
     }).join('');
 
     if (!items || items.length === 0) {
-        return `
-        <div class="table-wrap">
-        <table class="data-table">
-          <thead><tr>${headers}</tr></thead>
-          <tbody class="table-empty">
-            <tr><td colspan="9">No activity yet</td></tr>
-          </tbody>
-        </table>
-        </div>`.trim();
+        return `<div class="data-grid" style="--cols: ${COLS_CSS}">
+            <div class="dg-head">${headers}</div>
+            <div class="dg-empty">No activity yet</div>
+        </div>`;
     }
 
-    // Sort
     const sorted = [...items].sort((a, b) => {
         let va = a[st.key], vb = b[st.key];
         if (va === null || va === undefined) va = st.num ? -Infinity : '';
@@ -89,18 +85,17 @@ function activityTable(items, page) {
         const edgeClass = t.edge > 0 ? 'val-positive' : t.edge < 0 ? 'val-negative' : '';
         const confClass = t.confidence >= 60 ? 'val-positive' : t.confidence >= 40 ? 'val-amber' : t.confidence !== null ? 'val-negative' : '';
 
-        return `
-        <tr>
-          <td class="mono" style="white-space:nowrap">${fmtTime(t.time)}</td>
-          <td>${t.city || t.ticker}</td>
-          <td class="${actionClass}">${sideLabel}</td>
-          <td class="num mono">${t.price}\u00a2</td>
-          <td class="num mono">${t.qty}</td>
-          <td class="num mono ${edgeClass}">${fmtEdge(t.edge)}</td>
-          <td class="num mono ${confClass}">${t.confidence !== null && t.confidence !== undefined ? t.confidence.toFixed(1) : '\u2014'}</td>
-          <td>${outcomeHtml}</td>
-          <td class="num mono">${pnlHtml}</td>
-        </tr>`.trim();
+        return `<div class="dg-row">
+          <span class="mono" data-label="Time" style="white-space:nowrap">${fmtTime(t.time)}</span>
+          <span data-label="City">${t.city || t.ticker}</span>
+          <span class="${actionClass}" data-label="Action">${sideLabel}</span>
+          <span class="num mono" data-label="Price">${t.price}\u00a2</span>
+          <span class="num mono" data-label="Qty">${t.qty}</span>
+          <span class="num mono ${edgeClass}" data-label="Edge">${fmtEdge(t.edge)}</span>
+          <span class="num mono ${confClass}" data-label="Conf">${t.confidence !== null && t.confidence !== undefined ? t.confidence.toFixed(1) : '\u2014'}</span>
+          <span data-label="Outcome">${outcomeHtml}</span>
+          <span class="num mono" data-label="P&L">${pnlHtml}</span>
+        </div>`;
     }).join('\n');
 
     let pagination = '';
@@ -115,22 +110,20 @@ function activityTable(items, page) {
         </div>`;
     }
 
-    return `
-    <div class="table-wrap">
-    <table class="data-table">
-      <thead><tr>${headers}</tr></thead>
-      <tbody>${rows}</tbody>
-    </table>
-    </div>${pagination}`.trim();
+    return `<div class="data-grid" style="--cols: ${COLS_CSS}">
+        <div class="dg-head">${headers}</div>
+        ${rows}
+        ${pagination}
+    </div>`;
 }
 
 function attachHandlers() {
     const container = document.getElementById('activity-table');
     if (!container) return;
 
-    container.querySelectorAll('th[data-sort-key]').forEach(th => {
-        th.addEventListener('click', () => {
-            const key = th.dataset.sortKey;
+    container.querySelectorAll('[data-sort-key]').forEach(el => {
+        el.addEventListener('click', () => {
+            const key = el.dataset.sortKey;
             if (_sortState.key === key) {
                 _sortState = { key, dir: _sortState.dir === 'desc' ? 'asc' : 'desc', abs: false };
             } else {
@@ -156,7 +149,7 @@ function attachHandlers() {
 function rerender() {
     const el = document.getElementById('activity-table');
     if (el) {
-        el.innerHTML = activityTable(_cachedActivity, _currentPage);
+        el.innerHTML = activityGrid(_cachedActivity, _currentPage);
         attachHandlers();
     }
 }

@@ -965,31 +965,29 @@ section > h2 {
   overflow: hidden;
 }
 
-.table-wrap {
-  width: 100%;
-  overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
-  border-radius: 6px;
-  border: 1px solid #2a3a4e;
+.data-grid {
+  display: grid;
+  grid-template-columns: var(--cols, repeat(5, 1fr));
   background: #1a2332;
+  border: 1px solid #2a3a4e;
+  border-radius: 6px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
-  margin-bottom: 16px;
-}
-
-.data-table {
-  width: 100%;
-  border-collapse: collapse;
+  overflow: hidden;
   font-size: 12px;
   font-family: "Roboto", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   color: rgba(255, 255, 255, 0.6);
+  margin-bottom: 16px;
 }
-.data-table thead tr {
+
+.dg-head {
+  display: grid;
+  grid-template-columns: subgrid;
+  grid-column: 1/-1;
   background: #1f2b3d;
   border-bottom: 2px solid #2a3a4e;
 }
-.data-table thead th {
+.dg-head > span {
   padding: 12px 16px;
-  text-align: left;
   font-weight: 700;
   font-size: 11px;
   color: rgba(255, 255, 255, 0.45);
@@ -998,89 +996,72 @@ section > h2 {
   white-space: nowrap;
   user-select: none;
 }
-.data-table thead th.num, .data-table thead th[data-align=right] {
+.dg-head > span.num {
   text-align: right;
 }
-.data-table thead th[data-sortable] {
+.dg-head > span[data-sort-key] {
   cursor: pointer;
   transition: color 0.12s ease;
 }
-.data-table thead th[data-sortable]:hover {
+.dg-head > span[data-sort-key]:hover {
   color: rgba(255, 255, 255, 0.92);
 }
-.data-table thead th[data-sortable]::after {
-  content: " ↕";
-  opacity: 0.4;
-  font-size: 10px;
-}
-.data-table thead th[data-sortable][data-sort=asc]::after {
-  content: " ↑";
-  opacity: 1;
-}
-.data-table thead th[data-sortable][data-sort=desc]::after {
-  content: " ↓";
-  opacity: 1;
-}
-.data-table tbody tr {
+
+.dg-row {
+  display: grid;
+  grid-template-columns: subgrid;
+  grid-column: 1/-1;
   border-bottom: 1px solid rgba(42, 58, 78, 0.5);
   transition: background 0.12s ease;
 }
-.data-table tbody tr:last-child {
+.dg-row:last-of-type {
   border-bottom: none;
 }
-.data-table tbody tr:hover {
+.dg-row:hover {
   background: #1f2b3d;
 }
-.data-table tbody td {
+.dg-row > span {
   padding: 12px 16px;
-  vertical-align: middle;
   line-height: 1.2;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-.data-table tbody td.num, .data-table tbody td[data-align=right] {
+.dg-row > span.num {
   text-align: right;
   font-family: "JetBrains Mono", "Fira Mono", "Cascadia Code", "Courier New", monospace;
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.01em;
 }
-.data-table tbody td.mono-cell {
+.dg-row > span.mono {
   font-family: "JetBrains Mono", "Fira Mono", "Cascadia Code", "Courier New", monospace;
   font-variant-numeric: tabular-nums;
-}
-.data-table tfoot tr {
-  background: #1f2b3d;
-  border-top: 2px solid #2a3a4e;
-}
-.data-table tfoot td {
-  padding: 12px 16px;
-  font-weight: 700;
-  color: rgba(255, 255, 255, 0.92);
-  font-family: "JetBrains Mono", "Fira Mono", "Cascadia Code", "Courier New", monospace;
-  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
 }
 
-.pnl-positive {
+.dg-row.pnl-positive {
   background: rgba(16, 185, 129, 0.06) !important;
 }
-.pnl-positive td {
+.dg-row.pnl-positive > span {
   color: rgba(255, 255, 255, 0.92);
 }
-.pnl-positive td:first-child {
+.dg-row.pnl-positive > span:first-child {
   border-left: 2px solid rgba(16, 185, 129, 0.5);
 }
-.pnl-positive:hover {
+.dg-row.pnl-positive:hover {
   background: rgba(16, 185, 129, 0.1) !important;
 }
 
-.pnl-negative {
+.dg-row.pnl-negative {
   background: rgba(239, 68, 68, 0.06) !important;
 }
-.pnl-negative td {
+.dg-row.pnl-negative > span {
   color: rgba(255, 255, 255, 0.92);
 }
-.pnl-negative td:first-child {
+.dg-row.pnl-negative > span:first-child {
   border-left: 2px solid rgba(239, 68, 68, 0.4);
 }
-.pnl-negative:hover {
+.dg-row.pnl-negative:hover {
   background: rgba(239, 68, 68, 0.1) !important;
 }
 
@@ -1131,7 +1112,8 @@ section > h2 {
   color: rgba(255, 255, 255, 0.45);
 }
 
-.table-empty td {
+.dg-empty {
+  grid-column: 1/-1;
   padding: 32px 16px;
   text-align: center;
   color: rgba(255, 255, 255, 0.45);
@@ -1139,37 +1121,8 @@ section > h2 {
   font-size: 12px;
 }
 
-.data-table--compact tbody td,
-.data-table--compact thead th {
-  padding: 8px 12px;
-}
-
-.table-card {
-  background: #1a2332;
-  border: 1px solid #2a3a4e;
-  border-radius: 6px;
-  overflow: hidden;
-  margin-bottom: 16px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
-}
-.table-card .data-table {
-  margin: 0;
-}
-.table-card .table-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 12px 20px;
-  background: #1f2b3d;
-  border-bottom: 1px solid #2a3a4e;
-}
-.table-card .table-header .table-title {
-  font-weight: 700;
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.6);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
+.data-grid > .pagination {
+  grid-column: 1/-1;
 }
 
 .pagination {
@@ -1181,13 +1134,6 @@ section > h2 {
   background: #1f2b3d;
   border-top: 1px solid #2a3a4e;
   font-size: 12px;
-}
-@media (max-width: 600px) {
-  .pagination {
-    flex-direction: column;
-    gap: 8px;
-    align-items: flex-start;
-  }
 }
 
 .pagination-info {
@@ -1226,6 +1172,58 @@ section > h2 {
   cursor: not-allowed;
 }
 
+@media (max-width: 600px) {
+  .data-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+  }
+  .dg-head {
+    display: none;
+  }
+  .dg-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2px 16px;
+    padding: 12px 16px;
+    border-bottom: 1px solid rgba(42, 58, 78, 0.5);
+  }
+  .dg-row:last-of-type {
+    border-bottom: none;
+  }
+  .dg-row > span {
+    padding: 4px 0;
+  }
+  .dg-row > span::before {
+    content: attr(data-label);
+    display: block;
+    font-size: 10px;
+    color: rgba(255, 255, 255, 0.45);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-weight: 500;
+    font-family: "Roboto", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    margin-bottom: 1px;
+  }
+  .dg-row > span.num {
+    text-align: left;
+  }
+  .dg-row.pnl-positive > span:first-child,
+  .dg-row.pnl-negative > span:first-child {
+    border-left: none;
+  }
+  .dg-row.pnl-positive {
+    border-left: 3px solid rgba(16, 185, 129, 0.5);
+  }
+  .dg-row.pnl-negative {
+    border-left: 3px solid rgba(239, 68, 68, 0.4);
+  }
+  .pagination {
+    flex-direction: column;
+    gap: 8px;
+    align-items: flex-start;
+  }
+}
 .risk-footer {
   background: #111827;
   border-top: 1px solid #2a3a4e;

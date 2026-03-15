@@ -101,22 +101,23 @@ function renderRecommendations(data) {
 
     const rows = data.map(r => {
         const confClass = r.confidence === 'high' ? 'val-negative' : r.confidence === 'medium' ? 'val-amber' : 'val-neutral';
-        return `<tr>
-            <td>${r.param_name}</td>
-            <td class="mono">${r.current_value}</td>
-            <td class="mono val-positive">${r.suggested_value}</td>
-            <td>${r.reason}</td>
-            <td class="num">${r.sample_size}</td>
-            <td class="${confClass}">${r.confidence.toUpperCase()}</td>
-        </tr>`;
+        return `<div class="dg-row">
+            <span data-label="Parameter">${r.param_name}</span>
+            <span class="mono" data-label="Current">${r.current_value}</span>
+            <span class="mono val-positive" data-label="Suggested">${r.suggested_value}</span>
+            <span data-label="Reason">${r.reason}</span>
+            <span class="num" data-label="Trades">${r.sample_size}</span>
+            <span class="${confClass}" data-label="Priority">${r.confidence.toUpperCase()}</span>
+        </div>`;
     }).join('');
 
     el.innerHTML = `
-        <div class="table-wrap">
-        <table class="data-table">
-            <thead><tr><th>Parameter</th><th>Current</th><th>Suggested</th><th>Reason</th><th class="num">Trades</th><th>Priority</th></tr></thead>
-            <tbody>${rows}</tbody>
-        </table>
+        <div class="data-grid" style="--cols: 1fr auto auto 2fr auto auto">
+            <div class="dg-head">
+                <span>Parameter</span><span>Current</span><span>Suggested</span>
+                <span>Reason</span><span class="num">Trades</span><span>Priority</span>
+            </div>
+            ${rows}
         </div>`;
 }
 
@@ -160,19 +161,19 @@ function renderActions(data) {
         const rows = recent.map(r => {
             const actionClass = r.action === 'fortify' ? 'val-positive' : r.action === 'exit' ? 'val-negative' : '';
             const time = r.timestamp ? r.timestamp.slice(5, 16).replace('T', ' ') : '\u2014';
-            return `<tr>
-                <td class="mono" style="white-space:nowrap">${time}</td>
-                <td>${r.city || r.ticker}</td>
-                <td class="${actionClass}">${r.action.toUpperCase()}</td>
-                <td>${r.reason}</td>
-            </tr>`;
+            return `<div class="dg-row">
+                <span class="mono" data-label="Time" style="white-space:nowrap">${time}</span>
+                <span data-label="City">${r.city || r.ticker}</span>
+                <span class="${actionClass}" data-label="Action">${r.action.toUpperCase()}</span>
+                <span data-label="Reason">${r.reason}</span>
+            </div>`;
         }).join('');
 
-        html += `<div class="table-wrap" style="margin-top:16px;">
-            <table class="data-table">
-                <thead><tr><th>Time</th><th>City</th><th>Action</th><th>Reason</th></tr></thead>
-                <tbody>${rows}</tbody>
-            </table>
+        html += `<div class="data-grid" style="--cols: auto 1fr auto 2fr">
+            <div class="dg-head">
+                <span>Time</span><span>City</span><span>Action</span><span>Reason</span>
+            </div>
+            ${rows}
         </div>`;
     }
 

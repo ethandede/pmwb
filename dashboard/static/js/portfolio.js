@@ -19,6 +19,8 @@ const COLUMNS = [
     { key: 'if_lose',       label: 'If Lose',  num: true  },
 ];
 
+const COLS_CSS = COLUMNS.map(c => c.num ? 'auto' : '1fr').join(' ');
+
 function fmtDollar(n, signed = false) {
     const abs = Math.abs(n).toFixed(2);
     if (signed && n > 0) return `+$${abs}`;
@@ -26,26 +28,20 @@ function fmtDollar(n, signed = false) {
     return `$${abs}`;
 }
 
-function buildTable(positions, page, sortState, paginatorId) {
+function buildGrid(positions, page, sortState, paginatorId) {
     const st = sortState;
     const headers = COLUMNS.map(c => {
         const arrow = st.key === c.key ? (st.dir === 'asc' ? ' \u2191' : ' \u2193') : '';
-        return `<th${c.num ? ' class="num"' : ''} data-sort-key="${c.key}" style="cursor:pointer;user-select:none">${c.label}${arrow}</th>`;
+        return `<span${c.num ? ' class="num"' : ''} data-sort-key="${c.key}" style="cursor:pointer;user-select:none">${c.label}${arrow}</span>`;
     }).join('');
 
     if (!positions || positions.length === 0) {
-        return `
-        <div class="table-wrap">
-        <table class="data-table">
-          <thead><tr>${headers}</tr></thead>
-          <tbody class="table-empty">
-            <tr><td colspan="${COLUMNS.length}">No open positions</td></tr>
-          </tbody>
-        </table>
-        </div>`.trim();
+        return `<div class="data-grid" style="--cols: ${COLS_CSS}">
+            <div class="dg-head">${headers}</div>
+            <div class="dg-empty">No open positions</div>
+        </div>`;
     }
 
-    // Enrich with computed fields for sorting
     positions.forEach(p => {
         p.bet = `${p.side} ${p.contract || ''}`.trim();
         const cost = p.entry || 0;
@@ -53,7 +49,6 @@ function buildTable(positions, page, sortState, paginatorId) {
         p.if_lose = cost > 0 ? -(cost * p.qty) : 0;
     });
 
-    // Sort
     const sorted = [...positions].sort((a, b) => {
         let va = a[st.key], vb = b[st.key];
         if (va === null || va === undefined) va = typeof vb === 'string' ? '' : -Infinity;
@@ -72,16 +67,16 @@ function buildTable(positions, page, sortState, paginatorId) {
     const rows = slice.map(p => {
         const settles = p.settles ? p.settles.slice(5) : '\u2014';
         const fcast = p.forecast_high !== null ? `${p.forecast_high}\u00b0` : '\u2014';
-        return `
-        <tr class="${p.likely === 'WIN' ? 'pnl-positive' : p.likely === 'LOSS' ? 'pnl-negative' : ''}">
-          <td class="mono">${settles}</td>
-          <td>${p.city}</td>
-          <td class="mono">${p.bet}</td>
-          <td class="num mono">${fcast}</td>
-          <td class="${p.likely === 'WIN' ? 'val-positive' : p.likely === 'LOSS' ? 'val-negative' : ''}">${p.likely || '\u2014'}</td>
-          <td class="num mono val-positive">+${fmtDollar(p.if_win)}</td>
-          <td class="num mono val-negative">${fmtDollar(p.if_lose)}</td>
-        </tr>`.trim();
+        const rowClass = p.likely === 'WIN' ? 'pnl-positive' : p.likely === 'LOSS' ? 'pnl-negative' : '';
+        return `<div class="dg-row ${rowClass}">
+          <span class="mono" data-label="Event">${settles}</span>
+          <span data-label="City">${p.city}</span>
+          <span class="mono" data-label="Bet">${p.bet}</span>
+          <span class="num mono" data-label="Fcast">${fcast}</span>
+          <span class="${p.likely === 'WIN' ? 'val-positive' : p.likely === 'LOSS' ? 'val-negative' : ''}" data-label="Likely">${p.likely || '\u2014'}</span>
+          <span class="num mono val-positive" data-label="If Win">+${fmtDollar(p.if_win)}</span>
+          <span class="num mono val-negative" data-label="If Lose">${fmtDollar(p.if_lose)}</span>
+        </div>`;
     }).join('\n');
 
     let pagination = '';
@@ -96,20 +91,18 @@ function buildTable(positions, page, sortState, paginatorId) {
         </div>`;
     }
 
-    return `
-    <div class="table-wrap">
-    <table class="data-table">
-      <thead><tr>${headers}</tr></thead>
-      <tbody>${rows}</tbody>
-    </table>
-    </div>${pagination}`.trim();
+    return `<div class="data-grid" style="--cols: ${COLS_CSS}">
+        <div class="dg-head">${headers}</div>
+        ${rows}
+        ${pagination}
+    </div>`;
 }
 
 function attachSortHandlers(container, sortState, onSort) {
     if (!container) return;
-    container.querySelectorAll('th[data-sort-key]').forEach(th => {
-        th.addEventListener('click', () => {
-            const key = th.dataset.sortKey;
+    container.querySelectorAll('[data-sort-key]').forEach(el => {
+        el.addEventListener('click', () => {
+            const key = el.dataset.sortKey;
             if (sortState.key === key) {
                 sortState.dir = sortState.dir === 'desc' ? 'asc' : 'desc';
             } else {
@@ -136,7 +129,7 @@ function attachPaginationHandlers(container, paginatorId, onPage) {
 function rerenderPaper() {
     const el = document.getElementById('paper-positions-table');
     if (el) {
-        el.innerHTML = buildTable(_cachedPositions, _currentPage, _sortState, 'paper-positions');
+        el.innerHTML = buildGrid(_cachedPositions, _currentPage, _sortState, 'paper-positions');
         attachSortHandlers(el, _sortState, () => { _currentPage = 1; rerenderPaper(); });
         attachPaginationHandlers(el, 'paper-positions', (p) => { _currentPage = p; rerenderPaper(); });
     }
@@ -145,7 +138,7 @@ function rerenderPaper() {
 function rerenderLive() {
     const el = document.getElementById('live-positions-table');
     if (el) {
-        el.innerHTML = buildTable(_cachedLivePositions, _liveCurrentPage, _liveSortState, 'live-positions');
+        el.innerHTML = buildGrid(_cachedLivePositions, _liveCurrentPage, _liveSortState, 'live-positions');
         attachSortHandlers(el, _liveSortState, () => { _liveCurrentPage = 1; rerenderLive(); });
         attachPaginationHandlers(el, 'live-positions', (p) => { _liveCurrentPage = p; rerenderLive(); });
     }
@@ -155,32 +148,26 @@ function renderPortfolio(data) {
     const mode = data.mode || 'LIVE';
     const livePositions = data.live_positions || [];
     const paperPositions = data.paper_positions || [];
-    // Fall back to open_positions for back-compat
     const openPositions = data.open_positions || [];
 
     const container = document.getElementById('open-positions-table');
     if (!container) return;
 
     if (mode === 'PAPER') {
-        // Paper mode: show both sections
         _cachedPositions = paperPositions.length > 0 ? paperPositions : openPositions;
         _cachedLivePositions = livePositions;
         _currentPage = 1;
         _liveCurrentPage = 1;
 
         let html = '';
-
-        // Live positions settling section (only if there are real positions)
         if (livePositions.length > 0) {
             html += `<div class="positions-section">
-                <h3 class="positions-section-label">Live Positions — Settling <span class="positions-count">${livePositions.length}</span></h3>
+                <h3 class="positions-section-label">Live Positions \u2014 Settling <span class="positions-count">${livePositions.length}</span></h3>
                 <p class="section-desc">Real positions placed before paper mode. Will clear once Kalshi settles them.</p>
                 <div id="live-positions-table"></div>
             </div>
             <hr class="we-divider">`;
         }
-
-        // Paper positions section
         html += `<div class="positions-section">
             <h3 class="positions-section-label">Paper Positions <span class="positions-count">${_cachedPositions.length}</span></h3>
             <div id="paper-positions-table"></div>
@@ -190,10 +177,8 @@ function renderPortfolio(data) {
         if (livePositions.length > 0) rerenderLive();
         rerenderPaper();
     } else {
-        // Live mode: single section (original behavior)
         _cachedPositions = openPositions;
         _currentPage = 1;
-
         container.innerHTML = `<div id="paper-positions-table"></div>`;
         rerenderPaper();
     }

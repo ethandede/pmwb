@@ -1,151 +1,111 @@
 // ============================================================
-// _tables.scss — Data tables, P&L tinting, row interactions
+// _tables.scss — CSS Grid data grids, mobile card layout
 // ============================================================
 
 @use 'variables' as *;
 @use 'sass:color';
 
 // ------------------------------------
-// Table wrapper (horizontal scroll)
+// Data grid container
 // ------------------------------------
-.table-wrap {
-  width: 100%;
-  overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
-  border-radius: $card-radius;
-  border: 1px solid $border-subtle;
+.data-grid {
+  display: grid;
+  grid-template-columns: var(--cols, repeat(5, 1fr));
   background: $bg-card;
+  border: 1px solid $border-subtle;
+  border-radius: $card-radius;
   box-shadow: $shadow-card;
+  overflow: hidden;
+  font-size: $font-size-sm;
+  font-family: $font-body;
+  color: $text-secondary;
   margin-bottom: $sp-4;
 }
 
 // ------------------------------------
-// Base table styles
+// Header row
 // ------------------------------------
-.data-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: $font-size-sm;
-  font-family: $font-body;
-  color: $text-secondary;
+.dg-head {
+  display: grid;
+  grid-template-columns: subgrid;
+  grid-column: 1 / -1;
+  background: $bg-elevated;
+  border-bottom: 2px solid $border-subtle;
 
-  // ----------------------------------
-  // Header
-  // ----------------------------------
-  thead {
-    tr {
-      background: $bg-elevated;
-      border-bottom: 2px solid $border-subtle;
+  > span {
+    padding: $sp-3 $sp-4;
+    font-weight: 700;
+    font-size: $font-size-xs;
+    color: $text-muted;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    white-space: nowrap;
+    user-select: none;
+
+    &.num {
+      text-align: right;
     }
 
-    th {
-      padding: $sp-3 $sp-4;
-      text-align: left;
-      font-weight: 700;
-      font-size: $font-size-xs;
-      color: $text-muted;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      white-space: nowrap;
-      user-select: none;
-
-      // Numeric columns — right-align
-      &.num,
-      &[data-align="right"] {
-        text-align: right;
-      }
-
-      // Sortable hint
-      &[data-sortable] {
-        cursor: pointer;
-        transition: color $transition-fast;
-
-        &:hover {
-          color: $text-primary;
-        }
-
-        &::after {
-          content: ' ↕';
-          opacity: 0.4;
-          font-size: 10px;
-        }
-
-        &[data-sort="asc"]::after  { content: ' ↑'; opacity: 1; }
-        &[data-sort="desc"]::after { content: ' ↓'; opacity: 1; }
-      }
-    }
-  }
-
-  // ----------------------------------
-  // Body rows
-  // ----------------------------------
-  tbody {
-    tr {
-      border-bottom: 1px solid rgba($border-subtle, 0.5);
-      transition: background $transition-fast;
-
-      &:last-child {
-        border-bottom: none;
-      }
+    &[data-sort-key] {
+      cursor: pointer;
+      transition: color $transition-fast;
 
       &:hover {
-        background: $bg-elevated;
+        color: $text-primary;
       }
-    }
-
-    td {
-      padding: $sp-3 $sp-4;
-      vertical-align: middle;
-      line-height: $line-height-tight;
-
-      // Numeric cells
-      &.num,
-      &[data-align="right"] {
-        text-align: right;
-        font-family: $font-mono;
-        font-variant-numeric: tabular-nums;
-        letter-spacing: 0.01em;
-      }
-
-      // Monospace override
-      &.mono-cell {
-        font-family: $font-mono;
-        font-variant-numeric: tabular-nums;
-      }
-    }
-  }
-
-  // ----------------------------------
-  // Footer (totals row)
-  // ----------------------------------
-  tfoot {
-    tr {
-      background: $bg-elevated;
-      border-top: 2px solid $border-subtle;
-    }
-
-    td {
-      padding: $sp-3 $sp-4;
-      font-weight: 700;
-      color: $text-primary;
-      font-family: $font-mono;
-      font-variant-numeric: tabular-nums;
     }
   }
 }
 
 // ------------------------------------
-// P&L tinting — applied to <tr>
+// Data row
 // ------------------------------------
-.pnl-positive {
-  background: rgba($brand-teal, 0.06) !important;
+.dg-row {
+  display: grid;
+  grid-template-columns: subgrid;
+  grid-column: 1 / -1;
+  border-bottom: 1px solid rgba($border-subtle, 0.5);
+  transition: background $transition-fast;
 
-  td {
-    color: $text-primary;
+  &:last-of-type {
+    border-bottom: none;
   }
 
-  // Left accent bar
-  td:first-child {
+  &:hover {
+    background: $bg-elevated;
+  }
+
+  > span {
+    padding: $sp-3 $sp-4;
+    line-height: $line-height-tight;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+
+    &.num {
+      text-align: right;
+      font-family: $font-mono;
+      font-variant-numeric: tabular-nums;
+      letter-spacing: 0.01em;
+    }
+
+    &.mono {
+      font-family: $font-mono;
+      font-variant-numeric: tabular-nums;
+      letter-spacing: 0.01em;
+    }
+  }
+}
+
+// ------------------------------------
+// P&L row tinting
+// ------------------------------------
+.dg-row.pnl-positive {
+  background: rgba($brand-teal, 0.06) !important;
+
+  > span { color: $text-primary; }
+
+  > span:first-child {
     border-left: 2px solid rgba($brand-teal, 0.5);
   }
 
@@ -154,14 +114,12 @@
   }
 }
 
-.pnl-negative {
+.dg-row.pnl-negative {
   background: rgba($brand-red, 0.06) !important;
 
-  td {
-    color: $text-primary;
-  }
+  > span { color: $text-primary; }
 
-  td:first-child {
+  > span:first-child {
     border-left: 2px solid rgba($brand-red, 0.4);
   }
 
@@ -171,7 +129,7 @@
 }
 
 // ------------------------------------
-// P&L value colouring — applied to <td>
+// P&L value colouring
 // ------------------------------------
 .val-positive {
   color: $brand-teal !important;
@@ -188,7 +146,7 @@
 }
 
 // ------------------------------------
-// Status pill inside a table cell
+// Status pill
 // ------------------------------------
 .status-pill {
   display: inline-flex;
@@ -210,65 +168,24 @@
 }
 
 // ------------------------------------
-// Empty table state
+// Empty state
 // ------------------------------------
-.table-empty {
-  td {
-    padding: $sp-8 $sp-4;
-    text-align: center;
-    color: $text-muted;
-    font-style: italic;
-    font-size: $font-size-sm;
-  }
+.dg-empty {
+  grid-column: 1 / -1;
+  padding: $sp-8 $sp-4;
+  text-align: center;
+  color: $text-muted;
+  font-style: italic;
+  font-size: $font-size-sm;
 }
 
 // ------------------------------------
-// Compact density modifier
+// Pagination (inside grid, spans all columns)
 // ------------------------------------
-.data-table--compact {
-  tbody td,
-  thead th {
-    padding: $sp-2 $sp-3;
-  }
+.data-grid > .pagination {
+  grid-column: 1 / -1;
 }
 
-// ------------------------------------
-// Table inside a card (no separate wrapper border needed)
-// ------------------------------------
-.table-card {
-  background: $bg-card;
-  border: 1px solid $border-subtle;
-  border-radius: $card-radius;
-  overflow: hidden;
-  margin-bottom: $sp-4;
-  box-shadow: $shadow-card;
-
-  .data-table {
-    margin: 0;
-  }
-
-  .table-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: $sp-4;
-    padding: $sp-3 $sp-5;
-    background: $bg-elevated;
-    border-bottom: 1px solid $border-subtle;
-
-    .table-title {
-      font-weight: 700;
-      font-size: $font-size-sm;
-      color: $text-secondary;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-    }
-  }
-}
-
-// ------------------------------------
-// Pagination
-// ------------------------------------
 .pagination {
   display: flex;
   align-items: center;
@@ -278,12 +195,6 @@
   background: $bg-elevated;
   border-top: 1px solid $border-subtle;
   font-size: $font-size-sm;
-
-  @media (max-width: $bp-sm) {
-    flex-direction: column;
-    gap: $sp-2;
-    align-items: flex-start;
-  }
 }
 
 .pagination-info {
@@ -321,5 +232,71 @@
   &:disabled {
     opacity: 0.3;
     cursor: not-allowed;
+  }
+}
+
+// ------------------------------------
+// Mobile card layout
+// ------------------------------------
+@media (max-width: $bp-sm) {
+  .data-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+  }
+
+  .dg-head {
+    display: none;
+  }
+
+  .dg-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2px $sp-4;
+    padding: $sp-3 $sp-4;
+    border-bottom: 1px solid rgba($border-subtle, 0.5);
+
+    &:last-of-type {
+      border-bottom: none;
+    }
+
+    > span {
+      padding: $sp-1 0;
+
+      &::before {
+        content: attr(data-label);
+        display: block;
+        font-size: 10px;
+        color: $text-muted;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        font-weight: 500;
+        font-family: $font-body;
+        margin-bottom: 1px;
+      }
+
+      &.num {
+        text-align: left;
+      }
+    }
+  }
+
+  .dg-row.pnl-positive > span:first-child,
+  .dg-row.pnl-negative > span:first-child {
+    border-left: none;
+  }
+
+  .dg-row.pnl-positive {
+    border-left: 3px solid rgba($brand-teal, 0.5);
+  }
+
+  .dg-row.pnl-negative {
+    border-left: 3px solid rgba($brand-red, 0.4);
+  }
+
+  .pagination {
+    flex-direction: column;
+    gap: $sp-2;
+    align-items: flex-start;
   }
 }

@@ -1,5 +1,5 @@
 // dashboard/static/js/markets.js
-// Market tables and charts: City | Range | Edge | Signal | Confidence (5 cols, paginated)
+// Market grids and charts: City | Range | Edge | Signal | Confidence (5 cols, paginated)
 
 const PLOTLY_LAYOUT = {
     paper_bgcolor: 'rgba(0,0,0,0)',
@@ -51,27 +51,24 @@ const COLUMNS = [
     { key: 'confidence', label: 'Confidence', num: true  },
 ];
 
-// --- Table builder ---
+const COLS_CSS = COLUMNS.map(c => c.num ? 'auto' : '1fr').join(' ');
 
-function marketsTable(markets, type) {
+// --- Grid builder ---
+
+function marketsGrid(markets, type) {
     const st = _sortState[type] || { key: 'edge', dir: 'desc', abs: true };
     const page = _pageState[type] || 1;
 
     const headers = COLUMNS.map(c => {
         const arrow = st.key === c.key ? (st.dir === 'asc' ? ' \u2191' : ' \u2193') : '';
-        return `<th${c.num ? ' class="num"' : ''} data-sort-key="${c.key}" style="cursor:pointer;user-select:none">${c.label}${arrow}</th>`;
+        return `<span${c.num ? ' class="num"' : ''} data-sort-key="${c.key}" style="cursor:pointer;user-select:none">${c.label}${arrow}</span>`;
     }).join('');
 
     if (!markets || markets.length === 0) {
-        return `
-        <div class="table-wrap">
-        <table class="data-table" data-market-type="${type}">
-          <thead><tr>${headers}</tr></thead>
-          <tbody class="table-empty">
-            <tr><td colspan="5">No markets available</td></tr>
-          </tbody>
-        </table>
-        </div>`.trim();
+        return `<div class="data-grid" data-market-type="${type}" style="--cols: ${COLS_CSS}">
+            <div class="dg-head">${headers}</div>
+            <div class="dg-empty">No markets available</div>
+        </div>`;
     }
 
     // Sort
@@ -90,7 +87,6 @@ function marketsTable(markets, type) {
     const slice = sorted.slice(start, start + PAGE_SIZE);
 
     const rows = slice.map(m => {
-        // Show edge from the perspective of the recommended action
         const absEdge = Math.abs(m.edge);
         const signal = m.edge > 0 ? 'BUY YES' : 'BUY NO';
         const edgeDisplay = `+${(absEdge * 100).toFixed(1)}%`;
@@ -100,14 +96,13 @@ function marketsTable(markets, type) {
         else if (m.confidence >= 40) confClass = 'val-amber';
         else confClass = 'val-negative';
 
-        return `
-        <tr>
-          <td>${m.city}</td>
-          <td class="mono">${m.threshold}</td>
-          <td class="num mono val-positive">${edgeDisplay}</td>
-          <td>${signal}</td>
-          <td class="num mono ${confClass}">${m.confidence.toFixed(1)}</td>
-        </tr>`.trim();
+        return `<div class="dg-row">
+          <span data-label="City">${m.city}</span>
+          <span class="mono" data-label="Range">${m.threshold}</span>
+          <span class="num mono val-positive" data-label="Edge">${edgeDisplay}</span>
+          <span data-label="Signal">${signal}</span>
+          <span class="num mono ${confClass}" data-label="Confidence">${m.confidence.toFixed(1)}</span>
+        </div>`;
     }).join('\n');
 
     let pagination = '';
@@ -122,13 +117,11 @@ function marketsTable(markets, type) {
         </div>`;
     }
 
-    return `
-    <div class="table-wrap">
-    <table class="data-table" data-market-type="${type}">
-      <thead><tr>${headers}</tr></thead>
-      <tbody>${rows}</tbody>
-    </table>
-    </div>${pagination}`.trim();
+    return `<div class="data-grid" data-market-type="${type}" style="--cols: ${COLS_CSS}">
+        <div class="dg-head">${headers}</div>
+        ${rows}
+        ${pagination}
+    </div>`;
 }
 
 // --- Sort + pagination handlers ---
@@ -137,10 +130,9 @@ function attachHandlers(type) {
     const container = document.getElementById(`${type}-table`);
     if (!container) return;
 
-    // Sort headers
-    container.querySelectorAll('th[data-sort-key]').forEach(th => {
-        th.addEventListener('click', () => {
-            const key = th.dataset.sortKey;
+    container.querySelectorAll('[data-sort-key]').forEach(el => {
+        el.addEventListener('click', () => {
+            const key = el.dataset.sortKey;
             const prev = _sortState[type] || { key: 'edge', dir: 'desc', abs: true };
             if (prev.key === key) {
                 _sortState[type] = { key, dir: prev.dir === 'desc' ? 'asc' : 'desc', abs: false };
@@ -153,7 +145,6 @@ function attachHandlers(type) {
         });
     });
 
-    // Pagination buttons
     container.querySelectorAll(`.pagination-btn`).forEach(btn => {
         btn.addEventListener('click', () => {
             const page = parseInt(btn.dataset.page);
@@ -168,7 +159,7 @@ function attachHandlers(type) {
 function rerender(type) {
     const container = document.getElementById(`${type}-table`);
     if (!container || !_marketData[type]) return;
-    container.innerHTML = marketsTable(_marketData[type], type);
+    container.innerHTML = marketsGrid(_marketData[type], type);
     attachHandlers(type);
 }
 
@@ -269,9 +260,7 @@ function edgeHeatmap(history, containerId, labelId) {
 
 // --- Signal summary ---
 
-function updateSignalSummary() {
-    // No longer rendered as separate section — badge per market type is enough
-}
+function updateSignalSummary() {}
 
 // --- Main entry ---
 
@@ -280,23 +269,19 @@ async function renderMarkets(data, type) {
     _marketData[type] = markets;
     _pageState[type] = _pageState[type] || 1;
 
-    // Scan timestamp
     const scanTimeEl = document.getElementById(`${type}-scan-time`);
     if (scanTimeEl) {
         scanTimeEl.textContent = scan_time ? `Last scan: ${fmtScanTime(scan_time)}` : '';
     }
 
-    // Table
     const tableEl = document.getElementById(`${type}-table`);
     if (tableEl) {
-        tableEl.innerHTML = marketsTable(markets, type);
+        tableEl.innerHTML = marketsGrid(markets, type);
         attachHandlers(type);
     }
 
-    // Edge bar chart
     edgeBarChart(markets, `${type}-edge-chart`);
 
-    // Heatmap or scatter
     const heatmapId = `${type}-heatmap-chart`;
     const labelId = `${type}-chart2-label`;
     try {
@@ -316,7 +301,6 @@ async function renderMarkets(data, type) {
         confidenceScatter(markets, heatmapId, labelId);
     }
 
-    // Signal badge
     const tradeworthy = markets.filter(m => m.edge > 0.07 && m.confidence >= 50);
     const badgeEl = document.getElementById(`${type}-signal-badge`);
     if (badgeEl) {
