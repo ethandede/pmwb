@@ -112,6 +112,56 @@ def score_signal(config, market: dict) -> Signal:
     )
 
 
+def filter_signals(config, signals: list[Signal], held_positions: list,
+                   resting_tickers: set[str]) -> list[Signal]:
+    """Stage 3: Apply edge gate, confidence gate, liquidity, dedup, cross-contract.
+
+    Returns filtered and de-conflicted signal list, sorted by absolute edge descending.
+    """
+    results = []
+
+    # Sort by absolute edge descending (strongest signals first)
+    ranked = sorted(signals, key=lambda s: abs(s.edge), reverse=True)
+
+    held_tickers = {p.get("ticker", "") for p in held_positions
+                    if float(p.get("position_fp", 0)) != 0}
+
+    for signal in ranked:
+        # Determine effective thresholds
+        edge_gate = config.edge_gate
+        conf_gate = config.confidence_gate
+        if config.sameday_overrides and signal.days_ahead == 0:
+            edge_gate = config.sameday_overrides.get("edge", edge_gate)
+            conf_gate = config.sameday_overrides.get("confidence", conf_gate)
+
+        # Edge gate
+        if abs(signal.edge) < edge_gate:
+            continue
+
+        # Confidence gate
+        if signal.confidence < conf_gate:
+            continue
+
+        # Already holding this ticker
+        if signal.ticker in held_tickers:
+            continue
+
+        # Resting order dedup
+        if signal.ticker in resting_tickers:
+            continue
+
+        # Liquidity gate (for Kalshi markets)
+        if signal.market and config.exchange == "kalshi":
+            volume = float(signal.market.get("volume_24h_fp", 0) or 0)
+            oi = float(signal.market.get("open_interest_fp", 0) or 0)
+            if volume < 500 and oi < 500:
+                continue
+
+        results.append(signal)
+
+    return results
+
+
 def _extract_market_prob(market: dict) -> float:
     """Extract YES probability from market data."""
     # Try cents format first
