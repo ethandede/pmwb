@@ -1,8 +1,9 @@
 // dashboard/static/js/app.js
-import { renderPortfolio } from './portfolio.js?v=12';
-import { renderMarkets } from './markets.js?v=12';
-import { renderTriptych } from './performance.js?v=12';
-import { renderActivity } from './activity.js?v=12';
+import { renderPortfolio } from './portfolio.js?v=13';
+import { renderMarkets } from './markets.js?v=13';
+import { renderTriptych } from './performance.js?v=13';
+import { renderActivity } from './activity.js?v=13';
+import { renderSettled } from './settled.js?v=13';
 
 let _configCache = null;
 
@@ -45,6 +46,7 @@ async function refreshAll() {
         loadSection('/api/markets/temp', (d) => renderMarkets(d, 'temp'), 'temp-table'),
         loadSection('/api/markets/precip', (d) => renderMarkets(d, 'precip'), 'precip-table'),
         loadSection('/api/activity', renderActivity, 'activity-table'),
+        loadSection('/api/settled', renderSettled, 'settled-table'),
     ]);
 
     btn.classList.remove('spinning');

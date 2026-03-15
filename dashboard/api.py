@@ -295,6 +295,46 @@ async def get_activity(limit: int = Query(50)):
     return result
 
 
+@app.get("/api/settled")
+async def get_settled(limit: int = Query(50)):
+    if not TRADES_DB.exists():
+        return {"summary": {}, "trades": []}
+    conn = sqlite3.connect(str(TRADES_DB))
+    conn.row_factory = sqlite3.Row
+
+    # Summary
+    summary_rows = conn.execute("""
+        SELECT settlement_outcome, COUNT(*) as cnt, COALESCE(SUM(pnl), 0) as total_pnl
+        FROM trades WHERE settlement_outcome IS NOT NULL AND NOT side LIKE 'sell_%'
+        GROUP BY settlement_outcome
+    """).fetchall()
+    summary = {}
+    for r in summary_rows:
+        summary[r["settlement_outcome"]] = {"count": r["cnt"], "pnl": round(r["total_pnl"], 2)}
+
+    # Recent settled trades (entry fills only, not exit fills)
+    rows = conn.execute("""
+        SELECT ticker, city, side, fill_price, fill_qty, fill_time, settlement_outcome, pnl
+        FROM trades WHERE settlement_outcome IN ('win', 'loss') AND fill_qty > 0
+        ORDER BY fill_time DESC LIMIT ?
+    """, (limit,)).fetchall()
+    conn.close()
+
+    trades = []
+    for r in rows:
+        trades.append({
+            "city": ticker_to_city(r["ticker"]) or (r["city"] or "").replace("_", " ").title(),
+            "side": "NO" if "no" in (r["side"] or "") else "YES",
+            "price": r["fill_price"],
+            "qty": r["fill_qty"],
+            "time": r["fill_time"],
+            "outcome": r["settlement_outcome"],
+            "pnl": round(r["pnl"], 2) if r["pnl"] is not None else None,
+        })
+
+    return {"summary": summary, "trades": trades}
+
+
 @app.get("/api/health")
 async def health_check():
     return {"status": "healthy", "time": datetime.now(timezone.utc).isoformat()}
