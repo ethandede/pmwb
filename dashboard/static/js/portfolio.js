@@ -4,14 +4,15 @@
 const PAGE_SIZE = 10;
 let _currentPage = 1;
 let _cachedPositions = [];
-let _sortState = { key: 'pnl', dir: 'asc', abs: false };
+let _sortState = { key: 'settles', dir: 'asc', abs: false };
 
 const COLUMNS = [
-    { key: 'city',  label: 'City',  num: false },
-    { key: 'side',  label: 'Side',  num: false },
-    { key: 'qty',   label: 'Qty',   num: true  },
-    { key: 'entry', label: 'Entry', num: true  },
-    { key: 'pnl',   label: 'P&L',   num: true  },
+    { key: 'settles', label: 'Settles', num: false },
+    { key: 'city',    label: 'City',    num: false },
+    { key: 'side',    label: 'Side',    num: false },
+    { key: 'qty',     label: 'Qty',     num: true  },
+    { key: 'entry',   label: 'Entry',   num: true  },
+    { key: 'pnl',     label: 'P&L',     num: true  },
 ];
 
 function fmtDollar(n, signed = false) {
@@ -33,7 +34,7 @@ function positionsTable(positions, page) {
         <table class="data-table">
           <thead><tr>${headers}</tr></thead>
           <tbody class="table-empty">
-            <tr><td colspan="5">No open positions</td></tr>
+            <tr><td colspan="6">No open positions</td></tr>
           </tbody>
         </table>`.trim();
     }
@@ -55,9 +56,11 @@ function positionsTable(positions, page) {
     const rows = slice.map(p => {
         const pnlClass = p.pnl > 0 ? 'val-positive' : p.pnl < 0 ? 'val-negative' : 'val-neutral';
         const rowClass = p.pnl > 0 ? 'pnl-positive' : p.pnl < 0 ? 'pnl-negative' : '';
+        const settles = p.settles ? p.settles.slice(5) : '\u2014';  // "03-14" from "2026-03-14"
         return `
         <tr class="${rowClass}">
-          <td>${p.city || p.ticker}</td>
+          <td class="mono">${settles}</td>
+          <td>${p.city}</td>
           <td>${p.side}</td>
           <td class="num mono">${p.qty}</td>
           <td class="num mono">${p.entry > 0 ? fmtDollar(p.entry) : '\u2014'}</td>

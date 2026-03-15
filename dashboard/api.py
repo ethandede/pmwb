@@ -101,6 +101,20 @@ async def get_portfolio():
                 cost = cost_basis.get(ticker, 0)
                 pnl = round(exposure - cost, 2) if cost > 0 else 0
                 entry = round(cost / qty, 2) if qty > 0 and cost > 0 else 0
+
+                # Parse settlement date from ticker (e.g. KXHIGHNY-26MAR14 → 2026-03-14)
+                settles = ""
+                parts = ticker.split("-")
+                if len(parts) >= 2:
+                    import re
+                    m = re.match(r"(\d{2})([A-Z]{3})(\d{2})", parts[1])
+                    if m:
+                        yr, mon_str, day = m.groups()
+                        months = {"JAN":"01","FEB":"02","MAR":"03","APR":"04","MAY":"05","JUN":"06",
+                                  "JUL":"07","AUG":"08","SEP":"09","OCT":"10","NOV":"11","DEC":"12"}
+                        mon = months.get(mon_str, "01")
+                        settles = f"20{yr}-{mon}-{day}"
+
                 open_pos.append({
                     "ticker": ticker,
                     "city": ticker_to_city(ticker),
@@ -110,6 +124,7 @@ async def get_portfolio():
                     "value": round(exposure, 2),
                     "pnl": pnl,
                     "fees": round(float(p.get("fees_paid_dollars", 0)), 2),
+                    "settles": settles,
                 })
 
         return {
@@ -206,7 +221,7 @@ async def get_activity(limit: int = Query(50)):
         edge = -raw_edge if raw_edge is not None and is_no else raw_edge
         result.append({
             "ticker": ticker,
-            "city": ticker_to_city(ticker) if not r["city"] else r["city"],
+            "city": ticker_to_city(ticker) or (r["city"] or "").replace("_", " ").title(),
             "action": "SELL" if side_str.startswith("sell") else "BUY",
             "side": "NO" if is_no else "YES",
             "price": r["fill_price"],
