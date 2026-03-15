@@ -6,6 +6,7 @@ cd ~/Projects/polymarket-weather-bot && rsync -avz \
   --exclude '.DS_Store' \
   --exclude 'daemon.pid' \
   --exclude 'logs/' \
+  --exclude 'data/' \
   --exclude '.worktrees' \
   --exclude '.venv' \
   -e 'ssh -i ~/.ssh/hetzner_ed25519' ./ edede@5.78.146.1:~/polymarket-weather-bot/ \
