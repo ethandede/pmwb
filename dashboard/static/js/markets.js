@@ -88,21 +88,22 @@ function marketsTable(markets, type) {
     const slice = sorted.slice(start, start + PAGE_SIZE);
 
     const rows = slice.map(m => {
-        const edgeClass = m.edge > 0 ? 'val-positive' : m.edge < 0 ? 'val-negative' : 'val-neutral';
+        // Show edge from the perspective of the recommended action
+        const absEdge = Math.abs(m.edge);
+        const signal = m.edge > 0 ? 'BUY YES' : 'BUY NO';
+        const edgeDisplay = `+${(absEdge * 100).toFixed(1)}%`;
+
         let confClass;
         if (m.confidence >= 60) confClass = 'val-positive';
         else if (m.confidence >= 40) confClass = 'val-amber';
         else confClass = 'val-negative';
 
-        const signal = m.edge > 0 ? 'BUY YES' : 'SELL YES';
-        const signalClass = m.edge > 0 ? 'val-positive' : 'val-negative';
-
         return `
         <tr>
           <td>${m.city}</td>
           <td class="mono">${m.threshold}</td>
-          <td class="num mono ${edgeClass}">${fmtEdge(m.edge)}</td>
-          <td class="${signalClass}">${signal}</td>
+          <td class="num mono val-positive">${edgeDisplay}</td>
+          <td>${signal}</td>
           <td class="num mono ${confClass}">${m.confidence.toFixed(1)}</td>
         </tr>`.trim();
     }).join('\n');
