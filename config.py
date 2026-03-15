@@ -68,3 +68,22 @@ MAX_ENSEMBLE_HORIZON_DAYS = 16
 
 ANALYTICS_ENABLED = True
 TELEGRAM_DAILY_SCORECARD = True
+
+# --- ERCOT Power Price Signal ---
+ERCOT_HUBS = {
+    "North":     {"city": "Dallas",      "lat": 32.78,  "lon": -96.80,  "hub_name": "HB_NORTH"},
+    "Houston":   {"city": "Houston",     "lat": 29.76,  "lon": -95.37,  "hub_name": "HB_HOUSTON"},
+    "South":     {"city": "San Antonio", "lat": 29.42,  "lon": -98.49,  "hub_name": "HB_SOUTH"},
+    "West":      {"city": "Midland",     "lat": 31.99,  "lon": -102.08, "hub_name": "HB_WEST"},
+    "Panhandle": {"city": "Amarillo",    "lat": 35.22,  "lon": -101.83, "hub_name": "HB_PAN"},
+}
+
+ERCOT_PAPER_BANKROLL = 10_000.0
+ERCOT_PAPER_MODE = True
+ERCOT_MIN_EDGE = 0.5
+ERCOT_MIN_CONFIDENCE = 50
+ERCOT_FORTIFY_EDGE_INCREASE = 0.5
+ERCOT_EXIT_EDGE_DECAY = 0.30
+ERCOT_MAX_POSITIONS_PER_HUB = 3
+ERCOT_MAX_POSITIONS_TOTAL = 10
+ERCOT_POSITION_TTL_HOURS = 24
