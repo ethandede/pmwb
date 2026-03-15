@@ -43,7 +43,8 @@ function buildGrid(positions, page, sortState, paginatorId) {
     }
 
     positions.forEach(p => {
-        p.bet = `${p.side} ${p.contract || ''}`.trim();
+        const typeTag = p.market_type === 'precip' ? '\u{1F327}\uFE0F' : '\u{1F321}\uFE0F';
+        p.bet = `${typeTag} ${p.side} ${p.contract || ''}`.trim();
         const cost = p.entry || 0;
         p.if_win = cost > 0 ? (1.0 - cost) * p.qty : p.qty * 0.50;
         p.if_lose = cost > 0 ? -(cost * p.qty) : 0;

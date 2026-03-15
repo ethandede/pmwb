@@ -232,9 +232,11 @@ async def get_portfolio():
                         else:
                             likely = "WIN" if not in_bucket else "LOSS"
 
+                market_type = "precip" if "RAIN" in ticker.upper() else "temp"
                 open_pos.append({
                     "ticker": ticker,
                     "city": ticker_to_city(ticker),
+                    "market_type": market_type,
                     "side": side_str,
                     "contract": contract,
                     "qty": int(qty),
@@ -300,9 +302,11 @@ async def get_portfolio():
                         likely = ("WIN" if in_bucket else "LOSS") if side_str == "YES" else ("WIN" if not in_bucket else "LOSS")
 
                 fill_cost = (r["fill_price"] or 0) * (r["fill_qty"] or 0) / 100.0
+                market_type = "precip" if "RAIN" in ticker.upper() else "temp"
                 paper_pos.append({
                     "ticker": ticker,
                     "city": ticker_to_city(ticker) or (r["city"] or "").replace("_", " ").title(),
+                    "market_type": market_type,
                     "side": side_str,
                     "contract": contract,
                     "qty": r["fill_qty"] or 0,
