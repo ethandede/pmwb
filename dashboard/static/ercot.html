@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ERCOT Power — Weather Edge</title>
+    <link rel="stylesheet" href="/static/css/main.css?v=22">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Merriweather:wght@700;900&family=Roboto:wght@300;400;500;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <style>
+        .ercot-main { max-width: 1200px; margin: 0 auto; padding: 2rem; }
+        .ercot-header { display: flex; align-items: center; gap: 1rem; margin-bottom: 2rem; }
+        .ercot-header h1 { font-family: 'Merriweather', serif; font-size: 1.6rem; margin: 0; }
+        .ercot-header .back-link { color: var(--we-text-secondary, #888); text-decoration: none; }
+
+        .hub-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 2rem; }
+        .hub-card {
+            background: var(--we-card-bg, #1a1a2e);
+            border-radius: 12px; padding: 1.2rem;
+            border-left: 4px solid #555;
+        }
+        .hub-card.short { border-left-color: #ef4444; }
+        .hub-card.long { border-left-color: #22c55e; }
+        .hub-card .hub-name { font-family: 'JetBrains Mono', monospace; font-size: 0.85rem; color: #888; }
+        .hub-card .hub-city { font-weight: 600; font-size: 1.1rem; margin: 0.3rem 0; }
+        .hub-card .hub-signal { font-family: 'JetBrains Mono', monospace; font-size: 1.3rem; font-weight: 700; }
+        .hub-card .hub-signal.short { color: #ef4444; }
+        .hub-card .hub-signal.long { color: #22c55e; }
+        .hub-card .hub-signal.neutral { color: #888; }
+        .hub-card .hub-detail { font-size: 0.8rem; color: #aaa; margin-top: 0.5rem; }
+
+        .ercot-section { margin-bottom: 2rem; }
+        .ercot-section h2 { font-family: 'Merriweather', serif; font-size: 1.2rem; margin-bottom: 1rem; }
+
+        .ercot-table { width: 100%; border-collapse: collapse; font-family: 'JetBrains Mono', monospace; font-size: 0.85rem; }
+        .ercot-table th { text-align: left; padding: 0.6rem; color: #888; border-bottom: 1px solid #333; font-weight: 500; }
+        .ercot-table td { padding: 0.6rem; border-bottom: 1px solid #222; }
+        .ercot-table .positive { color: #22c55e; }
+        .ercot-table .negative { color: #ef4444; }
+
+        .summary-bar {
+            display: flex; gap: 2rem; padding: 1rem 1.5rem;
+            background: var(--we-card-bg, #1a1a2e); border-radius: 12px; margin-bottom: 2rem;
+            font-family: 'JetBrains Mono', monospace; font-size: 0.9rem;
+        }
+        .summary-bar .label { color: #888; font-size: 0.75rem; }
+        .summary-bar .value { font-weight: 600; font-size: 1.1rem; }
+    </style>
+</head>
+<body class="we-app" style="display: block;">
+    <div class="ercot-main">
+        <div class="ercot-header">
+            <a href="/" class="back-link"><i class="fa-solid fa-arrow-left"></i></a>
+            <h1><i class="fa-solid fa-solar-panel"></i> ERCOT Power Signals</h1>
+            <span style="color: #f59e0b; font-family: 'JetBrains Mono'; font-size: 0.8rem;">PAPER MODE</span>
+        </div>
+
+        <!-- Summary Bar -->
+        <div class="summary-bar" id="summary-bar">
+            <div><div class="label">Open Positions</div><div class="value" id="s-open">--</div></div>
+            <div><div class="label">Exposure</div><div class="value" id="s-exposure">--</div></div>
+            <div><div class="label">Win Rate</div><div class="value" id="s-winrate">--</div></div>
+            <div><div class="label">Net P&L</div><div class="value" id="s-pnl">--</div></div>
+        </div>
+
+        <!-- Hub Signal Cards -->
+        <div class="hub-cards" id="hub-cards"></div>
+
+        <!-- Open Positions -->
+        <div class="ercot-section">
+            <h2>Open Positions</h2>
+            <table class="ercot-table">
+                <thead><tr><th>Hub</th><th>Side</th><th>Size</th><th>Entry $</th><th>Current $</th><th>P&L</th><th>Expires</th></tr></thead>
+                <tbody id="positions-body"></tbody>
+            </table>
+        </div>
+
+        <!-- Trade History -->
+        <div class="ercot-section">
+            <h2>Trade History</h2>
+            <table class="ercot-table">
+                <thead><tr><th>Hub</th><th>Side</th><th>Entry</th><th>Exit</th><th>Size</th><th>P&L</th><th>Reason</th><th>Closed</th></tr></thead>
+                <tbody id="trades-body"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <script>
+    async function loadErcot() {
+        // Signals
+        try {
+            const signals = await (await fetch('/api/ercot/signals')).json();
+            const cards = document.getElementById('hub-cards');
+            cards.innerHTML = '';
+            signals.forEach(s => {
+                const cls = s.signal.toLowerCase();
+                cards.innerHTML += `
+                    <div class="hub-card ${cls}">
+                        <div class="hub-name">${s.hub_name}</div>
+                        <div class="hub-city">${s.hub || ''}</div>
+                        <div class="hub-signal ${cls}">${s.signal} ${s.edge > 0 ? '+' : ''}${s.edge.toFixed(2)}</div>
+                        <div class="hub-detail">
+                            Solrad: ${s.expected_solrad_mjm2?.toFixed(1) || '--'} MJ/m&sup2;<br>
+                            Solar: ${(s.actual_solar_mw || 0).toLocaleString()} MW<br>
+                            Price: $${s.current_ercot_price?.toFixed(1) || '--'}/MWh<br>
+                            Conf: ${s.confidence}%
+                        </div>
+                    </div>`;
+            });
+        } catch(e) { console.error('Signals error', e); }
+
+        // Summary
+        try {
+            const sum = await (await fetch('/api/ercot/summary')).json();
+            document.getElementById('s-open').textContent = sum.open_count;
+            document.getElementById('s-exposure').textContent = `$${sum.open_exposure.toFixed(0)}`;
+            document.getElementById('s-winrate').textContent = `${sum.win_rate.toFixed(1)}%`;
+            const pnlEl = document.getElementById('s-pnl');
+            pnlEl.textContent = `$${sum.total_pnl >= 0 ? '+' : ''}${sum.total_pnl.toFixed(2)}`;
+            pnlEl.style.color = sum.total_pnl >= 0 ? '#22c55e' : '#ef4444';
+        } catch(e) { console.error('Summary error', e); }
+
+        // Positions
+        try {
+            const pos = await (await fetch('/api/ercot/positions')).json();
+            const tbody = document.getElementById('positions-body');
+            tbody.innerHTML = '';
+            pos.forEach(p => {
+                const pnlCls = (p.unrealized_pnl || 0) >= 0 ? 'positive' : 'negative';
+                const expires = p.expires_at ? new Date(p.expires_at).toLocaleString() : '--';
+                tbody.innerHTML += `<tr>
+                    <td>${p.hub_name}</td>
+                    <td>${p.signal}</td>
+                    <td>$${p.size_dollars.toFixed(0)}</td>
+                    <td>$${p.entry_price.toFixed(1)}</td>
+                    <td>$${(p.current_price || p.entry_price).toFixed(1)}</td>
+                    <td class="${pnlCls}">$${(p.unrealized_pnl || 0).toFixed(2)}</td>
+                    <td style="font-size:0.75rem">${expires}</td>
+                </tr>`;
+            });
+            if (!pos.length) tbody.innerHTML = '<tr><td colspan="7" style="color:#666">No open positions</td></tr>';
+        } catch(e) { console.error('Positions error', e); }
+
+        // Trades
+        try {
+            const trades = await (await fetch('/api/ercot/trades?limit=20')).json();
+            const tbody = document.getElementById('trades-body');
+            tbody.innerHTML = '';
+            trades.forEach(t => {
+                const pnlCls = t.pnl >= 0 ? 'positive' : 'negative';
+                const closed = t.closed_at ? new Date(t.closed_at).toLocaleString() : '--';
+                tbody.innerHTML += `<tr>
+                    <td>${t.hub_name}</td>
+                    <td>${t.signal}</td>
+                    <td>$${t.entry_price.toFixed(1)}</td>
+                    <td>$${t.exit_price.toFixed(1)}</td>
+                    <td>$${t.size_dollars.toFixed(0)}</td>
+                    <td class="${pnlCls}">$${t.pnl.toFixed(2)}</td>
+                    <td style="font-size:0.75rem">${t.exit_reason || ''}</td>
+                    <td style="font-size:0.75rem">${closed}</td>
+                </tr>`;
+            });
+            if (!trades.length) tbody.innerHTML = '<tr><td colspan="8" style="color:#666">No trades yet</td></tr>';
+        } catch(e) { console.error('Trades error', e); }
+    }
+
+    loadErcot();
+    setInterval(loadErcot, 60000);
+    </script>
+</body>
+</html>

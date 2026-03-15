@@ -13,6 +13,7 @@ from fastapi.responses import FileResponse
 from dashboard.scan_cache import init_scan_cache_db, get_latest_scan, get_scan_history
 from dashboard.equity_db import init_equity_db, get_equity_curve
 from dashboard.ticker_map import ticker_to_city
+from dashboard.ercot_api import ercot_router
 
 from kalshi.trader import get_balance, get_positions
 
@@ -65,6 +66,7 @@ init_scan_cache_db()
 init_equity_db()
 
 app = FastAPI(title="Weather Edge Dashboard")
+app.include_router(ercot_router)
 
 # Serve static files and index.html
 STATIC_DIR = Path(__file__).parent / "static"
@@ -77,6 +79,14 @@ async def root():
     if index.exists():
         return FileResponse(str(index))
     return {"status": "Frontend not found"}
+
+
+@app.get("/ercot")
+async def ercot_page():
+    ercot_file = STATIC_DIR / "ercot.html"
+    if ercot_file.exists():
+        return FileResponse(str(ercot_file))
+    return {"status": "ERCOT frontend not found"}
 
 
 @app.get("/api/portfolio")
