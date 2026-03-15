@@ -37,7 +37,7 @@ ALERT_THRESHOLD = 0.07
 _pk = os.getenv("PRIVATE_KEY", "")
 PRIVATE_KEY = _pk if _pk.startswith("0x") else f"0x{_pk}" if _pk else None
 FUNDER_ADDRESS = os.getenv("FUNDER_ADDRESS")
-PAPER_MODE = os.getenv("PAPER_MODE", "true").lower() == "true"
+PAPER_MODE = True  # Paper mode until fixes are verified (2026-03-15)
 MAX_POSITION_USD = 50.0
 MAX_SCAN_BUDGET = 60.0
 MAX_ORDER_USD = 20.0
