@@ -121,6 +121,44 @@ def calculate_remaining_month_days(market_close_date: date | None = None) -> int
 MM_TO_INCHES = 1.0 / 25.4
 
 
+def get_observed_mtd_precip(lat: float, lon: float) -> float:
+    """Fetch observed month-to-date precipitation in inches from Open-Meteo archive.
+
+    Returns total precipitation from the 1st of the current month through yesterday.
+    Falls back to 0.0 on any error (conservative — treats as if nothing fell yet).
+    """
+    today = date.today()
+    month_start = today.replace(day=1)
+
+    # If it's the 1st, there's no historical data yet
+    if today.day <= 1:
+        return 0.0
+
+    # Yesterday is the last day with complete data
+    yesterday = today.replace(day=today.day - 1) if today.day > 1 else month_start
+
+    url = (
+        f"https://archive-api.open-meteo.com/v1/archive"
+        f"?latitude={lat}&longitude={lon}"
+        f"&start_date={month_start.isoformat()}"
+        f"&end_date={yesterday.isoformat()}"
+        f"&daily=precipitation_sum"
+        f"&timezone=auto"
+    )
+
+    try:
+        r = http_get(url, timeout=10)
+        r.raise_for_status()
+        data = r.json()
+        daily_precip = data.get("daily", {}).get("precipitation_sum", [])
+        total_mm = sum(v for v in daily_precip if v is not None)
+        total_inches = total_mm * MM_TO_INCHES
+        return round(total_inches, 3)
+    except Exception as e:
+        print(f"  MTD precip fetch error: {e}")
+        return 0.0
+
+
 def get_ensemble_precip(lat: float, lon: float, forecast_days: int | None = None) -> list[float]:
     """Open-Meteo Ensemble — returns per-member precipitation totals in inches.
 

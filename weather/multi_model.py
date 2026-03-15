@@ -454,15 +454,39 @@ def get_ercot_solar_signal(lat: float, lon: float, hours_ahead: int = 24, ercot_
     }
 
 
-# fuse_precip_forecast remains 100% unchanged (it already had good clamping)
 def fuse_precip_forecast(
     lat: float, lon: float, city: str, month: int,
     threshold: float, forecast_days: Optional[int] = None,
     liquidity_score: float = 0.5,
 ) -> Tuple[float, float, dict]:
-    """Precipitation fusion (unchanged)."""
+    """Precipitation fusion with month-to-date adjustment.
+
+    For monthly contracts (forecast_days > 1), fetches observed precipitation
+    so far this month and subtracts from the threshold. This way the ensemble
+    only needs to forecast the REMAINING precipitation, not the full month.
+    """
     weights = dict(PRECIP_FUSION_WEIGHTS)
     details = {}
+
+    # --- MTD adjustment for monthly contracts ---
+    mtd_precip = 0.0
+    effective_threshold = threshold
+    if forecast_days and forecast_days > 1 and threshold > 0:
+        from weather.forecast import get_observed_mtd_precip
+        mtd_precip = get_observed_mtd_precip(lat, lon)
+        effective_threshold = max(0.0, threshold - mtd_precip)
+        details["mtd_observed_inches"] = mtd_precip
+        details["original_threshold"] = threshold
+        details["effective_threshold"] = effective_threshold
+
+    # Short-circuit: if MTD already exceeds threshold, probability is ~1.0
+    if mtd_precip >= threshold and threshold > 0:
+        details["fused_prob"] = 0.99
+        details["models_used"] = 0
+        details["short_circuit"] = "mtd_exceeds_threshold"
+        confidence = 90.0
+        details["confidence"] = confidence
+        return 0.99, confidence, details
 
     cache_key = (round(lat, 2), round(lon, 2), "precip", forecast_days or 1)
     ensemble_precip = fcache.get("ensemble_precip", *cache_key)
@@ -473,7 +497,8 @@ def fuse_precip_forecast(
 
     nws_pop, nws_qpf = get_nws_precip_forecast(lat, lon)
 
-    csgd_result = gamma_precip_prob(ensemble_precip, threshold=threshold, nws_pop=nws_pop)
+    # Use effective_threshold (adjusted for MTD) instead of raw threshold
+    csgd_result = gamma_precip_prob(ensemble_precip, threshold=effective_threshold, nws_pop=nws_pop)
 
     bias_ens, n_ens = get_bias(city, month, "ensemble_precip")
 
@@ -490,10 +515,15 @@ def fuse_precip_forecast(
         "members_count": len(ensemble_precip),
     }
 
+    # NWS: scale QPF by remaining days for monthly contracts
     if threshold <= 0.0:
         noaa_prob = nws_pop
     elif nws_qpf > 0:
-        ratio = min(1.0, nws_qpf / max(threshold, 0.01))
+        # For monthly contracts, QPF is a single-day value.
+        # Scale by remaining days as rough estimate of total remaining precip.
+        remaining_days = forecast_days if forecast_days and forecast_days > 1 else 1
+        estimated_remaining_qpf = nws_qpf * remaining_days * 0.5  # conservative: halve naive scaling
+        ratio = min(1.0, estimated_remaining_qpf / max(effective_threshold, 0.01))
         noaa_prob = nws_pop * ratio
     else:
         noaa_prob = nws_pop * 0.3
