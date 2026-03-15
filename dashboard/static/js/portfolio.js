@@ -40,9 +40,19 @@ function positionsTable(positions, page) {
         </table>`.trim();
     }
 
+    // Enrich with computed fields for sorting
+    positions.forEach(p => {
+        p.bet = `${p.side} ${p.contract || ''}`.trim();
+        const cost = p.entry || 0;
+        p.if_win = cost > 0 ? (1.0 - cost) * p.qty : p.qty * 0.50;
+        p.if_lose = cost > 0 ? -(cost * p.qty) : 0;
+    });
+
     // Sort
     const sorted = [...positions].sort((a, b) => {
         let va = a[st.key], vb = b[st.key];
+        if (va === null || va === undefined) va = typeof vb === 'string' ? '' : -Infinity;
+        if (vb === null || vb === undefined) vb = typeof va === 'string' ? '' : -Infinity;
         if (st.abs) { va = Math.abs(va); vb = Math.abs(vb); }
         if (typeof va === 'string') return st.dir === 'asc' ? va.localeCompare(vb) : vb.localeCompare(va);
         return st.dir === 'asc' ? va - vb : vb - va;
@@ -59,19 +69,15 @@ function positionsTable(positions, page) {
         const rowClass = p.pnl > 0 ? 'pnl-positive' : p.pnl < 0 ? 'pnl-negative' : '';
         const settles = p.settles ? p.settles.slice(5) : '\u2014';
         const fcast = p.forecast_high !== null ? `${p.forecast_high}\u00b0` : '\u2014';
-        const bet = `${p.side} ${p.contract || ''}`.trim();
-        const costPerContract = p.entry || 0;
-        const winProfit = costPerContract > 0 ? (1.0 - costPerContract) * p.qty : p.qty * 0.50;
-        const lossCost = costPerContract > 0 ? costPerContract * p.qty : 0;
         return `
         <tr class="${p.likely === 'WIN' ? 'pnl-positive' : p.likely === 'LOSS' ? 'pnl-negative' : ''}">
           <td class="mono">${settles}</td>
           <td>${p.city}</td>
-          <td class="mono">${bet}</td>
+          <td class="mono">${p.bet}</td>
           <td class="num mono">${fcast}</td>
           <td class="${p.likely === 'WIN' ? 'val-positive' : p.likely === 'LOSS' ? 'val-negative' : ''}">${p.likely || '\u2014'}</td>
-          <td class="num mono val-positive">+${fmtDollar(winProfit)}</td>
-          <td class="num mono val-negative">-${fmtDollar(lossCost)}</td>
+          <td class="num mono val-positive">+${fmtDollar(p.if_win)}</td>
+          <td class="num mono val-negative">${fmtDollar(p.if_lose)}</td>
         </tr>`.trim();
     }).join('\n');
 
