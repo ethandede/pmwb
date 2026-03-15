@@ -90,7 +90,7 @@ def score_signal(config, market: dict) -> Signal:
         edge = model_prob - market_prob
         side = "yes" if edge > 0 else "no"
 
-    price_cents = market.get("yes_ask") or market.get("last_price") or 50
+    price_cents = _extract_price_cents(market)
 
     return Signal(
         ticker=ticker,
@@ -101,10 +101,10 @@ def score_signal(config, market: dict) -> Signal:
         market_prob=market_prob,
         edge=edge,
         confidence=confidence,
-        price_cents=int(price_cents) if isinstance(price_cents, (int, float)) else 50,
+        price_cents=price_cents,
         days_ahead=days_ahead,
-        yes_bid=market.get("yes_bid"),
-        yes_ask=market.get("yes_ask"),
+        yes_bid=market.get("yes_bid") or _dollars_to_cents(market.get("yes_bid_dollars")),
+        yes_ask=market.get("yes_ask") or _dollars_to_cents(market.get("yes_ask_dollars")),
         lat=market.get("_lat") or market.get("lat"),
         lon=market.get("_lon") or market.get("lon"),
         market=market,
@@ -308,6 +308,36 @@ def execute_trade(config, signal: Signal, size, exchange,
         price_cents=price_cents, cost=actual_cost,
         order_id=order_id, status=status, paper=False,
     )
+
+
+def _dollars_to_cents(val) -> int | None:
+    """Convert a dollar-string like '0.0700' to integer cents (7)."""
+    if val is None:
+        return None
+    try:
+        return int(round(float(val) * 100))
+    except (ValueError, TypeError):
+        return None
+
+
+def _extract_price_cents(market: dict) -> int:
+    """Extract YES price in cents from market data, checking all formats."""
+    # Cents format (integer)
+    yes_ask = market.get("yes_ask")
+    if yes_ask is not None and isinstance(yes_ask, (int, float)) and yes_ask > 0:
+        return int(yes_ask)
+    # Dollar-string format (Kalshi public API)
+    yes_ask_d = _dollars_to_cents(market.get("yes_ask_dollars"))
+    if yes_ask_d and yes_ask_d > 0:
+        return yes_ask_d
+    # last_price fallbacks
+    last = market.get("last_price")
+    if last is not None and isinstance(last, (int, float)) and last > 0:
+        return int(last)
+    last_d = _dollars_to_cents(market.get("last_price_dollars"))
+    if last_d and last_d > 0:
+        return last_d
+    return 50
 
 
 def _extract_market_prob(market: dict) -> float:
