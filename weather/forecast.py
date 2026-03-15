@@ -46,7 +46,7 @@ def get_ensemble_max_temps(lat: float, lon: float, days_ahead: int = 1, unit: st
 
     except Exception as e:
         print(f"Open-Meteo Ensemble error: {e}")
-        return [20.0] * 31  # safe fallback
+        return []  # empty — fuse_forecast will use NOAA + HRRR only
 
 
 def get_ensemble_min_temps(lat: float, lon: float, days_ahead: int = 1, unit: str = "f") -> List[float]:
@@ -90,7 +90,7 @@ def get_ensemble_min_temps(lat: float, lon: float, days_ahead: int = 1, unit: st
 
     except Exception as e:
         print(f"Open-Meteo Ensemble min temp error: {e}")
-        return [20.0] * 31  # safe fallback
+        return []  # empty — fuse_forecast will use NOAA + HRRR only
 
 
 def get_bucket_prob(temps: List[float], low: float, high: float | None = None) -> float:

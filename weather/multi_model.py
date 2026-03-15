@@ -279,14 +279,20 @@ def fuse_forecast(
     bias_ens, n_ens = get_bias(city, month, "ensemble")
     if bias_ens and n_ens >= 5:
         ensemble_temps = [round(t - bias_ens, 1) for t in ensemble_temps]
-    ensemble_prob = get_bucket_prob(ensemble_temps, low, high)
-    ensemble_spread = max(ensemble_temps) - min(ensemble_temps) if ensemble_temps else 99
-    ensemble_mean = round(sum(ensemble_temps) / len(ensemble_temps), 1) if ensemble_temps else None
-    details["ensemble"] = {
-        "prob": ensemble_prob, "spread": round(ensemble_spread, 1),
-        "bias": round(bias_ens, 1), "n": n_ens, "temps_count": len(ensemble_temps),
-        "temp": ensemble_mean,
-    }
+    if ensemble_temps:
+        ensemble_prob = get_bucket_prob(ensemble_temps, low, high)
+        ensemble_spread = max(ensemble_temps) - min(ensemble_temps)
+        ensemble_mean = round(sum(ensemble_temps) / len(ensemble_temps), 1)
+        details["ensemble"] = {
+            "prob": ensemble_prob, "spread": round(ensemble_spread, 1),
+            "bias": round(bias_ens, 1), "n": n_ens, "temps_count": len(ensemble_temps),
+            "temp": ensemble_mean,
+        }
+    else:
+        ensemble_prob = None
+        ensemble_spread = 99
+        ensemble_mean = None
+        details["ensemble"] = {"prob": None, "error": "unavailable (429 or no data)"}
 
     # --- Model 2: NOAA NWS (now uses safe bucket prob) ---
     cache_key_noaa = (round(lat, 2), round(lon, 2), temp_type, days_ahead, unit)
