@@ -176,10 +176,12 @@ def execute_kalshi_signal(market: dict, city: str, model_prob: float, market_pro
     side = "yes" if edge > 0 else "no"
 
     # --- Sanity check: does the forecast actually support this trade? ---
+    # Skip for precip markets — sanity check uses temperature data which is wrong for rain
     try:
         from kalshi.scanner import parse_kalshi_bucket
+        market_type = market.get("_market_type", "temp")
         bucket = parse_kalshi_bucket(market)
-        if bucket:
+        if bucket and market_type != "precip":
             low, high = bucket
             # Quick GFS forecast from self-hosted (instant, no rate limit)
             import requests as _req
