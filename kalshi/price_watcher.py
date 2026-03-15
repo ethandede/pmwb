@@ -18,7 +18,9 @@ from typing import Dict, Optional
 
 from rich.console import Console
 
-from kalshi.trader import get_positions, get_balance
+from exchanges.kalshi import KalshiExchange
+
+_kalshi = KalshiExchange()
 from kalshi.scanner import (
     get_kalshi_weather_markets,
     get_kalshi_precip_markets,
@@ -40,7 +42,7 @@ MAX_TICKERS = 80         # max tickers to watch (API budget)
 def _fetch_position_tickers() -> set[str]:
     """Get tickers for all open positions."""
     try:
-        positions = get_positions()
+        positions = _kalshi.get_positions()
         return {
             p.get("ticker", "")
             for p in positions
@@ -90,14 +92,19 @@ def _run_full_cycle(reason: str):
         traceback.print_exc()
 
     try:
-        from scanner import run_scanner
-        run_scanner()
+        from config import PAPER_MODE
+        from pipeline.runner import PipelineRunner
+        from pipeline.config import ALL_CONFIGS
+        from exchanges.ercot import ErcotExchange
+        exchanges = {"kalshi": _kalshi, "ercot": ErcotExchange()}
+        runner = PipelineRunner(ALL_CONFIGS, exchanges)
+        runner.run_cycle(paper_mode=PAPER_MODE)
     except Exception as e:
         console.print(f"[red]Scanner error: {e}[/red]")
         traceback.print_exc()
 
     try:
-        bal = get_balance()
+        bal = _kalshi.get_balance()
         cash = bal.get("balance", 0) / 100.0
         portfolio = bal.get("portfolio_value", 0) / 100.0
         console.print(f"\n[bold]Balance: ${cash:.2f} cash + ${portfolio:.2f} positions = ${cash + portfolio:.2f}[/bold]")
