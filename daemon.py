@@ -45,6 +45,13 @@ def run_cycle(cycle_num: int, runner: PipelineRunner, exchanges: dict):
         console.print(f"[red]Position manager error: {e}[/red]")
         traceback.print_exc()
 
+    try:
+        from ercot.position_manager import run_ercot_manager
+        run_ercot_manager()
+    except Exception as e:
+        console.print(f"[red]ERCOT manager error: {e}[/red]")
+        traceback.print_exc()
+
     # --- Phase 2: New signal scan + entries ---
     console.print(f"\n[bold]Phase 2: Market Scan (Pipeline)[/bold]")
     try:

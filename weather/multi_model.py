@@ -434,15 +434,15 @@ def get_ercot_solar_signal(lat: float, lon: float, hours_ahead: int = 24, ercot_
     # 3. Signal logic (tunable)
     if expected_solrad > 18.0:
         signal = "SHORT"
-        edge = (expected_solrad - 15.0) / 4.0
+        edge = min((expected_solrad - 15.0) / 4.0, 0.99)
     elif expected_solrad < 10.0:
         signal = "LONG"
-        edge = (15.0 - expected_solrad) / 4.0
+        edge = min((15.0 - expected_solrad) / 4.0, 0.99)
     else:
         signal = "NEUTRAL"
         edge = 0.0
 
-    confidence = 70 if abs(edge) > 1.0 else 50
+    confidence = 70 if abs(edge) > 0.50 else 50
 
     return {
         "signal": signal,

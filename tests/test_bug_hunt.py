@@ -26,8 +26,8 @@ class TestErcotNegativeProb:
     If expected_solrad = 25, edge = (25-15)/4 = 2.5, model_prob = -1.5.
     """
 
-    def test_high_solar_produces_large_edge(self):
-        """Solar radiation of 25 MJ/m2 should produce edge > 1."""
+    def test_high_solar_edge_clamped(self):
+        """Solar radiation of 25 MJ/m2 should produce edge clamped to 0.99."""
         from weather.multi_model import get_ercot_solar_signal
 
         with patch("weather.multi_model.http_get") as mock_get, \
@@ -45,7 +45,8 @@ class TestErcotNegativeProb:
                 ercot_data={"price": 40.0, "solar_mw": 15000.0},
             )
 
-            assert result["edge"] > 1.0, f"Expected edge > 1.0, got {result['edge']}"
+            assert result["edge"] <= 0.99, f"Edge should be clamped to 0.99, got {result['edge']}"
+            assert result["edge"] == 0.99, f"Expected max edge 0.99, got {result['edge']}"
             assert result["signal"] == "SHORT"
 
     def test_score_signal_ercot_extreme_solar(self):
