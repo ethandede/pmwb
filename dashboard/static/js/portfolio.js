@@ -7,7 +7,7 @@ let _cachedPositions = [];
 let _sortState = { key: 'settles', dir: 'asc', abs: false };
 
 const COLUMNS = [
-    { key: 'settles', label: 'Settles', num: false },
+    { key: 'settles', label: 'Event', num: false },
     { key: 'city',    label: 'City',    num: false },
     { key: 'side',    label: 'Side',    num: false },
     { key: 'qty',     label: 'Qty',     num: true  },

@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Weather Edge</title>
-    <link rel="stylesheet" href="/static/css/main.css?v=8">
+    <link rel="stylesheet" href="/static/css/main.css?v=10">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Merriweather:wght@700;900&family=Roboto:wght@300;400;500;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
     <script src="https://cdn.plot.ly/plotly-2.35.0.min.js" charset="utf-8"></script>
@@ -50,6 +50,7 @@
         <!-- Activity Log -->
         <section id="activity-section">
             <h2>Activity Log</h2>
+            <p class="section-desc">Recent trades placed by the bot. Edge and confidence from the scan that triggered each trade.</p>
             <div id="activity-table"></div>
         </section>
 
@@ -58,6 +59,7 @@
         <!-- Open Positions -->
         <section id="portfolio-section">
             <h2>Open Positions</h2>
+            <p class="section-desc">Event date is when the weather occurs. Markets settle by ~9 AM ET the following morning.</p>
             <div id="open-positions-table"></div>
         </section>
 
@@ -66,6 +68,7 @@
         <!-- Temperature Markets -->
         <section id="temp-section">
             <h2>Temperature Markets</h2>
+            <p class="section-desc">Daily high/low temperature contracts. Edge = model probability minus market price.</p>
             <div class="scan-meta">
                 <span id="temp-scan-time" class="scan-time"></span>
                 <button class="force-rescan-btn" id="temp-rescan">Force Rescan</button>
@@ -89,6 +92,7 @@
         <!-- Precipitation Markets -->
         <section id="precip-section">
             <h2>Precipitation Markets</h2>
+            <p class="section-desc">Monthly cumulative rainfall contracts. Threshold in inches.</p>
             <div class="scan-meta">
                 <span id="precip-scan-time" class="scan-time"></span>
                 <button class="force-rescan-btn" id="precip-rescan">Force Rescan</button>
@@ -111,6 +115,6 @@
         <div id="risk-controls" class="risk-footer"></div>
     </main>
 
-    <script type="module" src="/static/js/app.js?v=8"></script>
+    <script type="module" src="/static/js/app.js?v=10"></script>
 </body>
 </html>
