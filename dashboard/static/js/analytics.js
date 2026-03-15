@@ -20,7 +20,7 @@ function renderScorecard(data) {
         return;
     }
 
-    let html = '<div class="metric-row" style="grid-template-columns: repeat(4, 1fr);">';
+    let html = '<div class="metric-row">';
 
     if (today) {
         const pnlClass = today.net_pnl >= 0 ? 'metric-positive' : 'metric-negative';
@@ -71,8 +71,9 @@ function renderTrends(data) {
     const layout = {
         paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: '#1a2332',
         font: { color: 'rgba(255,255,255,0.85)', family: 'Roboto, sans-serif', size: 12 },
-        margin: { l: 50, r: 20, t: 10, b: 30 },
-        xaxis: { gridcolor: '#2a3a4e' }, yaxis: { gridcolor: '#2a3a4e' },
+        margin: { l: 10, r: 10, t: 10, b: 10 },
+        xaxis: { gridcolor: '#2a3a4e', automargin: true },
+        yaxis: { gridcolor: '#2a3a4e', automargin: true },
     };
     const config = { displayModeBar: false, responsive: true };
 
@@ -111,10 +112,12 @@ function renderRecommendations(data) {
     }).join('');
 
     el.innerHTML = `
+        <div class="table-wrap">
         <table class="data-table">
             <thead><tr><th>Parameter</th><th>Current</th><th>Suggested</th><th>Reason</th><th class="num">Trades</th><th>Priority</th></tr></thead>
             <tbody>${rows}</tbody>
-        </table>`;
+        </table>
+        </div>`;
 }
 
 function renderActions(data) {
@@ -130,7 +133,7 @@ function renderActions(data) {
     const spreadBlocked = s.spread_blocked || 0;
     const total = holds + exits + fortifies;
 
-    let html = `<div class="metric-row" style="grid-template-columns: repeat(5, 1fr);">
+    let html = `<div class="metric-row metric-row-5">
         <div class="metric-card metric-neutral">
             <div class="metric-label">Hold</div>
             <div class="metric-value mono">${holds}</div>
@@ -165,10 +168,12 @@ function renderActions(data) {
             </tr>`;
         }).join('');
 
-        html += `<table class="data-table" style="margin-top:16px;">
-            <thead><tr><th>Time</th><th>City</th><th>Action</th><th>Reason</th></tr></thead>
-            <tbody>${rows}</tbody>
-        </table>`;
+        html += `<div class="table-wrap" style="margin-top:16px;">
+            <table class="data-table">
+                <thead><tr><th>Time</th><th>City</th><th>Action</th><th>Reason</th></tr></thead>
+                <tbody>${rows}</tbody>
+            </table>
+        </div>`;
     }
 
     el.innerHTML = html;

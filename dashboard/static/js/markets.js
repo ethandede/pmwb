@@ -5,9 +5,9 @@ const PLOTLY_LAYOUT = {
     paper_bgcolor: 'rgba(0,0,0,0)',
     plot_bgcolor: '#1a2332',
     font: { color: 'rgba(255,255,255,0.85)', family: 'Roboto, sans-serif', size: 12 },
-    margin: { l: 60, r: 20, t: 30, b: 40 },
-    xaxis: { gridcolor: '#2a3a4e', zerolinecolor: '#2a3a4e' },
-    yaxis: { gridcolor: '#2a3a4e', zerolinecolor: '#2a3a4e' },
+    margin: { l: 10, r: 10, t: 30, b: 10 },
+    xaxis: { gridcolor: '#2a3a4e', zerolinecolor: '#2a3a4e', automargin: true },
+    yaxis: { gridcolor: '#2a3a4e', zerolinecolor: '#2a3a4e', automargin: true },
 };
 
 const PLOTLY_CONFIG = { displayModeBar: false, responsive: true };
@@ -64,12 +64,14 @@ function marketsTable(markets, type) {
 
     if (!markets || markets.length === 0) {
         return `
+        <div class="table-wrap">
         <table class="data-table" data-market-type="${type}">
           <thead><tr>${headers}</tr></thead>
           <tbody class="table-empty">
             <tr><td colspan="5">No markets available</td></tr>
           </tbody>
-        </table>`.trim();
+        </table>
+        </div>`.trim();
     }
 
     // Sort
@@ -121,10 +123,12 @@ function marketsTable(markets, type) {
     }
 
     return `
+    <div class="table-wrap">
     <table class="data-table" data-market-type="${type}">
       <thead><tr>${headers}</tr></thead>
       <tbody>${rows}</tbody>
-    </table>${pagination}`.trim();
+    </table>
+    </div>${pagination}`.trim();
 }
 
 // --- Sort + pagination handlers ---

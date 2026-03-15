@@ -6,7 +6,7 @@ function renderResting(data) {
     if (!el) return;
 
     if (!data || data.length === 0) {
-        el.innerHTML = `<table class="data-table"><tbody class="table-empty"><tr><td>No resting orders</td></tr></tbody></table>`;
+        el.innerHTML = `<div class="table-wrap"><table class="data-table"><tbody class="table-empty"><tr><td>No resting orders</td></tr></tbody></table></div>`;
         return;
     }
 
@@ -27,7 +27,7 @@ function renderResting(data) {
         </tr>`;
     }).join('\n');
 
-    el.innerHTML = `<table class="data-table"><thead>${headers}</thead><tbody>${rows}</tbody></table>`;
+    el.innerHTML = `<div class="table-wrap"><table class="data-table"><thead>${headers}</thead><tbody>${rows}</tbody></table></div>`;
 }
 
 export { renderResting };

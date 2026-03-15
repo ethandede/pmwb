@@ -1,0 +1,306 @@
+// ============================================================
+// _shell.scss — App shell: sidebar, topbar, views, mobile
+// ============================================================
+
+@use 'variables' as *;
+@use 'sass:color';
+
+// ------------------------------------
+// Shell layout dimensions
+// ------------------------------------
+$sidebar-width: 220px;
+$sidebar-collapsed: 48px;
+
+// ------------------------------------
+// App shell flex container
+// ------------------------------------
+.we-app {
+  display: flex;
+  min-height: 100vh;
+  overflow: hidden;
+}
+
+// ------------------------------------
+// Sidebar
+// ------------------------------------
+.we-sidebar {
+  width: $sidebar-width;
+  min-width: $sidebar-width;
+  background: $bg-surface;
+  border-right: 1px solid $border-subtle;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  position: sticky;
+  top: 0;
+  z-index: $z-raised + 10;
+  transition: width $transition-normal, min-width $transition-normal;
+  overflow: hidden;
+
+  &.collapsed {
+    width: $sidebar-collapsed;
+    min-width: $sidebar-collapsed;
+  }
+}
+
+.we-sidebar-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: $sp-3;
+  border-bottom: 1px solid $border-subtle;
+  min-height: 48px;
+}
+
+.we-sidebar-logo {
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+}
+
+.we-sidebar-title {
+  font-family: $font-heading;
+  font-weight: 900;
+  font-size: 13px;
+  color: $text-primary;
+  white-space: nowrap;
+  overflow: hidden;
+
+  .we-sidebar.collapsed & {
+    display: none;
+  }
+}
+
+.we-sidebar-toggle {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: $text-muted;
+  font-size: $font-size-sm;
+  cursor: pointer;
+  padding: $sp-1;
+  flex-shrink: 0;
+  transition: color $transition-fast, transform $transition-normal;
+
+  &:hover {
+    color: rgba(255, 255, 255, 0.8);
+  }
+
+  .we-sidebar.collapsed & {
+    transform: rotate(180deg);
+  }
+}
+
+// ------------------------------------
+// Navigation
+// ------------------------------------
+.we-nav {
+  flex: 1;
+  padding: $sp-2 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.we-nav-group-label {
+  font-family: $font-body;
+  font-size: 10px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.3);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  padding: $sp-4 14px $sp-1;
+  white-space: nowrap;
+  overflow: hidden;
+
+  .we-sidebar.collapsed & {
+    font-size: 0;
+    padding: $sp-2 0 0;
+    text-align: center;
+
+    &::after {
+      content: '';
+      display: block;
+      width: 20px;
+      height: 1px;
+      background: $border-subtle;
+      margin: 0 auto;
+    }
+  }
+}
+
+.we-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: $sp-2 14px;
+  color: rgba(255, 255, 255, 0.5);
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 500;
+  border-left: 2px solid transparent;
+  transition: all $transition-fast;
+  white-space: nowrap;
+  overflow: hidden;
+
+  i {
+    width: 18px;
+    text-align: center;
+    font-size: 14px;
+    flex-shrink: 0;
+  }
+
+  &:hover {
+    color: rgba(255, 255, 255, 0.85);
+    background: rgba($brand-primary, 0.08);
+  }
+
+  &.active {
+    color: $brand-primary;
+    border-left-color: $brand-primary;
+    background: rgba($brand-primary, 0.12);
+    font-weight: 700;
+  }
+
+  .we-sidebar.collapsed & {
+    padding: 10px 0;
+    justify-content: center;
+    border-left: none;
+
+    span {
+      display: none;
+    }
+
+    &.active {
+      background: rgba($brand-primary, 0.15);
+      border-radius: $card-radius;
+      margin: 0 6px;
+    }
+  }
+}
+
+// ------------------------------------
+// Sidebar footer
+// ------------------------------------
+.we-sidebar-footer {
+  padding: $sp-3;
+  border-top: 1px solid $border-subtle;
+
+  .we-sidebar.collapsed & {
+    padding: $sp-2 $sp-1;
+    display: flex;
+    justify-content: center;
+  }
+}
+
+.we-sidebar-status {
+  display: flex;
+  align-items: center;
+  gap: $sp-2;
+}
+
+// ------------------------------------
+// Main content area
+// ------------------------------------
+.we-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+// ------------------------------------
+// Top bar
+// ------------------------------------
+.we-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: $sp-3;
+  padding: $sp-2 $sp-6;
+  background: $bg-surface;
+  border-bottom: 1px solid $border-subtle;
+  min-height: 44px;
+  position: sticky;
+  top: 0;
+  z-index: $z-raised;
+}
+
+.we-sidebar-open {
+  display: none;
+  background: none;
+  border: none;
+  color: $text-secondary;
+  font-size: 18px;
+  cursor: pointer;
+  margin-right: auto;
+}
+
+.we-topbar-right {
+  display: flex;
+  align-items: center;
+  gap: $sp-3;
+  margin-left: auto;
+}
+
+// ------------------------------------
+// View switching
+// ------------------------------------
+.we-view {
+  display: none;
+
+  &.active {
+    display: block;
+  }
+}
+
+// ------------------------------------
+// Mobile sidebar overlay
+// ------------------------------------
+.we-sidebar-backdrop {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: $z-raised + 9;
+}
+
+// Hide old header (superseded by topbar)
+.we-header {
+  display: none;
+}
+
+// ------------------------------------
+// Mobile layout
+// ------------------------------------
+@media (max-width: $bp-md) {
+  .we-sidebar {
+    position: fixed;
+    left: -$sidebar-width;
+    transition: left 0.25s ease;
+    box-shadow: none;
+
+    &.mobile-open {
+      left: 0;
+      box-shadow: 4px 0 24px rgba(0, 0, 0, 0.5);
+    }
+
+    &.collapsed {
+      left: -$sidebar-collapsed;
+    }
+  }
+
+  .we-sidebar-open {
+    display: block;
+  }
+
+  .we-sidebar-backdrop.visible {
+    display: block;
+  }
+
+  .we-page {
+    padding: $sp-4;
+  }
+}

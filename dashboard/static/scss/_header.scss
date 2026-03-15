@@ -125,11 +125,13 @@
   }
 
   // The inner icon spins when .spinning is applied
-  &.spinning .we-refresh-icon,
-  .spinning & .we-refresh-icon,
-  &.spinning {
+  &.spinning .we-refresh-icon {
     animation: spin 0.8s linear infinite;
   }
+}
+
+.we-refresh-icon {
+  display: inline-block;
 }
 
 // Standalone spin class (applied to child element or button itself)

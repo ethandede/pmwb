@@ -1,11 +1,11 @@
 // dashboard/static/js/app.js
 import { renderPortfolio } from './portfolio.js?v=23';
-import { renderMarkets } from './markets.js?v=22';
+import { renderMarkets } from './markets.js?v=23';
 import { renderTriptych } from './performance.js?v=23';
-import { renderActivity } from './activity.js?v=22';
-import { renderSettled } from './settled.js?v=22';
-import { renderScorecard, renderTrends, renderRecommendations, renderActions } from './analytics.js?v=22';
-import { renderResting } from './resting.js?v=22';
+import { renderActivity } from './activity.js?v=23';
+import { renderSettled } from './settled.js?v=23';
+import { renderScorecard, renderTrends, renderRecommendations, renderActions } from './analytics.js?v=23';
+import { renderResting } from './resting.js?v=23';
 
 let _configCache = null;
 
@@ -98,7 +98,7 @@ async function loadConfig() {
             rc.innerHTML = `
                 <div class="risk-footer-title">Risk Controls</div>
                 <div class="risk-grid">
-                    ${items.map(i => `<div class="risk-item"><strong>${i.label}:</strong> ${i.value}</div>`).join('')}
+                    ${items.map(i => `<div class="risk-item"><div class="risk-item-label">${i.label}</div><div class="risk-item-value">${i.value}</div></div>`).join('')}
                 </div>`;
         }
 
@@ -129,6 +129,7 @@ function initNav() {
     const sidebar = document.getElementById('sidebar');
     const toggle = document.getElementById('sidebar-toggle');
     const mobileOpen = document.getElementById('sidebar-open');
+    const backdrop = document.getElementById('sidebar-backdrop');
     const navItems = document.querySelectorAll('.we-nav-item');
 
     // Collapse/expand
@@ -141,6 +142,15 @@ function initNav() {
     if (mobileOpen) {
         mobileOpen.addEventListener('click', () => {
             sidebar.classList.toggle('mobile-open');
+            backdrop?.classList.toggle('visible');
+        });
+    }
+
+    // Close on backdrop tap
+    if (backdrop) {
+        backdrop.addEventListener('click', () => {
+            sidebar.classList.remove('mobile-open');
+            backdrop.classList.remove('visible');
         });
     }
 
@@ -164,8 +174,9 @@ function initNav() {
             const view = document.getElementById(`view-${viewId}`);
             if (view) view.classList.add('active');
 
-            // Close mobile sidebar
+            // Close mobile sidebar + backdrop
             sidebar.classList.remove('mobile-open');
+            backdrop?.classList.remove('visible');
 
             // Remember
             localStorage.setItem('active-view', viewId);
@@ -189,6 +200,7 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('precip-rescan').addEventListener('click', () => forceRescan('precip'));
     document.getElementById('temp-rescan').addEventListener('click', () => forceRescan('temp'));
     refreshAll();
+    setInterval(() => { if (!document.hidden) refreshAll(); }, 60000);
 });
 
 export { fetchJSON };

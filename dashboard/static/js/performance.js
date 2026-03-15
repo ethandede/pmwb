@@ -42,10 +42,8 @@ async function renderHealthBadge(containerId) {
         const resp = await fetch('/api/health');
         const data = await resp.json();
         const status = data.status || data.overall || 'unknown';
-        const colors = { healthy: '#10b981', warn: '#f59e0b', critical: '#ef4444' };
-        const color = colors[status] || '#666';
         const label = status.toUpperCase();
-        el.innerHTML = `<div style="display:inline-flex;align-items:center;gap:6px;padding:4px 12px;border-radius:12px;background:${color}22;border:1px solid ${color}55;color:${color};font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;">${label}</div>`;
+        el.innerHTML = `<div class="health-badge health-${status}">${label}</div>`;
     } catch (_) {
         el.innerHTML = '<span style="color:rgba(255,255,255,0.3);font-size:11px;">Health check unavailable</span>';
     }

@@ -35,12 +35,14 @@ function buildTable(positions, page, sortState, paginatorId) {
 
     if (!positions || positions.length === 0) {
         return `
+        <div class="table-wrap">
         <table class="data-table">
           <thead><tr>${headers}</tr></thead>
           <tbody class="table-empty">
             <tr><td colspan="${COLUMNS.length}">No open positions</td></tr>
           </tbody>
-        </table>`.trim();
+        </table>
+        </div>`.trim();
     }
 
     // Enrich with computed fields for sorting
@@ -95,10 +97,12 @@ function buildTable(positions, page, sortState, paginatorId) {
     }
 
     return `
+    <div class="table-wrap">
     <table class="data-table">
       <thead><tr>${headers}</tr></thead>
       <tbody>${rows}</tbody>
-    </table>${pagination}`.trim();
+    </table>
+    </div>${pagination}`.trim();
 }
 
 function attachSortHandlers(container, sortState, onSort) {

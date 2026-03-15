@@ -35,7 +35,7 @@ function renderSummary(summary) {
     const netPnl = wins.pnl + losses.pnl;
 
     el.innerHTML = `
-        <div class="metric-row" style="grid-template-columns: repeat(4, 1fr);">
+        <div class="metric-row">
             <div class="metric-card ${netPnl >= 0 ? 'metric-positive' : 'metric-negative'}">
                 <div class="metric-label">Net P&L</div>
                 <div class="metric-value mono">${netPnl >= 0 ? '+' : ''}$${Math.abs(netPnl).toFixed(2)}</div>
@@ -63,7 +63,7 @@ function settledTable(items, page) {
     }).join('');
 
     if (!items || items.length === 0) {
-        return `<table class="data-table"><thead><tr>${headers}</tr></thead><tbody class="table-empty"><tr><td colspan="${COLUMNS.length}">No settled trades yet</td></tr></tbody></table>`;
+        return `<div class="table-wrap"><table class="data-table"><thead><tr>${headers}</tr></thead><tbody class="table-empty"><tr><td colspan="${COLUMNS.length}">No settled trades yet</td></tr></tbody></table></div>`;
     }
 
     const sorted = [...items].sort((a, b) => {
@@ -107,7 +107,7 @@ function settledTable(items, page) {
         </div>`;
     }
 
-    return `<table class="data-table"><thead><tr>${headers}</tr></thead><tbody>${rows}</tbody></table>${pagination}`;
+    return `<div class="table-wrap"><table class="data-table"><thead><tr>${headers}</tr></thead><tbody>${rows}</tbody></table></div>${pagination}`;
 }
 
 function attachHandlers() {

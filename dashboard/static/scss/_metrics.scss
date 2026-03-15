@@ -263,3 +263,53 @@
     transform: scale(0.97);
   }
 }
+
+// ------------------------------------
+// 5-column variant (Position Manager)
+// ------------------------------------
+.metric-row-5 {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: $sp-4;
+  margin-bottom: $sp-4;
+
+  @media (max-width: $bp-md) {
+    grid-template-columns: repeat(3, 1fr);
+  }
+
+  @media (max-width: $bp-sm) {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+// ------------------------------------
+// Health status badge
+// ------------------------------------
+.health-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: $sp-1 $sp-3;
+  border-radius: 12px;
+  font-family: $font-mono;
+  font-size: $font-size-xs;
+  font-weight: 600;
+
+  &.health-healthy {
+    background: rgba($brand-teal, 0.13);
+    border: 1px solid rgba($brand-teal, 0.33);
+    color: $brand-teal;
+  }
+
+  &.health-warn {
+    background: rgba($brand-amber, 0.13);
+    border: 1px solid rgba($brand-amber, 0.33);
+    color: $brand-amber;
+  }
+
+  &.health-critical {
+    background: rgba($brand-red, 0.13);
+    border: 1px solid rgba($brand-red, 0.33);
+    color: $brand-red;
+  }
+}

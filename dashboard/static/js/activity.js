@@ -44,12 +44,14 @@ function activityTable(items, page) {
 
     if (!items || items.length === 0) {
         return `
+        <div class="table-wrap">
         <table class="data-table">
           <thead><tr>${headers}</tr></thead>
           <tbody class="table-empty">
             <tr><td colspan="9">No activity yet</td></tr>
           </tbody>
-        </table>`.trim();
+        </table>
+        </div>`.trim();
     }
 
     // Sort
@@ -114,10 +116,12 @@ function activityTable(items, page) {
     }
 
     return `
+    <div class="table-wrap">
     <table class="data-table">
       <thead><tr>${headers}</tr></thead>
       <tbody>${rows}</tbody>
-    </table>${pagination}`.trim();
+    </table>
+    </div>${pagination}`.trim();
 }
 
 function attachHandlers() {

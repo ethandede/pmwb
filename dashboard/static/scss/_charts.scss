@@ -123,3 +123,11 @@
   color: $text-muted;
   font-style: italic;
 }
+
+// ------------------------------------
+// Constrain Plotly chart containers
+// ------------------------------------
+.chart-card > div:not(.chart-label):not(.chart-footnote) {
+  max-width: 100%;
+  overflow: hidden;
+}

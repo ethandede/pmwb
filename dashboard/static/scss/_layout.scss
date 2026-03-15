@@ -14,7 +14,7 @@
   gap: $sp-4;
   margin-bottom: $sp-6;
 
-  @media (max-width: $bp-md) {
+  @media (max-width: $bp-sm) {
     grid-template-columns: 1fr;
     gap: $sp-3;
   }
@@ -137,4 +137,25 @@
     min-width: 0;
     width: 100%;
   }
+}
+
+// ------------------------------------
+// Positions sub-sections (paper/live split)
+// ------------------------------------
+.positions-section {
+  margin-bottom: $sp-2;
+}
+
+.positions-section-label {
+  font-size: $font-size-base;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.8);
+  margin: 0 0 $sp-2 0;
+}
+
+.positions-count {
+  font-size: $font-size-sm;
+  font-weight: 400;
+  color: $text-muted;
+  margin-left: $sp-1;
 }
