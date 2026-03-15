@@ -20,32 +20,47 @@ TRADES_DB = Path(__file__).resolve().parent.parent / "data" / "trades.db"
 
 
 def _get_cost_basis() -> dict:
-    """Compute net cost basis per ticker from trades.db.
+    """Compute cost basis of CURRENT position per ticker from trades.db.
 
-    For each ticker, sums buy fills (cost) and sell fills (proceeds).
-    Returns {ticker: net_cost_in_dollars}.
+    Finds the most recent entry (after the last sell) for each ticker.
+    This reflects what you actually paid for the contracts you're holding now,
+    not the cumulative churn damage from previous round-trips.
+    Returns {ticker: cost_in_dollars}.
     """
     if not TRADES_DB.exists():
         return {}
     conn = sqlite3.connect(str(TRADES_DB))
     conn.row_factory = sqlite3.Row
     rows = conn.execute(
-        """SELECT ticker, side, fill_price, fill_qty
-           FROM trades WHERE fill_qty > 0"""
+        """SELECT ticker, side, fill_price, fill_qty, fill_time
+           FROM trades WHERE fill_qty > 0
+           ORDER BY fill_time ASC"""
     ).fetchall()
     conn.close()
 
-    basis = {}
+    # Group by ticker, then find cost of current position
+    from collections import defaultdict
+    by_ticker = defaultdict(list)
     for r in rows:
-        ticker = r["ticker"]
-        cents = (r["fill_price"] or 0) * (r["fill_qty"] or 0)
-        side = r["side"] or ""
-        if side.startswith("sell"):
-            basis[ticker] = basis.get(ticker, 0) - cents
-        else:
-            # "buy_yes", "buy_no", or legacy bare "yes"/"no" — all are buys
-            basis[ticker] = basis.get(ticker, 0) + cents
-    return {k: round(v / 100.0, 2) for k, v in basis.items()}
+        by_ticker[r["ticker"]].append(r)
+
+    basis = {}
+    for ticker, fills in by_ticker.items():
+        # Walk fills in chronological order
+        # After each sell, reset cost — only count buys since last full exit
+        cost_cents = 0
+        for f in fills:
+            side = f["side"] or ""
+            cents = (f["fill_price"] or 0) * (f["fill_qty"] or 0)
+            if side.startswith("sell"):
+                # Full exit resets cost basis; partial sell reduces proportionally
+                cost_cents = 0
+            else:
+                cost_cents += cents
+        if cost_cents > 0:
+            basis[ticker] = round(cost_cents / 100.0, 2)
+
+    return basis
 
 # Initialise DBs
 init_scan_cache_db()
