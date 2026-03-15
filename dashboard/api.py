@@ -102,11 +102,14 @@ async def get_portfolio():
                 pnl = round(exposure - cost, 2) if cost > 0 else 0
                 entry = round(cost / qty, 2) if qty > 0 and cost > 0 else 0
 
-                # Parse settlement date from ticker (e.g. KXHIGHNY-26MAR14 → 2026-03-14)
+                # Parse settlement date and contract from ticker
+                # e.g. KXHIGHNY-26MAR14-T56 → date=2026-03-14, contract=">56°F"
+                # e.g. KXHIGHNY-26MAR14-B51.5 → date=2026-03-14, contract="51-52°F"
+                import re
                 settles = ""
+                contract = ""
                 parts = ticker.split("-")
                 if len(parts) >= 2:
-                    import re
                     m = re.match(r"(\d{2})([A-Z]{3})(\d{2})", parts[1])
                     if m:
                         yr, mon_str, day = m.groups()
@@ -114,11 +117,19 @@ async def get_portfolio():
                                   "JUL":"07","AUG":"08","SEP":"09","OCT":"10","NOV":"11","DEC":"12"}
                         mon = months.get(mon_str, "01")
                         settles = f"20{yr}-{mon}-{day}"
+                if len(parts) >= 3:
+                    strike = parts[2]
+                    if strike.startswith("T"):
+                        contract = f">{strike[1:]}\u00b0"
+                    elif strike.startswith("B"):
+                        val = float(strike[1:])
+                        contract = f"{val:.0f}-{val+2:.0f}\u00b0"
 
                 open_pos.append({
                     "ticker": ticker,
                     "city": ticker_to_city(ticker),
                     "side": "YES" if qty_fp > 0 else "NO",
+                    "contract": contract,
                     "qty": int(qty),
                     "entry": entry,
                     "value": round(exposure, 2),
