@@ -66,15 +66,25 @@ def _get_cost_basis() -> dict:
 
 
 def _get_paper_positions() -> list:
-    """Get open (unsettled) paper positions from trades.db."""
+    """Get open (unsettled) paper positions from trades.db.
+
+    Only returns actual paper trades (order_id LIKE 'paper-%'), deduplicated
+    to one row per ticker (the latest fill). Live Kalshi orders are shown
+    separately via the exchange API.
+    """
     if not TRADES_DB.exists():
         return []
     conn = sqlite3.connect(str(TRADES_DB))
     conn.row_factory = sqlite3.Row
     rows = conn.execute(
-        """SELECT ticker, city, side, fill_price, fill_qty, fill_time
+        """SELECT ticker, city, side, fill_price,
+                  SUM(fill_qty) as fill_qty,
+                  MAX(fill_time) as fill_time
            FROM trades
-           WHERE settlement_outcome IS NULL AND fill_qty > 0
+           WHERE settlement_outcome IS NULL
+             AND order_id LIKE 'paper-%'
+             AND fill_qty > 0
+           GROUP BY ticker, side
            ORDER BY fill_time DESC"""
     ).fetchall()
     conn.close()
