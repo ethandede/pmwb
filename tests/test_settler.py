@@ -20,8 +20,11 @@ class TestIsExitFill(unittest.TestCase):
     def test_exit_fills(self):
         self.assertTrue(_is_exit_fill("sell_yes"))
         self.assertTrue(_is_exit_fill("sell_no"))
-        self.assertTrue(_is_exit_fill("yes"))
-        self.assertTrue(_is_exit_fill("no"))
+
+    def test_legacy_bare_sides_are_entries(self):
+        # Legacy bare "yes"/"no" sides are entry fills, not exits
+        self.assertFalse(_is_exit_fill("yes"))
+        self.assertFalse(_is_exit_fill("no"))
 
 
 class TestCalculatePnl(unittest.TestCase):

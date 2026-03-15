@@ -18,7 +18,7 @@ def test_calculate_remaining_days_no_close_date():
     assert 0 <= result <= 31
 
 
-@patch("weather.forecast.requests.get")
+@patch("weather.forecast.http_get")
 def test_get_ensemble_precip_returns_list(mock_get):
     """Mocked Open-Meteo response → list of 30 precip values in inches."""
     daily_data = {}
@@ -37,7 +37,7 @@ def test_get_ensemble_precip_returns_list(mock_get):
     assert all(v >= 0 for v in result)
 
 
-@patch("weather.forecast.requests.get")
+@patch("weather.forecast.http_get")
 def test_get_ensemble_precip_fallback_on_error(mock_get):
     """API error → returns [0.0] * 30 fallback."""
     mock_get.side_effect = Exception("API down")
@@ -45,7 +45,7 @@ def test_get_ensemble_precip_fallback_on_error(mock_get):
     assert result == [0.0] * 30
 
 
-@patch("weather.forecast.requests.get")
+@patch("weather.forecast.http_get")
 def test_get_nws_precip_forecast_success(mock_get):
     """Successful NWS response → (pop, qpf) tuple."""
     points_resp = MagicMock()
@@ -67,7 +67,7 @@ def test_get_nws_precip_forecast_success(mock_get):
     assert qpf == pytest.approx(0.5)
 
 
-@patch("weather.forecast.requests.get")
+@patch("weather.forecast.http_get")
 def test_get_nws_precip_forecast_error_fallback(mock_get):
     """API error → (0.5, 0.0) fallback."""
     mock_get.side_effect = Exception("NWS down")

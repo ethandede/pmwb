@@ -17,14 +17,16 @@ def test_root_serves_html():
 
 def test_portfolio_endpoint():
     resp = client.get("/api/portfolio")
-    # Should return 200 even if Kalshi is unreachable (graceful error)
     assert resp.status_code in (200, 502)
     data = resp.json()
     if resp.status_code == 200:
         assert "balance" in data
-        assert "settled" in data
         assert "open_positions" in data
-        assert "resting_orders" in data
+        assert isinstance(data["open_positions"], list)
+        bal = data["balance"]
+        assert "cash" in bal
+        assert "positions" in bal
+        assert "equity" in bal
 
 
 def test_config_endpoint():
@@ -34,6 +36,8 @@ def test_config_endpoint():
     assert "mode" in data
     assert "edge_gate" in data
     assert "kelly_range" in data
+    assert "max_positions_total" in data
+    assert "drawdown_threshold" in data
     assert isinstance(data["kelly_range"], list)
 
 
@@ -42,7 +46,6 @@ def test_performance_endpoint():
     assert resp.status_code == 200
     data = resp.json()
     assert "equity_curve" in data
-    assert "model_accuracy" in data
     assert "settled_daily" in data
     assert isinstance(data["equity_curve"], list)
     assert isinstance(data["settled_daily"], list)
@@ -62,3 +65,17 @@ def test_markets_precip_cached():
     data = resp.json()
     assert "scan_time" in data
     assert "markets" in data
+
+
+def test_activity_endpoint():
+    resp = client.get("/api/activity")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert isinstance(data, list)
+
+
+def test_health_endpoint():
+    resp = client.get("/api/health")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "status" in data
