@@ -9,12 +9,11 @@ let _sortState = { key: 'settles', dir: 'asc', abs: false };
 const COLUMNS = [
     { key: 'settles',       label: 'Event',    num: false },
     { key: 'city',          label: 'City',     num: false },
-    { key: 'side',          label: 'Side',     num: false },
-    { key: 'contract',      label: 'Contract', num: false },
+    { key: 'bet',           label: 'Bet',      num: false },
     { key: 'forecast_high', label: 'Fcast',    num: true  },
-    { key: 'current_temp',  label: 'Now',      num: true  },
     { key: 'likely',        label: 'Likely',   num: false },
-    { key: 'pnl',           label: 'P&L',      num: true  },
+    { key: 'if_win',        label: 'If Win',   num: true  },
+    { key: 'if_lose',       label: 'If Lose',  num: true  },
 ];
 
 function fmtDollar(n, signed = false) {
@@ -60,17 +59,19 @@ function positionsTable(positions, page) {
         const rowClass = p.pnl > 0 ? 'pnl-positive' : p.pnl < 0 ? 'pnl-negative' : '';
         const settles = p.settles ? p.settles.slice(5) : '\u2014';
         const fcast = p.forecast_high !== null ? `${p.forecast_high}\u00b0` : '\u2014';
-        const now = p.current_temp !== null ? `${p.current_temp}\u00b0` : '\u2014';
+        const bet = `${p.side} ${p.contract || ''}`.trim();
+        const costPerContract = p.entry || 0;
+        const winProfit = costPerContract > 0 ? (1.0 - costPerContract) * p.qty : p.qty * 0.50;
+        const lossCost = costPerContract > 0 ? costPerContract * p.qty : 0;
         return `
-        <tr class="${rowClass}">
+        <tr class="${p.likely === 'WIN' ? 'pnl-positive' : p.likely === 'LOSS' ? 'pnl-negative' : ''}">
           <td class="mono">${settles}</td>
           <td>${p.city}</td>
-          <td>${p.side}</td>
-          <td class="mono">${p.contract || '\u2014'}</td>
+          <td class="mono">${bet}</td>
           <td class="num mono">${fcast}</td>
-          <td class="num mono">${now}</td>
           <td class="${p.likely === 'WIN' ? 'val-positive' : p.likely === 'LOSS' ? 'val-negative' : ''}">${p.likely || '\u2014'}</td>
-          <td class="num mono ${pnlClass}">${p.entry > 0 ? fmtDollar(p.pnl, true) : '\u2014'}</td>
+          <td class="num mono val-positive">+${fmtDollar(winProfit)}</td>
+          <td class="num mono val-negative">-${fmtDollar(lossCost)}</td>
         </tr>`.trim();
     }).join('\n');
 
