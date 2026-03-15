@@ -34,10 +34,12 @@ function fmtEdge(n) {
 function fmtScanTime(isoStr) {
     try {
         const d = new Date(isoStr);
-        return d.toLocaleString('en-US', {
-            month: 'short', day: 'numeric',
-            hour: '2-digit', minute: '2-digit', second: '2-digit',
-        });
+        const mm = String(d.getMonth() + 1).padStart(2, '0');
+        const dd = String(d.getDate()).padStart(2, '0');
+        const hh = String(d.getHours()).padStart(2, '0');
+        const mi = String(d.getMinutes()).padStart(2, '0');
+        const ss = String(d.getSeconds()).padStart(2, '0');
+        return `${mm}/${dd} ${hh}${mi}:${ss}`;
     } catch (_) { return isoStr; }
 }
 
