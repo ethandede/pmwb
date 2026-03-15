@@ -66,6 +66,27 @@ def _fetch_ercot_market_data() -> dict:
     return result
 
 
+def fetch_ercot_markets() -> list[dict]:
+    """Return raw hub data + shared ERCOT market data for pipeline fetch stage.
+
+    Does NOT call solar signal — that happens in the score stage via forecast_fn.
+    """
+    market_data = _fetch_ercot_market_data()
+    markets = []
+    for hub_key, info in ERCOT_HUBS.items():
+        markets.append({
+            "hub": hub_key,
+            "hub_name": info["hub_name"],
+            "city": info["city"],
+            "lat": info["lat"],
+            "lon": info["lon"],
+            "current_ercot_price": market_data.get("price", 40.0),
+            "actual_solar_mw": market_data.get("solar_mw", 12000.0),
+            "_ercot_data": market_data,
+        })
+    return markets
+
+
 def scan_all_hubs() -> list:
     """Scan all 5 ERCOT hubs. Returns list of enriched signal dicts."""
     ercot_data = _fetch_ercot_market_data()
