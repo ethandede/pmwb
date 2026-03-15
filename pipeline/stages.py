@@ -74,7 +74,6 @@ def score_signal(config, market: dict) -> Signal:
                 low=low, high=high,
                 days_ahead=days_ahead,
                 unit=unit, temp_type=temp_type,
-                weights=config.fusion_weights,
             )
 
         # Extract model_prob and confidence from forecast result
