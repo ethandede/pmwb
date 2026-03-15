@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding
 from kalshi.fill_tracker import init_trades_db, record_fill, update_fill_data
+from kalshi.pricing import choose_price_strategy, kalshi_fee
 
 TRADES_DB_PATH = "data/trades.db"
 
@@ -208,10 +209,28 @@ def execute_kalshi_signal(market: dict, city: str, model_prob: float, market_pro
     except Exception:
         pass  # sanity check is advisory, never blocks on errors
 
-    if edge > 0:
-        price_cents = int((market_prob + edge * 0.3) * 100)
-    else:
-        price_cents = int((1 - market_prob + abs(edge) * 0.3) * 100)
+    # --- Maker/taker pricing strategy ---
+    yes_bid = market.get("yes_bid")
+    yes_ask = market.get("yes_ask")
+    if yes_bid is None:
+        yes_bid_d = market.get("yes_bid_dollars")
+        if yes_bid_d:
+            yes_bid = int(float(yes_bid_d) * 100)
+    if yes_ask is None:
+        yes_ask_d = market.get("yes_ask_dollars")
+        if yes_ask_d:
+            yes_ask = int(float(yes_ask_d) * 100)
+
+    price_cents, strategy = choose_price_strategy(
+        side=side, yes_bid=yes_bid, yes_ask=yes_ask, edge=abs(edge),
+    )
+    if price_cents is None:
+        # No market data — fall back to legacy formula
+        if edge > 0:
+            price_cents = int((market_prob + edge * 0.3) * 100)
+        else:
+            price_cents = int((1 - market_prob + abs(edge) * 0.3) * 100)
+        strategy = "legacy"
     price_cents = max(1, min(99, price_cents))
 
     effective_kelly = kelly_floor if kelly_floor is not None else FRACTIONAL_KELLY
@@ -243,15 +262,17 @@ def execute_kalshi_signal(market: dict, city: str, model_prob: float, market_pro
     count = size_result.count
     order_cost = size_result.dollar_amount
 
-    fee_estimate = 0.035 + (count * 0.01)
+    is_taker = strategy in ("taker", "legacy")
+    fee_estimate = kalshi_fee(price_cents, count, is_taker=is_taker)
     expected_profit = (abs(edge) * count * 1.00) - fee_estimate
     if expected_profit < 0.12:
-        print(f"\n  SKIP {ticker} — fee-adjusted profit ${expected_profit:.2f} < $0.12 (fee ~${fee_estimate:.2f})")
+        print(f"\n  SKIP {ticker} — fee-adjusted profit ${expected_profit:.2f} < $0.12 (fee ~${fee_estimate:.2f}, {strategy})")
         return
 
     mode_label = "PAPER" if PAPER_MODE else "LIVE"
     print(f"\n  [{mode_label}] {side.upper()} {count} contracts @ {price_cents}¢ (${order_cost:.2f})")
     print(f"  Ticker: {ticker} | Edge: {edge:+.1%} | Kelly: {size_result.raw_kelly:.1%} → {size_result.adjusted_kelly:.1%}")
+    print(f"  Strategy: {strategy.upper()} | Fee est: ${fee_estimate:.3f}")
     print(f"  Scan budget: ${_scan_spent:.2f} spent | {size_result.limit_reason}")
 
     if PAPER_MODE:
