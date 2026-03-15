@@ -16,6 +16,11 @@ from datetime import datetime, timezone
 from rich.console import Console
 from weather import cache as fcache
 from dashboard.equity_db import init_equity_db, record_equity_snapshot
+from config import PAPER_MODE
+from exchanges.kalshi import KalshiExchange
+from exchanges.ercot import ErcotExchange
+from pipeline.config import ALL_CONFIGS
+from pipeline.runner import PipelineRunner
 
 console = Console()
 
@@ -23,7 +28,7 @@ LOOP_INTERVAL = 300  # 5 minutes
 _last_equity_date: str | None = None  # track date to record equity once per day
 
 
-def run_cycle(cycle_num: int):
+def run_cycle(cycle_num: int, runner: PipelineRunner, exchanges: dict):
     """Run one scan + position management cycle."""
     now = datetime.now(timezone.utc)
     console.print(f"\n{'='*60}")
@@ -41,12 +46,11 @@ def run_cycle(cycle_num: int):
         traceback.print_exc()
 
     # --- Phase 2: New signal scan + entries ---
-    console.print(f"\n[bold]Phase 2: Market Scan[/bold]")
+    console.print(f"\n[bold]Phase 2: Market Scan (Pipeline)[/bold]")
     try:
-        from scanner import run_scanner
-        run_scanner()
+        runner.run_cycle(paper_mode=PAPER_MODE)
     except Exception as e:
-        console.print(f"[red]Scanner error: {e}[/red]")
+        console.print(f"[red]Pipeline error: {e}[/red]")
         traceback.print_exc()
 
     # --- Phase 3: Settle resolved markets ---
@@ -70,9 +74,12 @@ def run_cycle(cycle_num: int):
 
     # --- Phase 4: Quick balance check + daily equity snapshot ---
     global _last_equity_date
+    kalshi = exchanges.get("kalshi")
+    if not kalshi:
+        console.print(f"[dim]No Kalshi exchange configured — skipping balance check[/dim]")
+        return
     try:
-        from kalshi.trader import get_balance, get_positions
-        bal = get_balance()
+        bal = kalshi.get_balance()
         cash = bal.get("balance", 0) / 100.0
         portfolio = bal.get("portfolio_value", 0) / 100.0
         console.print(f"\n[bold]Balance: ${cash:.2f} cash + ${portfolio:.2f} positions = ${cash + portfolio:.2f}[/bold]")
@@ -81,7 +88,7 @@ def run_cycle(cycle_num: int):
         today_str = now.strftime("%Y-%m-%d")
         if _last_equity_date != today_str:
             try:
-                settled = get_positions(limit=200, settlement_status="settled")
+                settled = kalshi.get_positions(limit=200, settlement_status="settled")
                 realized_pnl = sum(float(p.get("realized_pnl_dollars", "0")) for p in settled)
                 fees_paid = sum(float(p.get("fees_paid_dollars", "0")) for p in settled)
                 wins = sum(1 for p in settled if float(p.get("realized_pnl_dollars", "0")) > 0)
@@ -109,14 +116,23 @@ def main():
     console.print("[bold green]Weather Edge Daemon starting...[/bold green]")
     console.print(f"Loop interval: {LOOP_INTERVAL}s ({LOOP_INTERVAL // 60} min)")
     console.print(f"Forecast cache TTL: {fcache.FORECAST_TTL}s ({fcache.FORECAST_TTL // 60} min)")
-    console.print(f"Market cache TTL: {fcache.MARKET_TTL}s\n")
+    console.print(f"Market cache TTL: {fcache.MARKET_TTL}s")
+    console.print(f"Paper mode: {PAPER_MODE}\n")
+
+    # Create exchange adapters and pipeline runner once
+    exchanges = {
+        "kalshi": KalshiExchange(),
+        "ercot": ErcotExchange(),
+    }
+    runner = PipelineRunner(configs=ALL_CONFIGS, exchanges=exchanges)
+    console.print(f"Pipeline: {len(ALL_CONFIGS)} configs, {len(exchanges)} exchanges\n")
 
     cycle = 0
     try:
         while True:
             cycle += 1
             try:
-                run_cycle(cycle)
+                run_cycle(cycle, runner=runner, exchanges=exchanges)
             except KeyboardInterrupt:
                 raise
             except Exception as e:

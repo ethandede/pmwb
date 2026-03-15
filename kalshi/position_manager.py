@@ -10,15 +10,12 @@ Fortify = scale winners when edge strengthens and limits allow.
 Usage: python -m kalshi.position_manager
 """
 
-import re
 import time
-import requests
 from datetime import datetime, timezone
-from typing import Optional, Tuple
+from typing import Optional
 from rich.console import Console
 from rich.table import Table
 
-from kalshi.trader import get_positions, get_balance, sell_order, get_orders, _sign_request, _BASE_URL, _load_credentials
 from kalshi.scanner import WEATHER_SERIES, parse_kalshi_bucket, PRECIP_SERIES
 try:
     from kalshi.scanner import WEATHER_SERIES_LOW
@@ -60,39 +57,27 @@ def _parse_position_ticker(ticker: str) -> Optional[dict]:
     return None
 
 
-def _get_market_data(ticker: str) -> Optional[dict]:
+def _get_market_data(ticker: str, exchange=None) -> Optional[dict]:
+    if exchange is None:
+        from exchanges.kalshi import KalshiExchange
+        exchange = KalshiExchange()
     try:
-        _load_credentials()
-        path = f"/trade-api/v2/markets/{ticker}"
-        headers = _sign_request("GET", path)
-        resp = requests.get(f"{_BASE_URL}{path}", headers=headers, timeout=15)
-        resp.raise_for_status()
-        return resp.json().get("market", {})
+        return exchange.get_market(ticker)
     except Exception as e:
         print(f"  Market lookup failed for {ticker}: {e}")
         return None
 
 
-def _sell_position(ticker: str, side: str, count: int, price_cents: int) -> Optional[dict]:
-    path = "/trade-api/v2/portfolio/orders"
-    headers = _sign_request("POST", path)
-    body = {
-        "ticker": ticker,
-        "action": "sell",
-        "side": side,
-        "type": "limit",
-        "count": count,
-    }
-    if side == "yes":
-        body["yes_price"] = price_cents
-    else:
-        body["no_price"] = price_cents
-
-    resp = requests.post(f"{_BASE_URL}{path}", headers=headers, json=body, timeout=15)
-    if resp.status_code >= 400:
-        print(f"  Sell error: {resp.text}")
-    resp.raise_for_status()
-    return resp.json()
+def _sell_position(ticker: str, side: str, count: int, price_cents: int, exchange=None) -> Optional[dict]:
+    if exchange is None:
+        from exchanges.kalshi import KalshiExchange
+        exchange = KalshiExchange()
+    try:
+        return exchange.sell_order(ticker, side, price_cents, count)
+    except Exception as e:
+        if hasattr(e, 'response'):
+            print(f"  Sell error: {e.response.text}")
+        raise
 
 
 def _sell_ev_beats_hold(
@@ -287,18 +272,22 @@ def evaluate_position(ticker: str, qty: float, market_data: dict, bankroll: floa
     return result
 
 
-def run_position_manager():
+def run_position_manager(exchange=None):
     """Main loop: evaluate all open positions and execute exits/fortifications."""
+    if exchange is None:
+        from exchanges.kalshi import KalshiExchange
+        exchange = KalshiExchange()
+
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     console.print(f"\n[bold cyan]Position Manager — {now}[/bold cyan]\n")
 
-    bal = get_balance()
+    bal = exchange.get_balance()
     cash = bal.get("balance", 0) / 100.0
     portfolio = bal.get("portfolio_value", 0) / 100.0
     bankroll = cash + portfolio
     console.print(f"  Cash: ${cash:.2f}  |  Positions: ${portfolio:.2f}  |  Total: ${bankroll:.2f}\n")
 
-    positions = get_positions()
+    positions = exchange.get_positions()
     if not positions:
         console.print("[dim]No open positions to manage.[/dim]")
         return
@@ -323,7 +312,7 @@ def run_position_manager():
         if qty == 0:
             continue
 
-        market_data = _get_market_data(ticker)
+        market_data = _get_market_data(ticker, exchange)
         if not market_data:
             skips += 1
             continue
@@ -386,7 +375,7 @@ def run_position_manager():
 
     if exits:
         try:
-            resting = get_orders(status="resting")
+            resting = exchange.get_orders(status="resting")
             resting_tickers = {o.get("ticker", "") for o in resting if o.get("action") == "sell"}
         except Exception:
             resting_tickers = set()
@@ -411,7 +400,7 @@ def run_position_manager():
                 continue
 
             try:
-                resp = sell_order(ticker, side, price, qty)
+                resp = exchange.sell_order(ticker, side, price, qty)
                 order_id = resp.get("order", {}).get("order_id", "unknown")
                 status = resp.get("order", {}).get("status", "unknown")
                 console.print(f"    [green]Sell order posted: {order_id} ({status})[/green]")

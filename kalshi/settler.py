@@ -7,7 +7,7 @@ Usage: python -m kalshi.settler
 """
 
 import time
-from kalshi.trader import _get
+
 from kalshi.fill_tracker import (
     init_trades_db,
     get_unresolved_trades,
@@ -18,14 +18,13 @@ from kalshi.fill_tracker import (
 TRADES_DB_PATH = "data/trades.db"
 
 
-def _fetch_market_result(ticker: str) -> dict | None:
-    """Fetch a market's settlement result from Kalshi API.
+def _fetch_market_result(ticker: str, exchange) -> dict | None:
+    """Fetch a market's settlement result via the exchange adapter.
 
     Returns {"result": "yes"|"no", "expiration_value": float} or None if not settled.
     """
     try:
-        data = _get(f"/trade-api/v2/markets/{ticker}")
-        market = data.get("market", {})
+        market = exchange.get_market(ticker)
         status = market.get("status", "")
         result = market.get("result", "")
         if status == "finalized" and result in ("yes", "no"):
@@ -83,8 +82,12 @@ def _calculate_pnl(side: str, fill_price: int, fill_qty: int, result: str) -> fl
     return 0.0
 
 
-def run_settler():
+def run_settler(exchange=None):
     """Resolve all unresolved trades against settled markets."""
+    if exchange is None:
+        from exchanges.kalshi import KalshiExchange
+        exchange = KalshiExchange()
+
     init_trades_db(TRADES_DB_PATH)
     unresolved = get_unresolved_trades(TRADES_DB_PATH)
 
@@ -106,7 +109,7 @@ def run_settler():
     losses = 0
 
     for ticker, trades in sorted(ticker_trades.items()):
-        settlement = _fetch_market_result(ticker)
+        settlement = _fetch_market_result(ticker, exchange)
         time.sleep(0.1)  # Rate limit
 
         if settlement is None:

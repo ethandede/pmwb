@@ -16,7 +16,8 @@ from dashboard.equity_db import init_equity_db, get_equity_curve
 from dashboard.ticker_map import ticker_to_city
 from dashboard.ercot_api import ercot_router
 
-from kalshi.trader import get_balance, get_positions
+from exchanges.kalshi import KalshiExchange
+_kalshi = KalshiExchange()
 from config import PAPER_MODE
 
 TRADES_DB = Path(__file__).resolve().parent.parent / "data" / "trades.db"
@@ -111,7 +112,7 @@ async def ercot_page():
 @app.get("/api/portfolio")
 async def get_portfolio():
     try:
-        bal = get_balance()
+        bal = _kalshi.get_balance()
         cash = bal.get("balance", 0) / 100.0
         positions_val = bal.get("portfolio_value", 0) / 100.0
         equity = cash + positions_val
@@ -152,7 +153,7 @@ async def get_portfolio():
         today_str = _date.today().isoformat()
 
         open_pos = []
-        for p in get_positions():
+        for p in _kalshi.get_positions():
             qty_fp = float(p.get("position_fp", 0))
             if qty_fp != 0:
                 qty = abs(qty_fp)
@@ -414,9 +415,8 @@ async def get_activity(limit: int = Query(50)):
 
 @app.get("/api/resting")
 async def get_resting():
-    from kalshi.trader import get_orders
     try:
-        resting = get_orders(status="resting")
+        resting = _kalshi.get_orders(status="resting")
     except Exception as e:
         return []
 
