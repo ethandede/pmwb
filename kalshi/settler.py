@@ -102,6 +102,14 @@ def run_settler(exchange=None):
     for trade in unresolved:
         ticker_trades.setdefault(trade["ticker"], []).append(trade)
 
+    # Filter out ERCOT paper positions — these aren't Kalshi tickers
+    ercot_tickers = [t for t in ticker_trades if t.startswith("HB_")]
+    if ercot_tickers:
+        ercot_count = sum(len(ticker_trades[t]) for t in ercot_tickers)
+        print(f"Skipping {ercot_count} ERCOT paper trades ({', '.join(sorted(ercot_tickers))})")
+        for t in ercot_tickers:
+            del ticker_trades[t]
+
     resolved = 0
     still_open = 0
     total_pnl = 0.0

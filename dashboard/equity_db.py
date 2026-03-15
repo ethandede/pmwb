@@ -1,12 +1,13 @@
 # dashboard/equity_db.py
-"""Read/write interface for data/equity_history.db.
+"""Read/write interface for data/equity_db.db.
 
 Table: equity_snapshots — one row per day, appended by daily P&L script.
 """
 import os
 import sqlite3
+from pathlib import Path
 
-EQUITY_DB = "data/equity_history.db"
+EQUITY_DB = str(Path(__file__).resolve().parent.parent / "data" / "equity_db.db")
 
 
 def _connect(db_path: str = EQUITY_DB) -> sqlite3.Connection:
@@ -33,6 +34,33 @@ def init_equity_db(db_path: str = EQUITY_DB):
         )
     """)
     conn.commit()
+
+    # Migrate rows from legacy equity_history.db if it exists and has data
+    legacy = Path(db_path).parent / "equity_history.db"
+    if legacy.exists() and legacy.stat().st_size > 0:
+        try:
+            old = sqlite3.connect(str(legacy))
+            old.row_factory = sqlite3.Row
+            rows = old.execute(
+                "SELECT date, total_equity, cash, portfolio_value, "
+                "realized_pnl, fees_paid, win_count, loss_count "
+                "FROM equity_snapshots"
+            ).fetchall()
+            old.close()
+            if rows:
+                for r in rows:
+                    conn.execute(
+                        """INSERT OR IGNORE INTO equity_snapshots
+                           (date, total_equity, cash, portfolio_value,
+                            realized_pnl, fees_paid, win_count, loss_count)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                        tuple(r),
+                    )
+                conn.commit()
+                legacy.rename(legacy.with_suffix(".db.bak"))
+        except Exception:
+            pass  # legacy DB missing table or corrupt — skip silently
+
     conn.close()
 
 

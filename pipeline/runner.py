@@ -57,6 +57,21 @@ class PipelineRunner:
             except Exception as e:
                 print(f"  Position fetch failed: {e}")
 
+        # Also include paper positions from trades.db for dedup
+        import sqlite3
+        try:
+            conn = sqlite3.connect("data/trades.db")
+            paper_rows = conn.execute(
+                "SELECT DISTINCT ticker FROM trades WHERE settlement_outcome IS NULL AND order_id LIKE 'paper-%'"
+            ).fetchall()
+            paper_tickers = {r[0] for r in paper_rows}
+            conn.close()
+            # Add paper tickers to held_positions so filter_signals skips them
+            for t in paper_tickers:
+                held_positions.append({"ticker": t, "position_fp": "1.0"})
+        except Exception:
+            pass
+
         # Process each config
         for config in self.configs:
             # Skip configs with too many consecutive errors
