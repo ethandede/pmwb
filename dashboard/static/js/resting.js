@@ -23,15 +23,16 @@ function renderResting(data) {
         <span class="num">Qty</span><span class="num">Price</span><span>Created</span>
     </div>`;
 
+    // Mobile: Row1 City Action Contract(span2) | Row2 ×Qty Price Created(span2)
     const rows = data.map(o => {
         const actionClass = o.action === 'BUY' ? 'val-positive' : 'val-negative';
         return `<div class="dg-row">
-            <span data-label="City">${o.city}</span>
-            <span class="${actionClass}" data-label="Action">${o.action} ${o.side}</span>
-            <span class="mono" data-label="Contract">${o.contract || '\u2014'}</span>
-            <span class="num mono" data-label="Qty">${o.remaining}</span>
-            <span class="num mono" data-label="Price">${o.price}\u00a2</span>
-            <span class="mono" data-label="Created" style="white-space:nowrap">${o.created}</span>
+            <span>${o.city}</span>
+            <span class="${actionClass}">${o.action} ${o.side}</span>
+            <span class="mono" data-mob="span2">${o.contract || '\u2014'}</span>
+            <span class="num mono">\u00d7${o.remaining}</span>
+            <span class="num mono">${o.price}\u00a2</span>
+            <span class="mono" data-mob="span2">${o.created}</span>
         </div>`;
     }).join('\n');
 

@@ -68,14 +68,17 @@ function buildGrid(positions, page, sortState, paginatorId) {
         const settles = p.settles ? p.settles.slice(5) : '\u2014';
         const fcast = p.forecast_high !== null ? `${p.forecast_high}\u00b0` : '\u2014';
         const rowClass = p.likely === 'WIN' ? 'pnl-positive' : p.likely === 'LOSS' ? 'pnl-negative' : '';
+        const likelyClass = p.likely === 'WIN' ? 'val-positive' : p.likely === 'LOSS' ? 'val-negative' : '';
+
+        // Mobile: Row1 City Bet(span2) Likely | Row2 Fcast Event IfWin IfLose
         return `<div class="dg-row ${rowClass}">
-          <span class="mono" data-label="Event">${settles}</span>
-          <span data-label="City">${p.city}</span>
-          <span class="mono" data-label="Bet">${p.bet}</span>
-          <span class="num mono" data-label="Fcast">${fcast}</span>
-          <span class="${p.likely === 'WIN' ? 'val-positive' : p.likely === 'LOSS' ? 'val-negative' : ''}" data-label="Likely">${p.likely || '\u2014'}</span>
-          <span class="num mono val-positive" data-label="If Win">+${fmtDollar(p.if_win)}</span>
-          <span class="num mono val-negative" data-label="If Lose">${fmtDollar(p.if_lose)}</span>
+          <span class="mono" style="--mo:11">${settles}</span>
+          <span>${p.city}</span>
+          <span class="mono" data-mob="span2">${p.bet}</span>
+          <span class="num mono" style="--mo:10" data-label="Fcast">${fcast}</span>
+          <span class="${likelyClass}">${p.likely || '\u2014'}</span>
+          <span class="num mono val-positive" style="--mo:12">+${fmtDollar(p.if_win)}</span>
+          <span class="num mono val-negative" style="--mo:13">${fmtDollar(p.if_lose)}</span>
         </div>`;
     }).join('\n');
 
@@ -149,7 +152,6 @@ function renderPortfolio(data) {
     const livePositions = data.live_positions || [];
     const paperPositions = data.paper_positions || [];
     const openPositions = data.open_positions || [];
-
     const container = document.getElementById('open-positions-table');
     if (!container) return;
 
@@ -158,21 +160,18 @@ function renderPortfolio(data) {
         _cachedLivePositions = livePositions;
         _currentPage = 1;
         _liveCurrentPage = 1;
-
         let html = '';
         if (livePositions.length > 0) {
             html += `<div class="positions-section">
                 <h3 class="positions-section-label">Live Positions \u2014 Settling <span class="positions-count">${livePositions.length}</span></h3>
                 <p class="section-desc">Real positions placed before paper mode. Will clear once Kalshi settles them.</p>
                 <div id="live-positions-table"></div>
-            </div>
-            <hr class="we-divider">`;
+            </div><hr class="we-divider">`;
         }
         html += `<div class="positions-section">
             <h3 class="positions-section-label">Paper Positions <span class="positions-count">${_cachedPositions.length}</span></h3>
             <div id="paper-positions-table"></div>
         </div>`;
-
         container.innerHTML = html;
         if (livePositions.length > 0) rerenderLive();
         rerenderPaper();

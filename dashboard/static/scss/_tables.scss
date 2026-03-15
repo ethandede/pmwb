@@ -236,7 +236,7 @@
 }
 
 // ------------------------------------
-// Mobile card layout
+// Mobile: 4-column card layout
 // ------------------------------------
 @media (max-width: $bp-sm) {
   .data-grid {
@@ -251,9 +251,9 @@
 
   .dg-row {
     display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 2px $sp-4;
-    padding: $sp-3 $sp-4;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1px $sp-2;
+    padding: $sp-2 $sp-3;
     border-bottom: 1px solid rgba($border-subtle, 0.5);
 
     &:last-of-type {
@@ -261,18 +261,35 @@
     }
 
     > span {
-      padding: $sp-1 0;
+      order: var(--mo, 0);
+      padding: 2px 0;
+      font-size: $font-size-sm;
 
-      &::before {
-        content: attr(data-label);
-        display: block;
-        font-size: 10px;
-        color: $text-muted;
+      // Inline label — only when data-label present
+      &[data-label]::before {
+        content: attr(data-label) '\00a0';
+        font-size: 9px;
+        color: rgba(255, 255, 255, 0.30);
         text-transform: uppercase;
-        letter-spacing: 0.06em;
-        font-weight: 500;
-        font-family: $font-body;
-        margin-bottom: 1px;
+        letter-spacing: 0.04em;
+        font-weight: 600;
+      }
+
+      // Spanning
+      &[data-mob="span2"] { grid-column: span 2; }
+      &[data-mob="span3"] { grid-column: span 3; }
+      &[data-mob="full"]  { grid-column: 1 / -1; }
+
+      // Meta row (time footer — pushed to end, muted)
+      &[data-mob="meta"] {
+        grid-column: 1 / -1;
+        order: 99 !important;
+        font-size: $font-size-xs;
+        color: $text-muted;
+        font-family: $font-mono;
+        padding-top: $sp-1;
+        margin-top: 1px;
+        border-top: 1px dashed rgba($border-subtle, 0.3);
       }
 
       &.num {
@@ -281,6 +298,7 @@
     }
   }
 
+  // P&L tinting on cards
   .dg-row.pnl-positive > span:first-child,
   .dg-row.pnl-negative > span:first-child {
     border-left: none;

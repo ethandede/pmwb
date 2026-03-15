@@ -90,14 +90,16 @@ function settledGrid(items, page) {
     const rows = slice.map(t => {
         const resultClass = t.outcome === 'win' ? 'val-positive' : 'val-negative';
         const pnlClass = t.pnl > 0 ? 'val-positive' : t.pnl < 0 ? 'val-negative' : 'val-neutral';
+
+        // Mobile: Row1 City Side Result P&L | Row2 Entry(labeled) ×Qty Time(span2)
         return `<div class="dg-row">
-          <span class="mono" data-label="Time" style="white-space:nowrap">${fmtTime(t.time)}</span>
-          <span data-label="City">${t.city}</span>
-          <span data-label="Side">${t.side}</span>
-          <span class="num mono" data-label="Entry">${t.price}\u00a2</span>
-          <span class="num mono" data-label="Qty">${t.qty}</span>
-          <span class="${resultClass}" data-label="Result">${t.outcome === 'win' ? 'WIN' : 'LOSS'}</span>
-          <span class="num mono ${pnlClass}" data-label="P&L">${t.pnl >= 0 ? '+' : ''}$${Math.abs(t.pnl).toFixed(2)}</span>
+          <span class="mono" style="--mo:99" data-mob="span2">${fmtTime(t.time)}</span>
+          <span>${t.city}</span>
+          <span>${t.side}</span>
+          <span class="num mono" style="--mo:10" data-label="Entry">${t.price}\u00a2</span>
+          <span class="num mono" style="--mo:11">\u00d7${t.qty}</span>
+          <span class="${resultClass}">${t.outcome === 'win' ? 'WIN' : 'LOSS'}</span>
+          <span class="num mono ${pnlClass}">${t.pnl >= 0 ? '+' : ''}$${Math.abs(t.pnl).toFixed(2)}</span>
         </div>`;
     }).join('\n');
 

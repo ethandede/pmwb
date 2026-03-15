@@ -86,16 +86,17 @@ function activityGrid(items, page) {
         const edgeClass = t.edge > 0 ? 'val-positive' : t.edge < 0 ? 'val-negative' : '';
         const confClass = t.confidence >= 60 ? 'val-positive' : t.confidence >= 40 ? 'val-amber' : t.confidence !== null ? 'val-negative' : '';
 
+        // Mobile: Time→meta, rest flows 4-col: City Action Price ×Qty | Edge Conf Outcome P&L
         return `<div class="dg-row">
-          <span class="mono" data-label="Time" style="white-space:nowrap">${fmtTime(t.time)}</span>
-          <span data-label="City">${t.city || t.ticker}</span>
-          <span class="${actionClass}" data-label="Action">${sideLabel}</span>
-          <span class="num mono" data-label="Price">${t.price}\u00a2</span>
-          <span class="num mono" data-label="Qty">${t.qty}</span>
+          <span class="mono" data-mob="meta">${fmtTime(t.time)}</span>
+          <span>${t.city || t.ticker}</span>
+          <span class="${actionClass}">${sideLabel}</span>
+          <span class="num mono">${t.price}\u00a2</span>
+          <span class="num mono">\u00d7${t.qty}</span>
           <span class="num mono ${edgeClass}" data-label="Edge">${fmtEdge(t.edge)}</span>
           <span class="num mono ${confClass}" data-label="Conf">${t.confidence !== null && t.confidence !== undefined ? t.confidence.toFixed(1) : '\u2014'}</span>
-          <span data-label="Outcome">${outcomeHtml}</span>
-          <span class="num mono" data-label="P&L">${pnlHtml}</span>
+          <span>${outcomeHtml}</span>
+          <span class="num mono">${pnlHtml}</span>
         </div>`;
     }).join('\n');
 
@@ -121,7 +122,6 @@ function activityGrid(items, page) {
 function attachHandlers() {
     const container = document.getElementById('activity-table');
     if (!container) return;
-
     container.querySelectorAll('[data-sort-key]').forEach(el => {
         el.addEventListener('click', () => {
             const key = el.dataset.sortKey;
@@ -135,24 +135,17 @@ function attachHandlers() {
             rerender();
         });
     });
-
     container.querySelectorAll('[data-paginator="activity"] .pagination-btn').forEach(btn => {
         btn.addEventListener('click', () => {
             const page = parseInt(btn.dataset.page);
-            if (!isNaN(page)) {
-                _currentPage = page;
-                rerender();
-            }
+            if (!isNaN(page)) { _currentPage = page; rerender(); }
         });
     });
 }
 
 function rerender() {
     const el = document.getElementById('activity-table');
-    if (el) {
-        el.innerHTML = activityGrid(_cachedActivity, _currentPage);
-        attachHandlers();
-    }
+    if (el) { el.innerHTML = activityGrid(_cachedActivity, _currentPage); attachHandlers(); }
 }
 
 function renderActivity(data) {
