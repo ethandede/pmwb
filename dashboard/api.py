@@ -31,8 +31,10 @@ def _get_cost_basis() -> dict:
         return {}
     conn = sqlite3.connect(str(TRADES_DB))
     conn.row_factory = sqlite3.Row
+    # Exclude sells that haven't actually filled (recorded at order time with assumed qty)
+    # A real sell fill has settlement_outcome set, or was recorded before the position was re-opened
     rows = conn.execute(
-        """SELECT ticker, side, fill_price, fill_qty, fill_time
+        """SELECT ticker, side, fill_price, fill_qty, fill_time, settlement_outcome
            FROM trades WHERE fill_qty > 0
            ORDER BY fill_time ASC"""
     ).fetchall()
@@ -46,17 +48,13 @@ def _get_cost_basis() -> dict:
 
     basis = {}
     for ticker, fills in by_ticker.items():
-        # Walk fills in chronological order
-        # After each sell, reset cost — only count buys since last full exit
-        cost_cents = 0
-        for f in fills:
-            side = f["side"] or ""
-            cents = (f["fill_price"] or 0) * (f["fill_qty"] or 0)
-            if side.startswith("sell"):
-                # Full exit resets cost basis; partial sell reduces proportionally
-                cost_cents = 0
-            else:
-                cost_cents += cents
+        # Get all buy fills (ignore sells for cost basis — we know we hold the position)
+        buy_fills = [f for f in fills if not (f["side"] or "").startswith("sell")]
+        if not buy_fills:
+            continue
+        # Use the last buy fill as the current entry cost
+        last_buy = buy_fills[-1]
+        cost_cents = (last_buy["fill_price"] or 0) * (last_buy["fill_qty"] or 0)
         if cost_cents > 0:
             basis[ticker] = round(cost_cents / 100.0, 2)
 
@@ -129,8 +127,9 @@ async def get_portfolio():
                 ticker = p.get("ticker", "")
                 exposure = float(p.get("market_exposure_dollars", 0))
                 cost = cost_basis.get(ticker, 0)
-                pnl = round(exposure - cost, 2) if cost > 0 else 0
-                entry = round(cost / qty, 2) if qty > 0 and cost > 0 else 0
+                # Negative cost means churn recovered more than current buy cost — position is "free"
+                pnl = round(exposure - cost, 2) if cost != 0 else 0
+                entry = round(max(0, cost) / qty, 2) if qty > 0 and cost > 0 else 0
 
                 # Parse settlement date and contract from ticker
                 # e.g. KXHIGHNY-26MAR14-T56 → date=2026-03-14, contract=">56°F"
