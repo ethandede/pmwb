@@ -427,6 +427,8 @@ def run_position_manager(exchange=None):
                     fill_qty=qty,
                     fill_time=datetime.now(timezone.utc).isoformat(),
                     city=result.get("city", ""),
+                    strategy="maker",
+                    fee=0.0,
                 )
             except Exception as e:
                 console.print(f"    [red]Sell failed: {e}[/red]")

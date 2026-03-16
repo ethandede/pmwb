@@ -383,6 +383,8 @@ def execute_trade(config, signal: Signal, size, exchange,
                 fill_qty=size.count,
                 fill_time=datetime.now(timezone.utc).isoformat(),
                 city=signal.city,
+                strategy=strategy,
+                fee=fee if config.exchange == "kalshi" else 0.0,
             )
         return TradeResult(
             ticker=signal.ticker, side=size.side or signal.side,
@@ -420,6 +422,8 @@ def execute_trade(config, signal: Signal, size, exchange,
         fill_qty=fill_qty,
         fill_time=datetime.now(timezone.utc).isoformat(),
         city=signal.city,
+        strategy=strategy,
+        fee=fee if config.exchange == "kalshi" else 0.0,
     )
 
     return TradeResult(
