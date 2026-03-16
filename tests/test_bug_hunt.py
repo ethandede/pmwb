@@ -20,58 +20,69 @@ import pytest
 # ============================================================================
 
 class TestErcotNegativeProb:
-    """ERCOT solar signal can produce model_prob < 0 when edge > 1.0.
+    """Regression tests for ERCOT signal edge and model_prob bounds.
 
-    In score_signal(): model_prob = 1.0 - forecast_result.get("edge", 0)
-    If expected_solrad = 25, edge = (25-15)/4 = 2.5, model_prob = -1.5.
+    Original bug: old threshold-based signal produced edge > 1.0, causing
+    model_prob = 1.0 - edge to go negative. The fair-price model (2026-03-16)
+    produces small edges by design, but we still verify bounds are respected.
     """
 
-    def test_high_solar_edge_clamped(self):
-        """Solar radiation of 25 MJ/m2 should produce edge clamped to 0.99."""
+    def test_high_solar_edge_bounded(self):
+        """High solar should produce negative edge (SHORT) within reasonable bounds."""
         from weather.multi_model import get_ercot_solar_signal
+        from datetime import datetime, timezone
 
-        with patch("weather.multi_model.http_get") as mock_get, \
-             patch("weather.multi_model.requests") as mock_req:
-            # Mock solar API to return very high radiation
+        with patch("weather.multi_model.datetime", wraps=datetime,
+                   **{"now.return_value": datetime(2026, 3, 16, 12, tzinfo=timezone.utc)}), \
+             patch("weather.multi_model.http_get") as mock_get, \
+             patch("config.VISUAL_CROSSING_API_KEY", ""):
             solar_resp = MagicMock()
             solar_resp.json.return_value = {
-                "daily": {"shortwave_radiation_sum": [25.0, 28.0, 22.0]}
+                "daily": {"shortwave_radiation_sum": [25.0, 28.0, 22.0]},
+                "daily_units": {"shortwave_radiation_sum": "MJ/m²"},
             }
             solar_resp.raise_for_status = MagicMock()
             mock_get.return_value = solar_resp
 
             result = get_ercot_solar_signal(
-                lat=32.78, lon=-96.80, hours_ahead=24,
-                ercot_data={"price": 40.0, "solar_mw": 15000.0},
+                lat=32.78, lon=-96.80,
+                hub_key="North", solar_sensitivity=0.15,
+                hours_ahead=24,
+                ercot_data={"hub_price": 40.0, "price": 40.0, "solar_mw": 15000.0, "load_forecast": 45000.0},
             )
 
-            assert result["edge"] <= 0.99, f"Edge should be clamped to 0.99, got {result['edge']}"
-            assert result["edge"] == 0.99, f"Expected max edge 0.99, got {result['edge']}"
-            assert result["signal"] == "SHORT"
+            assert -1.0 <= result["edge"] <= 1.0, f"Edge out of bounds: {result['edge']}"
+            assert result["signal"] == "SHORT"  # above-norm solar
 
     def test_score_signal_ercot_extreme_solar(self):
         """score_signal should NOT produce negative model_prob for ERCOT."""
         from pipeline.stages import score_signal
         from pipeline.config import ERCOT
+        from datetime import datetime, timezone
 
         market = {
             "hub_name": "HB_NORTH",
+            "hub_key": "North",
+            "solar_sensitivity": 0.15,
             "city": "Dallas",
             "lat": 32.78,
             "lon": -96.80,
-            "_ercot_data": {"price": 40.0, "solar_mw": 15000.0},
+            "_ercot_data": {"hub_price": 40.0, "price": 40.0, "solar_mw": 15000.0, "load_forecast": 45000.0},
         }
 
-        with patch("weather.multi_model.http_get") as mock_get:
+        with patch("weather.multi_model.datetime", wraps=datetime,
+                   **{"now.return_value": datetime(2026, 3, 16, 12, tzinfo=timezone.utc)}), \
+             patch("weather.multi_model.http_get") as mock_get, \
+             patch("config.VISUAL_CROSSING_API_KEY", ""):
             solar_resp = MagicMock()
             solar_resp.json.return_value = {
-                "daily": {"shortwave_radiation_sum": [25.0, 28.0, 22.0]}
+                "daily": {"shortwave_radiation_sum": [25.0, 28.0, 22.0]},
+                "daily_units": {"shortwave_radiation_sum": "MJ/m²"},
             }
             solar_resp.raise_for_status = MagicMock()
             mock_get.return_value = solar_resp
 
             signal = score_signal(ERCOT, market)
-            # model_prob should be clamped to [0.01, 0.99]
             assert signal.model_prob >= 0.01, \
                 f"model_prob went below 0.01: {signal.model_prob}"
             assert signal.model_prob <= 0.99, \
