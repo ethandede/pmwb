@@ -56,6 +56,17 @@ def run_cycle(cycle_num: int, runner: PipelineRunner, exchanges: dict):
         traceback.print_exc()
         send_alert("ERCOT Manager Failed", str(e), dedup_key="ercot_mgr_error")
 
+    # --- Phase 1.5: Stale order cleanup ---
+    kalshi = exchanges.get("kalshi")
+    if kalshi:
+        try:
+            from kalshi.order_cleanup import cleanup_stale_orders
+            cancelled = cleanup_stale_orders(kalshi)
+            if cancelled:
+                console.print(f"  Cancelled {len(cancelled)} stale order(s)")
+        except Exception as e:
+            console.print(f"  [red]Order cleanup error: {e}[/red]")
+
     # --- Phase 2: New signal scan + entries ---
     console.print(f"\n[bold]Phase 2: Market Scan (Pipeline)[/bold]")
     try:
