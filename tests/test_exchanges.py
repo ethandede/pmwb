@@ -63,6 +63,16 @@ def test_kalshi_sell_order():
     assert result["order"]["status"] == "executed"
 
 
+def test_kalshi_cancel_order():
+    """cancel_order sends DELETE with order_id in path."""
+    exchange = KalshiExchange()
+    with patch.object(exchange, '_delete') as mock_delete:
+        mock_delete.return_value = {"order": {"order_id": "abc123", "status": "cancelled"}}
+        result = exchange.cancel_order("abc123")
+    mock_delete.assert_called_once_with("/trade-api/v2/portfolio/orders/abc123")
+    assert result["order"]["status"] == "cancelled"
+
+
 def test_ercot_fetch_market_data():
     """fetch_market_data returns price + solar + load."""
     exchange = ErcotExchange()

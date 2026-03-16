@@ -62,6 +62,12 @@ class KalshiExchange:
         resp.raise_for_status()
         return resp.json()
 
+    def _delete(self, path: str) -> dict:
+        headers = self._sign_request("DELETE", path)
+        resp = requests.delete(f"{_BASE_URL}{path}", headers=headers, timeout=15)
+        resp.raise_for_status()
+        return resp.json()
+
     def _post_order(self, ticker: str, action: str, side: str, price_cents: int, count: int) -> dict:
         path = "/trade-api/v2/portfolio/orders"
         headers = self._sign_request("POST", path)
@@ -136,6 +142,10 @@ class KalshiExchange:
     def sell_order(self, ticker: str, side: str, price_cents: int, count: int) -> dict:
         """Convenience for selling — delegates to place_order with action='sell'."""
         return self._post_order(ticker, "sell", side, price_cents, count)
+
+    def cancel_order(self, order_id: str) -> dict:
+        """Cancel a resting order by ID."""
+        return self._delete(f"/trade-api/v2/portfolio/orders/{order_id}")
 
     def fetch_events(self, series_ticker: str) -> list:
         """Fetch all open events for a series (for market discovery)."""
