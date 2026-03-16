@@ -21,9 +21,17 @@ def init_trades_db(db_path: str = "data/trades.db"):
             fill_qty INTEGER,
             fill_time TEXT,
             settlement_outcome TEXT,
-            pnl REAL
+            pnl REAL,
+            strategy TEXT,
+            fee REAL DEFAULT 0.0
         )
     """)
+    # Migrate existing tables missing new columns
+    for col, typedef in [("strategy", "TEXT"), ("fee", "REAL DEFAULT 0.0")]:
+        try:
+            conn.execute(f"ALTER TABLE trades ADD COLUMN {col} {typedef}")
+        except sqlite3.OperationalError:
+            pass  # column already exists
     conn.commit()
     conn.close()
 
@@ -40,24 +48,31 @@ def record_fill(
     city: str = "",
     settlement_outcome: Optional[str] = None,
     pnl: Optional[float] = None,
+    strategy: Optional[str] = None,
+    fee: float = 0.0,
 ):
     """Record a fill. Updates only fill data if order already exists.
 
     On conflict (same order_id), only fill_price, fill_qty, and fill_time are
-    updated — side and city are preserved from the original insert so the
-    poller cannot overwrite the canonical values set by execute_kalshi_signal.
+    updated — side, city, strategy, and fee are preserved from the original
+    insert so the poller cannot overwrite the canonical values set by
+    execute_trade.
     """
     conn = sqlite3.connect(db_path)
     conn.execute(
         """INSERT INTO trades
-           (order_id, ticker, city, side, limit_price, fill_price, fill_qty, fill_time, settlement_outcome, pnl)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           (order_id, ticker, city, side, limit_price, fill_price, fill_qty,
+            fill_time, settlement_outcome, pnl, strategy, fee)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(order_id) DO UPDATE SET
                fill_price = excluded.fill_price,
                fill_qty = excluded.fill_qty,
-               fill_time = excluded.fill_time
+               fill_time = excluded.fill_time,
+               strategy = COALESCE(excluded.strategy, trades.strategy),
+               fee = CASE WHEN excluded.fee > 0 THEN excluded.fee ELSE trades.fee END
            WHERE excluded.fill_qty > trades.fill_qty""",
-        (order_id, ticker, city, side, limit_price, fill_price, fill_qty, fill_time, settlement_outcome, pnl),
+        (order_id, ticker, city, side, limit_price, fill_price, fill_qty,
+         fill_time, settlement_outcome, pnl, strategy, fee),
     )
     conn.commit()
     conn.close()

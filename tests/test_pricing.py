@@ -128,3 +128,80 @@ class TestChoosePriceStrategy:
             side="yes", yes_bid=45, yes_ask=55, edge=0.15,
         )
         assert strategy == "taker"
+
+
+import os
+import tempfile
+from kalshi.fill_tracker import init_trades_db, record_fill
+import sqlite3
+
+
+class TestFeeRecording:
+    def test_record_fill_with_strategy_and_fee(self):
+        """record_fill should store strategy and fee columns."""
+        with tempfile.TemporaryDirectory() as tmp:
+            db = os.path.join(tmp, "trades.db")
+            init_trades_db(db)
+            record_fill(
+                db_path=db,
+                order_id="test-1",
+                ticker="KXHIGHNY-26MAR16-T58",
+                side="buy_yes",
+                limit_price=46,
+                fill_price=46,
+                fill_qty=5,
+                fill_time="2026-03-16T10:00:00Z",
+                city="new_york",
+                strategy="maker",
+                fee=0.0,
+            )
+            conn = sqlite3.connect(db)
+            conn.row_factory = sqlite3.Row
+            row = conn.execute("SELECT * FROM trades WHERE order_id='test-1'").fetchone()
+            conn.close()
+            assert row["strategy"] == "maker"
+            assert row["fee"] == 0.0
+
+    def test_record_fill_taker_fee(self):
+        """Taker trades should record non-zero fee."""
+        with tempfile.TemporaryDirectory() as tmp:
+            db = os.path.join(tmp, "trades.db")
+            init_trades_db(db)
+            record_fill(
+                db_path=db,
+                order_id="test-2",
+                ticker="KXHIGHNY-26MAR16-T58",
+                side="buy_yes",
+                limit_price=55,
+                fill_price=55,
+                fill_qty=5,
+                fill_time="2026-03-16T10:00:00Z",
+                city="new_york",
+                strategy="taker",
+                fee=0.175,
+            )
+            conn = sqlite3.connect(db)
+            conn.row_factory = sqlite3.Row
+            row = conn.execute("SELECT * FROM trades WHERE order_id='test-2'").fetchone()
+            conn.close()
+            assert row["strategy"] == "taker"
+            assert row["fee"] == pytest.approx(0.175)
+
+    def test_upsert_preserves_strategy(self):
+        """ON CONFLICT should preserve strategy/fee from first insert."""
+        with tempfile.TemporaryDirectory() as tmp:
+            db = os.path.join(tmp, "trades.db")
+            init_trades_db(db)
+            # First: execute_trade records with strategy
+            record_fill(db, "test-3", "T1", "buy_yes", 46, 46, 5,
+                         "2026-03-16T10:00:00Z", strategy="maker", fee=0.0)
+            # Second: poller updates without strategy (larger fill)
+            record_fill(db, "test-3", "T1", "buy_yes", 46, 46, 8,
+                         "2026-03-16T10:01:00Z")
+            conn = sqlite3.connect(db)
+            conn.row_factory = sqlite3.Row
+            row = conn.execute("SELECT * FROM trades WHERE order_id='test-3'").fetchone()
+            conn.close()
+            assert row["strategy"] == "maker"
+            assert row["fee"] == 0.0
+            assert row["fill_qty"] == 8  # updated by poller
