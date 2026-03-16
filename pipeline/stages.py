@@ -111,11 +111,61 @@ def score_signal(config, market: dict) -> Signal:
     )
 
 
+def _parse_temp_constraint(ticker: str, side: str):
+    """Parse a temperature ticker + side into a constraint on the actual temp.
+
+    Returns (market_key, lower_bound, upper_bound) or None.
+    - market_key groups contracts for the same city/date (e.g. "KXHIGHNY-26MAR13")
+    - lower_bound: actual temp >= X  (or None)
+    - upper_bound: actual temp <  X  (or None)
+
+    Constraint mapping:
+      NO  on B_X  →  temp >= X   (lower bound)
+      YES on B_X  →  temp <  X   (upper bound)
+      YES on T_X  →  temp >= X   (lower bound)
+      NO  on T_X  →  temp <  X   (upper bound)
+    """
+    parts = ticker.split("-")
+    if len(parts) < 3:
+        return None
+
+    bucket = parts[2]  # e.g. "B47.5" or "T83"
+    if not bucket or bucket[0] not in ("B", "T"):
+        return None
+
+    try:
+        threshold = float(bucket[1:])
+    except (ValueError, IndexError):
+        return None
+
+    market_key = f"{parts[0]}-{parts[1]}"
+    bucket_type = bucket[0]
+
+    lower = upper = None
+    if bucket_type == "B":          # "below X"
+        if side == "no":
+            lower = threshold       # NOT below → temp >= X
+        else:
+            upper = threshold       # below → temp < X
+    else:                           # "T" = "at or above X"
+        if side == "yes":
+            lower = threshold       # at/above → temp >= X
+        else:
+            upper = threshold       # NOT at/above → temp < X
+
+    return (market_key, lower, upper)
+
+
 def filter_signals(config, signals: list[Signal], held_positions: list,
-                   resting_tickers: set[str]) -> list[Signal]:
+                   resting_tickers: set[str],
+                   held_sides: dict[str, str] | None = None) -> list[Signal]:
     """Stage 3: Apply edge gate, confidence gate, liquidity, dedup, cross-contract.
 
     Returns filtered and de-conflicted signal list, sorted by absolute edge descending.
+
+    Args:
+        held_sides: ticker → side ("yes"/"no") for existing positions.
+                    Used for cross-contract consistency checking.
     """
     results = []
 
@@ -124,6 +174,21 @@ def filter_signals(config, signals: list[Signal], held_positions: list,
 
     held_tickers = {p.get("ticker", "") for p in held_positions
                     if float(p.get("position_fp", 0)) != 0}
+
+    # Build temperature constraints from existing positions for cross-contract check
+    if held_sides is None:
+        held_sides = {}
+    market_constraints: dict[str, dict[str, list[float]]] = {}
+    for ticker, side in held_sides.items():
+        parsed = _parse_temp_constraint(ticker, side)
+        if parsed:
+            key, lower, upper = parsed
+            if key not in market_constraints:
+                market_constraints[key] = {"lower": [], "upper": []}
+            if lower is not None:
+                market_constraints[key]["lower"].append(lower)
+            if upper is not None:
+                market_constraints[key]["upper"].append(upper)
 
     for signal in ranked:
         # Determine effective thresholds
@@ -160,6 +225,17 @@ def filter_signals(config, signals: list[Signal], held_positions: list,
         if signal.ticker in resting_tickers:
             continue
 
+        # Cross-contract consistency: block signals that contradict
+        # existing positions on the same city/date.
+        parsed = _parse_temp_constraint(signal.ticker, signal.side)
+        if parsed:
+            key, new_lower, new_upper = parsed
+            existing = market_constraints.get(key, {"lower": [], "upper": []})
+            test_lowers = existing["lower"] + ([new_lower] if new_lower is not None else [])
+            test_uppers = existing["upper"] + ([new_upper] if new_upper is not None else [])
+            if test_lowers and test_uppers and max(test_lowers) >= min(test_uppers):
+                continue  # contradictory — skip
+
         # Liquidity gate (for Kalshi markets)
         if signal.market and config.exchange == "kalshi":
             volume = float(signal.market.get("volume_24h_fp", 0) or 0)
@@ -168,6 +244,17 @@ def filter_signals(config, signals: list[Signal], held_positions: list,
                 continue
 
         results.append(signal)
+
+        # Track accepted signal for within-cycle cross-contract checks
+        held_tickers.add(signal.ticker)
+        if parsed:
+            key, new_lower, new_upper = parsed
+            if key not in market_constraints:
+                market_constraints[key] = {"lower": [], "upper": []}
+            if new_lower is not None:
+                market_constraints[key]["lower"].append(new_lower)
+            if new_upper is not None:
+                market_constraints[key]["upper"].append(new_upper)
 
     return results
 

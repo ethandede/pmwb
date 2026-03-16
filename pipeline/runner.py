@@ -57,20 +57,31 @@ class PipelineRunner:
             except Exception as e:
                 print(f"  Position fetch failed: {e}")
 
-        # Also include paper positions from trades.db for dedup
+        # Include ALL unsettled positions from trades.db for dedup + cross-contract
         import sqlite3
+        held_sides: dict[str, str] = {}  # ticker -> side for cross-contract checks
         try:
             conn = sqlite3.connect("data/trades.db")
-            paper_rows = conn.execute(
-                "SELECT DISTINCT ticker FROM trades WHERE settlement_outcome IS NULL AND order_id LIKE 'paper-%'"
+            rows = conn.execute(
+                """SELECT ticker,
+                    CASE WHEN side IN ('no', 'buy_no', 'sell_no') THEN 'no' ELSE 'yes' END as pos_side,
+                    SUM(CASE
+                        WHEN side IN ('no', 'buy_no', 'yes', 'buy_yes') THEN fill_qty
+                        WHEN side LIKE 'sell_%' THEN -fill_qty
+                        ELSE 0
+                    END) as net_qty
+                FROM trades
+                WHERE settlement_outcome IS NULL
+                GROUP BY ticker,
+                    CASE WHEN side IN ('no', 'buy_no', 'sell_no') THEN 'no' ELSE 'yes' END
+                HAVING net_qty > 0"""
             ).fetchall()
-            paper_tickers = {r[0] for r in paper_rows}
             conn.close()
-            # Add paper tickers to held_positions so filter_signals skips them
-            for t in paper_tickers:
-                held_positions.append({"ticker": t, "position_fp": "1.0"})
-        except Exception:
-            pass
+            for ticker, pos_side, net_qty in rows:
+                held_positions.append({"ticker": ticker, "position_fp": str(net_qty)})
+                held_sides[ticker] = pos_side
+        except Exception as e:
+            print(f"  Paper dedup query failed: {e}")
 
         # Process each config
         for config in self.configs:
@@ -97,7 +108,8 @@ class PipelineRunner:
                     except Exception as e:
                         state.errors.append(f"score: {e}")
 
-                filtered = filter_signals(config, signals, held_positions, resting_tickers)
+                filtered = filter_signals(config, signals, held_positions, resting_tickers,
+                                          held_sides=held_sides)
                 state.signals_filtered = len(filtered)
 
                 for signal in filtered:

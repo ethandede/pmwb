@@ -281,11 +281,7 @@ class TestCrossContractConsistency:
     """Verify that the filter catches contradictory bets on same city/date."""
 
     def test_contradictory_signals_same_city_date(self):
-        """Betting YES on >65 AND NO on >60 for same city/date is contradictory.
-
-        If actual temp is 63: >60 YES wins, >65 NO wins. But both can't be right
-        if the positions are large. Currently no check exists — documenting gap.
-        """
+        """YES on T65 (temp>=65) + NO on T60 (temp<60) contradict — second blocked."""
         from pipeline.stages import filter_signals
         from pipeline.types import Signal
         from pipeline.config import KALSHI_TEMP
@@ -311,19 +307,63 @@ class TestCrossContractConsistency:
         resting = set()
         filtered = filter_signals(KALSHI_TEMP, signals, held, resting)
 
-        # Both signals pass because there's no cross-contract check.
-        # This is the documented gap — at minimum we flag it.
-        if len(filtered) > 1:
-            # Check for logical consistency
-            cities_days = {}
-            for s in filtered:
-                key = (s.city, s.days_ahead)
-                cities_days.setdefault(key, []).append(s)
-            for key, sigs in cities_days.items():
-                sides = {s.side for s in sigs}
-                if "yes" in sides and "no" in sides:
-                    # This is the gap — contradictory signals passed
-                    pytest.skip("Known gap: no cross-contract consistency check")
+        # Cross-contract check: YES T65 → temp>=65, NO T60 → temp<60
+        # These contradict (65 >= 60). Stronger edge wins (sorted by |edge|).
+        # T60 has |edge|=0.45 > T65's |edge|=0.20, so T60 passes first.
+        assert len(filtered) == 1
+        assert filtered[0].ticker == "KXHIGHNY-26MAR16-T60"
+
+    def test_consistent_signals_same_city_date_pass(self):
+        """Consistent directional bets on same city/date should both pass."""
+        from pipeline.stages import filter_signals
+        from pipeline.types import Signal
+        from pipeline.config import KALSHI_TEMP
+
+        # Both are bullish: NO on B50 (temp>=50) and NO on B55 (temp>=55)
+        signals = [
+            Signal(
+                ticker="KXHIGHNY-26MAR16-B55",
+                city="nyc", market_type="kalshi_temp",
+                side="no", model_prob=0.80, market_prob=0.55,
+                edge=0.25, confidence=80.0, price_cents=55, days_ahead=1,
+                market={"volume_24h_fp": "1000", "open_interest_fp": "1000"},
+            ),
+            Signal(
+                ticker="KXHIGHNY-26MAR16-B50",
+                city="nyc", market_type="kalshi_temp",
+                side="no", model_prob=0.85, market_prob=0.60,
+                edge=0.25, confidence=80.0, price_cents=60, days_ahead=1,
+                market={"volume_24h_fp": "1000", "open_interest_fp": "1000"},
+            ),
+        ]
+
+        filtered = filter_signals(KALSHI_TEMP, signals, [], set())
+        assert len(filtered) == 2
+
+    def test_contradiction_against_held_position(self):
+        """New signal contradicting an existing held position is blocked."""
+        from pipeline.stages import filter_signals
+        from pipeline.types import Signal
+        from pipeline.config import KALSHI_TEMP
+
+        # Held: NO on B48.5 → temp >= 48.5 (lower bound)
+        held_sides = {"KXHIGHCHI-26MAR13-B48.5": "no"}
+
+        # New: NO on T44 → temp < 44 (upper bound)
+        # 48.5 >= 44 → contradiction
+        signals = [
+            Signal(
+                ticker="KXHIGHCHI-26MAR13-T44",
+                city="chicago", market_type="kalshi_temp",
+                side="no", model_prob=0.25, market_prob=0.55,
+                edge=-0.30, confidence=80.0, price_cents=55, days_ahead=0,
+                market={"volume_24h_fp": "1000", "open_interest_fp": "1000"},
+            ),
+        ]
+
+        filtered = filter_signals(KALSHI_TEMP, signals, [], set(),
+                                  held_sides=held_sides)
+        assert len(filtered) == 0
 
 
 # ============================================================================

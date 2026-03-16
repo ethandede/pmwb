@@ -88,9 +88,9 @@ def test_filter_edge_gate():
     config.exchange = "kalshi"
 
     signals = [
-        _make_signal(edge=0.15, confidence=70),   # passes
-        _make_signal(edge=0.05, confidence=70),   # filtered (edge too low)
-        _make_signal(edge=-0.20, confidence=70),  # passes (abs edge)
+        _make_signal(ticker="KXHIGHNY-26MAR15-T56", edge=0.15, confidence=70),   # passes
+        _make_signal(ticker="KXHIGHNY-26MAR15-T50", edge=0.05, confidence=70),   # filtered (edge too low)
+        _make_signal(ticker="KXHIGHNY-26MAR15-T52", edge=-0.20, confidence=70),  # passes (abs edge)
     ]
 
     filtered = filter_signals(config, signals, held_positions=[], resting_tickers=set())

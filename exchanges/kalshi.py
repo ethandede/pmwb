@@ -102,6 +102,34 @@ class KalshiExchange:
         data = self._get(f"/trade-api/v2/markets/{ticker}")
         return data.get("market", {})
 
+    def get_settled_event_markets(self, series_ticker: str) -> dict[str, dict]:
+        """Fetch all settled markets for a series via the events API.
+
+        Returns {ticker: {"status": ..., "result": ...}} for settled markets.
+        Individual market lookups 404 after settlement, but events API
+        returns them with status='finalized' and result='yes'|'no'.
+        """
+        result_map: dict[str, dict] = {}
+        try:
+            data = self._get("/trade-api/v2/events", {
+                "series_ticker": series_ticker,
+                "status": "settled",
+                "with_nested_markets": "true",
+                "limit": 200,
+            })
+            for event in data.get("events", []):
+                for market in event.get("markets", []):
+                    t = market.get("ticker", "")
+                    if t:
+                        result_map[t] = {
+                            "status": market.get("status", ""),
+                            "result": market.get("result", ""),
+                            "expiration_value": market.get("expiration_value"),
+                        }
+        except Exception as e:
+            print(f"  Events API error for {series_ticker}: {e}")
+        return result_map
+
     def place_order(self, ticker: str, action: str, side: str, price_cents: int, count: int) -> dict:
         return self._post_order(ticker, action, side, price_cents, count)
 

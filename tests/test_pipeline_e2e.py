@@ -191,10 +191,12 @@ class TestSettlerE2E:
                         60, 60, 5, "2026-03-12T02:28:02Z", city="nyc")
 
             mock_exchange = MagicMock()
-            mock_exchange.get_market.return_value = {
-                "status": "finalized",
-                "result": "no",  # temperature was below 64
-                "expiration_value": 0.0,
+            mock_exchange.get_settled_event_markets.return_value = {
+                "KXHIGHNY-26MAR12-T64": {
+                    "status": "finalized",
+                    "result": "no",  # temperature was below 64
+                    "expiration_value": 0.0,
+                },
             }
 
             with patch("kalshi.settler.TRADES_DB_PATH", db_path):
@@ -220,10 +222,8 @@ class TestSettlerE2E:
                         55, 55, 5, "2026-03-15T18:00:00Z", city="nyc")
 
             mock_exchange = MagicMock()
-            mock_exchange.get_market.return_value = {
-                "status": "open",
-                "result": "",
-            }
+            # Events API returns empty for this series (no settled markets)
+            mock_exchange.get_settled_event_markets.return_value = {}
 
             with patch("kalshi.settler.TRADES_DB_PATH", db_path):
                 run_settler(exchange=mock_exchange)
@@ -249,10 +249,12 @@ class TestSettlerE2E:
                         80, 80, 5, "2026-03-12T15:00:00Z", city="nyc")
 
             mock_exchange = MagicMock()
-            mock_exchange.get_market.return_value = {
-                "status": "finalized",
-                "result": "yes",
-                "expiration_value": 1.0,
+            mock_exchange.get_settled_event_markets.return_value = {
+                "KXHIGHNY-26MAR12-T64": {
+                    "status": "finalized",
+                    "result": "yes",
+                    "expiration_value": 1.0,
+                },
             }
 
             with patch("kalshi.settler.TRADES_DB_PATH", db_path):
@@ -283,10 +285,12 @@ class TestSettlerE2E:
                         60, 60, 5, "2026-03-12T02:28:02Z", city="nyc")
 
             mock_exchange = MagicMock()
-            mock_exchange.get_market.return_value = {
-                "status": "finalized",
-                "result": "no",
-                "expiration_value": 0.0,
+            mock_exchange.get_settled_event_markets.return_value = {
+                "KXHIGHNY-26MAR12-T64": {
+                    "status": "finalized",
+                    "result": "no",
+                    "expiration_value": 0.0,
+                },
             }
 
             with patch("kalshi.settler.TRADES_DB_PATH", db_path):
