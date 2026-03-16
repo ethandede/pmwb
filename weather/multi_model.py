@@ -10,6 +10,7 @@ import math
 import os
 import sqlite3
 import requests
+from datetime import datetime, timezone
 from weather.http import get as http_get
 from typing import List, Optional, Tuple, Dict
 from weather.forecast import get_ensemble_max_temps, get_ensemble_min_temps, get_bucket_prob
@@ -396,7 +397,7 @@ def fuse_forecast(
         }
     else:
         ensemble_prob = None
-        ensemble_spread = 99
+        ensemble_spread = None
         ensemble_mean = None
         details["ensemble"] = {"prob": None, "error": "unavailable (429 or no data)"}
 
@@ -513,7 +514,14 @@ def fuse_forecast(
     else:
         agreement = 0.5
 
-    spread_norm = max(0.0, min(1.0, 1.0 - ensemble_spread / 12.0))
+    if ensemble_spread is not None:
+        spread_norm = max(0.0, min(1.0, 1.0 - ensemble_spread / 12.0))
+    elif len(point_temps) >= 2:
+        # Model disagreement * 3 approximates ensemble member spread
+        inferred_spread = temp_range * 3.0
+        spread_norm = max(0.0, min(1.0, 1.0 - inferred_spread / 12.0))
+    else:
+        spread_norm = 0.3  # conservative default: single model only
 
     bias_counts = [get_bias(city, month, m)[1] for m in ["ensemble", "noaa", "hrrr", "ecmwf", "visualcrossing"]]
     best_bias_n = max(bias_counts) if bias_counts else 0
@@ -540,18 +548,39 @@ def fuse_forecast(
 # ERCOT Solar / Power Price Signal
 # ---------------------------------------------------------------------------
 
-def get_ercot_solar_signal(lat: float, lon: float, hours_ahead: int = 24, ercot_data: dict = None) -> dict:
-    """Solar irradiance → ERCOT power price signal.
-    Returns ready-to-use signal for your position manager.
+def get_ercot_solar_signal(
+    lat: float, lon: float,
+    hub_key: str = "",
+    solar_sensitivity: float = 0.15,
+    hours_ahead: int = 24,
+    ercot_data: dict = None,
+) -> dict:
+    """Solar irradiance + ERCOT price -> fair-price trading signal.
 
-    Args:
-        ercot_data: optional pre-fetched {"price": float, "solar_mw": float}
-                    to avoid redundant API calls when scanning multiple hubs.
+    Uses per-hub solar sensitivity and load forecast to estimate
+    whether the current hub price is above or below fair value.
     """
+    from config import (
+        VISUAL_CROSSING_API_KEY, ERCOT_SEASONAL_NORMS,
+        ERCOT_LOAD_SENSITIVITY,
+    )
 
-    # 1. Solar irradiance — try Visual Crossing first (more reliable), fall back to Open-Meteo
-    expected_solrad = None
-    from config import VISUAL_CROSSING_API_KEY
+    # 1. Seasonal norms for current month
+    month = datetime.now(timezone.utc).month
+    norms = ERCOT_SEASONAL_NORMS.get(month)
+    if norms is None:
+        try:
+            from alerts.telegram_alert import send_alert
+            send_alert("ERCOT Norms Missing", f"No seasonal norms for month {month}",
+                       dedup_key="ercot_norms_missing")
+        except Exception:
+            pass
+        norms = {"solar": 18.0, "load": 50_000}
+    norm_solar = norms["solar"]
+    norm_load = norms["load"]
+
+    # 2a. Visual Crossing solrad (primary)
+    vc_solrad = None
     if VISUAL_CROSSING_API_KEY:
         try:
             vc_r = http_get(
@@ -565,77 +594,88 @@ def get_ercot_solar_signal(lat: float, lon: float, hours_ahead: int = 24, ercot_
             vc_days = vc_r.json().get("days", [])
             target_idx = min(hours_ahead // 24, len(vc_days) - 1)
             if vc_days and vc_days[target_idx].get("solarenergy") is not None:
-                expected_solrad = float(vc_days[target_idx]["solarenergy"])
+                vc_solrad = float(vc_days[target_idx]["solarenergy"])
         except Exception as e:
             print(f"  Visual Crossing solar error: {e}")
 
-    if expected_solrad is None:
-        try:
-            url = (
-                f"https://api.open-meteo.com/v1/forecast"
-                f"?latitude={lat}&longitude={lon}"
-                f"&daily=shortwave_radiation_sum"
-                f"&forecast_days=3"
-                f"&timezone=auto"
-            )
-            r = http_get(url, timeout=10)
-            r.raise_for_status()
-            radiation = r.json().get("daily", {}).get("shortwave_radiation_sum", [])
-            target_idx = min(hours_ahead // 24, len(radiation) - 1)
-            expected_solrad = radiation[target_idx] if radiation else 15.0
-        except Exception as e:
-            print(f"  Solar irradiance fetch error: {e}")
-            expected_solrad = 15.0
+    # 2b. Open-Meteo solrad (cross-reference for confidence)
+    om_solrad = None
+    try:
+        url = (
+            f"https://api.open-meteo.com/v1/forecast"
+            f"?latitude={lat}&longitude={lon}"
+            f"&daily=shortwave_radiation_sum"
+            f"&forecast_days=3"
+            f"&timezone=auto"
+        )
+        r = http_get(url, timeout=10)
+        r.raise_for_status()
+        data = r.json()
+        radiation = data.get("daily", {}).get("shortwave_radiation_sum", [])
+        target_idx = min(hours_ahead // 24, len(radiation) - 1)
+        raw_om = radiation[target_idx] if radiation else None
 
-    # 2. ERCOT market data — use pre-fetched if available
-    if ercot_data is not None:
-        current_price = float(ercot_data.get("price", 40.0))
-        actual_solar_mw = float(ercot_data.get("solar_mw", 0.0))
+        if raw_om is not None:
+            # Unit validation — skip agreement check if unit unrecognized
+            unit = data.get("daily_units", {}).get("shortwave_radiation_sum", "")
+            if "kJ" in unit:
+                om_solrad = raw_om / 1000.0
+            elif "Wh" in unit:
+                om_solrad = raw_om * 0.0036
+            elif "MJ" in unit:
+                om_solrad = raw_om
+            else:
+                # Unrecognized unit — log warning, skip agreement check
+                print(f"  Open-Meteo unknown solar unit: {unit!r}, skipping agreement")
+                om_solrad = None  # don't use for agreement
+    except Exception as e:
+        print(f"  Open-Meteo solar error: {e}")
+
+    # 2c. Pick primary solrad: VC preferred, OM fallback, then seasonal norm
+    if vc_solrad is not None:
+        expected_solrad = vc_solrad
+    elif om_solrad is not None:
+        expected_solrad = om_solrad
     else:
-        current_price = 40.0
-        actual_solar_mw = 12000.0
-        # Fetch ERCOT data via authenticated API (fallback when not pre-fetched)
-        from ercot.auth import get_ercot_headers
-        _headers = get_ercot_headers()
-        try:
-            r = requests.get("https://api.ercot.com/api/public-reports/np6-788-cd/lmp_node_zone_hub",
-                             headers=_headers, timeout=10)
-            data = r.json().get("data", [])
-            for rec in data:
-                if rec.get("SettlementPoint", "").startswith("HB_"):
-                    current_price = float(rec.get("LMP", 40.0))
-                    break
-        except:
-            current_price = 40.0
-        try:
-            r = requests.get("https://api.ercot.com/api/public-reports/np4-738-cd/spp_hrly_actual_fcast_geo",
-                             headers=_headers, timeout=10)
-            data = r.json().get("data", [])
-            solar_vals = [float(rec.get("actual", 0) or 0) for rec in data
-                          if "solar" in rec.get("fuelType", "").lower()]
-            actual_solar_mw = sum(solar_vals) if solar_vals else 12000.0
-        except Exception as e:
-            print(f"  ERCOT solar gen fetch error: {e}")
-            actual_solar_mw = 12000.0
+        expected_solrad = norm_solar  # no data = no solar signal
 
-    # 3. Signal logic (tunable)
-    if expected_solrad > 18.0:
-        signal = "SHORT"
-        edge = min((expected_solrad - 15.0) / 4.0, 0.99)
-    elif expected_solrad < 10.0:
+    # 3. ERCOT market data
+    if ercot_data is not None:
+        hub_price = float(ercot_data.get("hub_price", ercot_data.get("price", 40.0)))
+        actual_solar_mw = float(ercot_data.get("solar_mw", 0.0))
+        load_forecast = float(ercot_data.get("load_forecast", norm_load))
+    else:
+        hub_price = 40.0
+        actual_solar_mw = 12000.0
+        load_forecast = norm_load
+
+    # 4. Fair price model
+    solar_impact = solar_sensitivity * (norm_solar - expected_solrad) / norm_solar
+    load_impact = ERCOT_LOAD_SENSITIVITY * (load_forecast - norm_load) / norm_load
+    edge = round(solar_impact + load_impact, 4)
+
+    # 5. Signal direction
+    if edge > 0:
         signal = "LONG"
-        edge = min((15.0 - expected_solrad) / 4.0, 0.99)
+    elif edge < 0:
+        signal = "SHORT"
     else:
         signal = "NEUTRAL"
-        edge = 0.0
 
-    confidence = 70 if abs(edge) > 0.50 else 50
+    # 6. Confidence: base + agreement + deviation
+    base_conf = 30
+    agreement_bonus = 0
+    if vc_solrad is not None and om_solrad is not None:
+        if abs(vc_solrad - om_solrad) <= 2.0:
+            agreement_bonus = 20
+    price_deviation_bonus = min(30, abs(edge) * 300)
+    confidence = int(min(90, max(30, base_conf + agreement_bonus + price_deviation_bonus)))
 
     return {
         "signal": signal,
-        "edge": round(edge, 2),
+        "edge": round(edge, 4),
         "expected_solrad_mjm2": round(expected_solrad, 1),
-        "current_ercot_price": round(current_price, 1),
+        "current_ercot_price": round(hub_price, 1),
         "actual_solar_mw": round(actual_solar_mw, 0),
         "confidence": confidence,
     }
