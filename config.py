@@ -71,6 +71,8 @@ TELEGRAM_DAILY_SCORECARD = True
 
 # --- ERCOT Power Price Signal ---
 ERCOT_API_KEY = os.getenv("ERCOT_API_KEY", "")
+ERCOT_USERNAME = os.getenv("ERCOT_USERNAME", "")
+ERCOT_PASSWORD = os.getenv("ERCOT_PASSWORD", "")
 ERCOT_HUBS = {
     "North":     {"city": "Dallas",      "lat": 32.78,  "lon": -96.80,  "hub_name": "HB_NORTH"},
     "Houston":   {"city": "Houston",     "lat": 29.76,  "lon": -95.37,  "hub_name": "HB_HOUSTON"},
