@@ -126,6 +126,17 @@ class PipelineRunner:
                 self._consecutive_errors[config.name] = \
                     self._consecutive_errors.get(config.name, 0) + 1
                 print(f"  Pipeline error ({config.name}): {e}")
+                # Alert on 3rd consecutive error (not first — transient failures are normal)
+                if self._consecutive_errors[config.name] == 3:
+                    try:
+                        from alerts.telegram_alert import send_alert
+                        send_alert(
+                            f"{config.display_name} API Down",
+                            f"3 consecutive failures.\nLast error: {e}",
+                            dedup_key=f"pipeline_{config.name}_down",
+                        )
+                    except Exception:
+                        pass
 
             # Log cycle stats
             if state.trades_executed > 0 or state.errors:

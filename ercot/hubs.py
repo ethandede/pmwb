@@ -61,6 +61,18 @@ def _fetch_ercot_market_data() -> dict:
     except Exception as e:
         print(f"  ERCOT load forecast fetch error: {e}")
 
+    # Alert if all 3 endpoints failed (using defaults for everything)
+    if result["price"] == 40.0 and result["solar_mw"] == 12000.0 and result["load_forecast"] == 50000.0:
+        try:
+            from alerts.telegram_alert import send_alert
+            send_alert(
+                "ERCOT APIs Down",
+                "All 3 ERCOT endpoints returned errors. Using fallback defaults.",
+                dedup_key="ercot_api_down",
+            )
+        except Exception:
+            pass
+
     _ercot_cache = result
     _ercot_cache_time = time.time()
     return result

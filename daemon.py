@@ -37,6 +37,8 @@ def run_cycle(cycle_num: int, runner: PipelineRunner, exchanges: dict):
     console.print(f"[dim]Forecast cache: {cache_info['active']} active entries[/dim]")
 
     # --- Phase 1: Position management (exits) ---
+    from alerts.telegram_alert import send_alert
+
     console.print(f"\n[bold]Phase 1: Position Management[/bold]")
     try:
         from kalshi.position_manager import run_position_manager
@@ -44,6 +46,7 @@ def run_cycle(cycle_num: int, runner: PipelineRunner, exchanges: dict):
     except Exception as e:
         console.print(f"[red]Position manager error: {e}[/red]")
         traceback.print_exc()
+        send_alert("Position Manager Failed", str(e), dedup_key="pos_mgr_error")
 
     try:
         from ercot.position_manager import run_ercot_manager
@@ -51,6 +54,7 @@ def run_cycle(cycle_num: int, runner: PipelineRunner, exchanges: dict):
     except Exception as e:
         console.print(f"[red]ERCOT manager error: {e}[/red]")
         traceback.print_exc()
+        send_alert("ERCOT Manager Failed", str(e), dedup_key="ercot_mgr_error")
 
     # --- Phase 2: New signal scan + entries ---
     console.print(f"\n[bold]Phase 2: Market Scan (Pipeline)[/bold]")
@@ -59,6 +63,7 @@ def run_cycle(cycle_num: int, runner: PipelineRunner, exchanges: dict):
     except Exception as e:
         console.print(f"[red]Pipeline error: {e}[/red]")
         traceback.print_exc()
+        send_alert("Pipeline Scan Failed", str(e), dedup_key="pipeline_error")
 
     # --- Phase 3: Settle resolved markets ---
     console.print(f"\n[bold]Phase 3: Settlement[/bold]")
