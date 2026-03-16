@@ -460,23 +460,43 @@ def get_ercot_solar_signal(lat: float, lon: float, hours_ahead: int = 24, ercot_
                     to avoid redundant API calls when scanning multiple hubs.
     """
 
-    # 1. Solar irradiance from Open-Meteo (always per-hub lat/lon)
-    try:
-        url = (
-            f"https://api.open-meteo.com/v1/forecast"
-            f"?latitude={lat}&longitude={lon}"
-            f"&daily=shortwave_radiation_sum"
-            f"&forecast_days=3"
-            f"&timezone=auto"
-        )
-        r = http_get(url, timeout=10)
-        r.raise_for_status()
-        radiation = r.json().get("daily", {}).get("shortwave_radiation_sum", [])
-        target_idx = min(hours_ahead // 24, len(radiation) - 1)
-        expected_solrad = radiation[target_idx] if radiation else 15.0
-    except Exception as e:
-        print(f"  Solar irradiance fetch error: {e}")
-        expected_solrad = 15.0
+    # 1. Solar irradiance — try Visual Crossing first (more reliable), fall back to Open-Meteo
+    expected_solrad = None
+    from config import VISUAL_CROSSING_API_KEY
+    if VISUAL_CROSSING_API_KEY:
+        try:
+            vc_r = http_get(
+                f"https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline"
+                f"/{lat},{lon}/next3days",
+                params={"key": VISUAL_CROSSING_API_KEY, "unitGroup": "metric",
+                        "include": "days", "elements": "solarenergy"},
+                timeout=10,
+            )
+            vc_r.raise_for_status()
+            vc_days = vc_r.json().get("days", [])
+            target_idx = min(hours_ahead // 24, len(vc_days) - 1)
+            if vc_days and vc_days[target_idx].get("solarenergy") is not None:
+                expected_solrad = float(vc_days[target_idx]["solarenergy"])
+        except Exception as e:
+            print(f"  Visual Crossing solar error: {e}")
+
+    if expected_solrad is None:
+        try:
+            url = (
+                f"https://api.open-meteo.com/v1/forecast"
+                f"?latitude={lat}&longitude={lon}"
+                f"&daily=shortwave_radiation_sum"
+                f"&forecast_days=3"
+                f"&timezone=auto"
+            )
+            r = http_get(url, timeout=10)
+            r.raise_for_status()
+            radiation = r.json().get("daily", {}).get("shortwave_radiation_sum", [])
+            target_idx = min(hours_ahead // 24, len(radiation) - 1)
+            expected_solrad = radiation[target_idx] if radiation else 15.0
+        except Exception as e:
+            print(f"  Solar irradiance fetch error: {e}")
+            expected_solrad = 15.0
 
     # 2. ERCOT market data — use pre-fetched if available
     if ercot_data is not None:
