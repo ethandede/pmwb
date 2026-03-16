@@ -1,6 +1,5 @@
-"""Shared HTTP session for weather API calls with automatic 429 retry."""
+"""Shared HTTP session for weather API calls with automatic retry."""
 
-import time
 import requests
 from requests.adapters import HTTPAdapter, Retry
 
@@ -8,14 +7,19 @@ _session = None
 
 
 def get_session() -> requests.Session:
-    """Return a shared session with automatic retry on 429/5xx."""
+    """Return a shared session with retry on 5xx only.
+
+    429 (rate limit) is NOT retried — we fail fast and let the forecast
+    cache handle it on the next cycle. Retrying 429s across 14 cities
+    was adding 20+ minutes of dead wait time per scan.
+    """
     global _session
     if _session is None:
         _session = requests.Session()
         retry = Retry(
-            total=4,
-            backoff_factor=1.5,       # waits 1.5s, 3s, 4.5s, 6s
-            status_forcelist=[429, 500, 502, 503, 504],
+            total=2,
+            backoff_factor=0.5,       # waits 0.5s, 1s
+            status_forcelist=[500, 502, 503, 504],
             allowed_methods=["GET"],
         )
         _session.mount("https://", HTTPAdapter(max_retries=retry))
