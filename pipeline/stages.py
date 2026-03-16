@@ -207,10 +207,15 @@ def filter_signals(config, signals: list[Signal], held_positions: list,
             continue
 
         # Reward-to-risk gate: never risk more than you can win.
+        # For NO side, use yes_bid (not yes_ask) to compute actual cost,
+        # since we pay 100 - yes_bid when crossing the spread.
         if config.exchange == "kalshi":
             our_cost_cents = signal.price_cents
             if signal.side == "no":
-                our_cost_cents = 100 - signal.price_cents
+                if signal.yes_bid is not None:
+                    our_cost_cents = 100 - signal.yes_bid
+                else:
+                    our_cost_cents = 100 - signal.price_cents
             if our_cost_cents > 50:
                 continue  # reward < risk — skip
 
