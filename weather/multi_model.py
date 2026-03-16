@@ -253,6 +253,43 @@ def get_hrrr_forecast(lat: float, lon: float, days_ahead: int = 1, unit: str = "
 
 
 # ---------------------------------------------------------------------------
+# Visual Crossing (Weather Underground data source)
+# ---------------------------------------------------------------------------
+
+def get_visualcrossing_forecast(lat: float, lon: float, days_ahead: int = 1, unit: str = "f", temp_type: str = "max") -> Optional[float]:
+    """Fetch forecast from Visual Crossing API (Weather Underground data).
+
+    Returns the predicted high or low temperature for the target day.
+    Free tier: 1000 calls/day — cached via fcache to stay well under.
+    """
+    from config import VISUAL_CROSSING_API_KEY
+    if not VISUAL_CROSSING_API_KEY:
+        return None
+    try:
+        unit_group = "us" if unit == "f" else "metric"
+        temp_field = "tempmax" if temp_type == "max" else "tempmin"
+        r = http_get(
+            f"https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline"
+            f"/{lat},{lon}/next3days",
+            params={
+                "key": VISUAL_CROSSING_API_KEY,
+                "unitGroup": unit_group,
+                "include": "days",
+                "elements": f"{temp_field}",
+            },
+            timeout=10,
+        )
+        r.raise_for_status()
+        days = r.json().get("days", [])
+        if len(days) > days_ahead and days[days_ahead].get(temp_field) is not None:
+            return round(float(days[days_ahead][temp_field]), 1)
+        return None
+    except Exception as e:
+        print(f"  Visual Crossing forecast error: {e}")
+        return None
+
+
+# ---------------------------------------------------------------------------
 # Fusion engine — UPDATED with safe functions
 # ---------------------------------------------------------------------------
 
@@ -336,7 +373,24 @@ def fuse_forecast(
     else:
         details["hrrr"] = {"prob": None, "error": "unavailable"}
 
-    # --- SAFE FUSION (replaces old manual weighted average) ---
+    # --- Model 4: Visual Crossing (Weather Underground) ---
+    cache_key_vc = (round(lat, 2), round(lon, 2), temp_type, days_ahead, unit)
+    vc_temp = fcache.get("visualcrossing", *cache_key_vc)
+    if vc_temp is None:
+        vc_temp = get_visualcrossing_forecast(lat, lon, days_ahead=days_ahead, unit=unit, temp_type=temp_type)
+        if vc_temp is not None:
+            fcache.put("visualcrossing", *cache_key_vc, value=vc_temp)
+    vc_prob = None
+    if vc_temp is not None:
+        bias_vc, n_vc = get_bias(city, month, "visualcrossing")
+        if bias_vc and n_vc >= 30:
+            vc_temp = round(vc_temp - bias_vc, 1)
+        vc_prob = _deterministic_bucket_prob(vc_temp, low, high, spread=temp_spread)
+        details["visualcrossing"] = {"prob": vc_prob, "temp": vc_temp, "bias": round(bias_vc, 1), "n": n_vc}
+    else:
+        details["visualcrossing"] = {"prob": None, "error": "unavailable"}
+
+    # --- SAFE FUSION ---
     active = {}
     if ensemble_prob is not None:
         active["ensemble"] = ensemble_prob
@@ -344,6 +398,8 @@ def fuse_forecast(
         active["noaa"] = noaa_prob
     if hrrr_prob is not None:
         active["hrrr"] = hrrr_prob
+    if vc_prob is not None:
+        active["visualcrossing"] = vc_prob
 
     if not active:
         return ensemble_prob or 0.5, 40.0, details
@@ -360,6 +416,8 @@ def fuse_forecast(
         point_temps.append(noaa_temp)
     if hrrr_temp is not None:
         point_temps.append(hrrr_temp)
+    if vc_temp is not None:
+        point_temps.append(vc_temp)
     if len(point_temps) >= 2:
         temp_range = max(point_temps) - min(point_temps)
         agreement = max(0.0, min(1.0, 1.0 - temp_range / 10.0))
@@ -368,7 +426,7 @@ def fuse_forecast(
 
     spread_norm = max(0.0, min(1.0, 1.0 - ensemble_spread / 12.0))
 
-    bias_counts = [get_bias(city, month, m)[1] for m in ["ensemble", "noaa", "hrrr"]]
+    bias_counts = [get_bias(city, month, m)[1] for m in ["ensemble", "noaa", "hrrr", "visualcrossing"]]
     best_bias_n = max(bias_counts) if bias_counts else 0
     bias_available = min(1.0, best_bias_n / 30.0)
 
