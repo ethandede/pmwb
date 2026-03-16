@@ -45,7 +45,7 @@ MAX_ORDER_USD = 20.0
 BIAS_DB_PATH = "data/bias.db"
 CONFIDENCE_THRESHOLD = 60
 VISUAL_CROSSING_API_KEY = os.getenv("VISUAL_CROSSING_API_KEY", "")
-FUSION_WEIGHTS = {"ensemble": 0.20, "noaa": 0.15, "hrrr": 0.40, "visualcrossing": 0.25}
+FUSION_WEIGHTS = {"ensemble": 0.15, "noaa": 0.10, "hrrr": 0.30, "visualcrossing": 0.20, "ecmwf": 0.25}
 HIGH_CONFIDENCE_MULTIPLIER = 1.5
 
 HOST = "https://clob.polymarket.com"

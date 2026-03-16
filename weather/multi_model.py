@@ -253,6 +253,40 @@ def get_hrrr_forecast(lat: float, lon: float, days_ahead: int = 1, unit: str = "
 
 
 # ---------------------------------------------------------------------------
+# ECMWF IFS (European model — independent from GFS)
+# ---------------------------------------------------------------------------
+
+def get_ecmwf_forecast(lat: float, lon: float, days_ahead: int = 1, unit: str = "f", temp_type: str = "max") -> Optional[float]:
+    """Fetch ECMWF IFS forecast via Open-Meteo.
+
+    The IFS is Europe's primary global model — architecturally independent
+    from the American GFS. Adding it gives genuine model diversity.
+    """
+    try:
+        unit_param = "fahrenheit" if unit == "f" else "celsius"
+        daily_var = f"temperature_2m_{temp_type}"
+        url = (
+            f"https://api.open-meteo.com/v1/forecast"
+            f"?latitude={lat}&longitude={lon}"
+            f"&daily={daily_var}"
+            f"&models=ecmwf_ifs025"
+            f"&temperature_unit={unit_param}"
+            f"&timezone=auto"
+            f"&forecast_days={days_ahead + 2}"
+        )
+        r = http_get(url, timeout=10)
+        r.raise_for_status()
+        data = r.json()
+        temps = data.get("daily", {}).get(daily_var, [])
+        if len(temps) > days_ahead and temps[days_ahead] is not None:
+            return round(float(temps[days_ahead]), 1)
+        return None
+    except Exception as e:
+        print(f"  ECMWF IFS forecast error: {e}")
+        return None
+
+
+# ---------------------------------------------------------------------------
 # Visual Crossing (Weather Underground data source)
 # ---------------------------------------------------------------------------
 
@@ -373,7 +407,24 @@ def fuse_forecast(
     else:
         details["hrrr"] = {"prob": None, "error": "unavailable"}
 
-    # --- Model 4: Visual Crossing (Weather Underground) ---
+    # --- Model 4: ECMWF IFS (European model) ---
+    cache_key_ecmwf = (round(lat, 2), round(lon, 2), temp_type, days_ahead, unit)
+    ecmwf_temp = fcache.get("ecmwf", *cache_key_ecmwf)
+    if ecmwf_temp is None:
+        ecmwf_temp = get_ecmwf_forecast(lat, lon, days_ahead=days_ahead, unit=unit, temp_type=temp_type)
+        if ecmwf_temp is not None:
+            fcache.put("ecmwf", *cache_key_ecmwf, value=ecmwf_temp)
+    ecmwf_prob = None
+    if ecmwf_temp is not None:
+        bias_ecmwf, n_ecmwf = get_bias(city, month, "ecmwf")
+        if bias_ecmwf and n_ecmwf >= 30:
+            ecmwf_temp = round(ecmwf_temp - bias_ecmwf, 1)
+        ecmwf_prob = _deterministic_bucket_prob(ecmwf_temp, low, high, spread=temp_spread)
+        details["ecmwf"] = {"prob": ecmwf_prob, "temp": ecmwf_temp, "bias": round(bias_ecmwf, 1), "n": n_ecmwf}
+    else:
+        details["ecmwf"] = {"prob": None, "error": "unavailable"}
+
+    # --- Model 5: Visual Crossing (Weather Underground) ---
     cache_key_vc = (round(lat, 2), round(lon, 2), temp_type, days_ahead, unit)
     vc_temp = fcache.get("visualcrossing", *cache_key_vc)
     if vc_temp is None:
@@ -398,6 +449,8 @@ def fuse_forecast(
         active["noaa"] = noaa_prob
     if hrrr_prob is not None:
         active["hrrr"] = hrrr_prob
+    if ecmwf_prob is not None:
+        active["ecmwf"] = ecmwf_prob
     if vc_prob is not None:
         active["visualcrossing"] = vc_prob
 
@@ -416,6 +469,8 @@ def fuse_forecast(
         point_temps.append(noaa_temp)
     if hrrr_temp is not None:
         point_temps.append(hrrr_temp)
+    if ecmwf_temp is not None:
+        point_temps.append(ecmwf_temp)
     if vc_temp is not None:
         point_temps.append(vc_temp)
     if len(point_temps) >= 2:
@@ -426,7 +481,7 @@ def fuse_forecast(
 
     spread_norm = max(0.0, min(1.0, 1.0 - ensemble_spread / 12.0))
 
-    bias_counts = [get_bias(city, month, m)[1] for m in ["ensemble", "noaa", "hrrr", "visualcrossing"]]
+    bias_counts = [get_bias(city, month, m)[1] for m in ["ensemble", "noaa", "hrrr", "ecmwf", "visualcrossing"]]
     best_bias_n = max(bias_counts) if bias_counts else 0
     bias_available = min(1.0, best_bias_n / 30.0)
 
