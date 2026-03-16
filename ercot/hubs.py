@@ -85,22 +85,30 @@ def _fetch_ercot_market_data() -> dict:
 
 
 def fetch_ercot_markets() -> list[dict]:
-    """Return raw hub data + shared ERCOT market data for pipeline fetch stage.
-
-    Does NOT call solar signal — that happens in the score stage via forecast_fn.
-    """
+    """Return raw hub data + shared ERCOT market data for pipeline fetch stage."""
     market_data = _fetch_ercot_market_data()
+    hub_prices = market_data.get("hub_prices", {})
+    grid_avg = market_data.get("price", 40.0)
     markets = []
     for hub_key, info in ERCOT_HUBS.items():
+        hub_name = info["hub_name"]
+        hub_price = hub_prices.get(hub_name, grid_avg)
+
+        # Build per-hub ercot_data with hub_price injected
+        per_hub_data = dict(market_data)
+        per_hub_data["hub_price"] = hub_price
+
         markets.append({
             "hub": hub_key,
-            "hub_name": info["hub_name"],
+            "hub_key": hub_key,
+            "hub_name": hub_name,
             "city": info["city"],
             "lat": info["lat"],
             "lon": info["lon"],
-            "current_ercot_price": market_data.get("price", 40.0),
+            "solar_sensitivity": info["solar_sensitivity"],
+            "current_ercot_price": hub_price,
             "actual_solar_mw": market_data.get("solar_mw", 12000.0),
-            "_ercot_data": market_data,
+            "_ercot_data": per_hub_data,
         })
     return markets
 
@@ -108,16 +116,26 @@ def fetch_ercot_markets() -> list[dict]:
 def scan_all_hubs() -> list:
     """Scan all 5 ERCOT hubs. Returns list of enriched signal dicts."""
     ercot_data = _fetch_ercot_market_data()
+    hub_prices = ercot_data.get("hub_prices", {})
+    grid_avg = ercot_data.get("price", 40.0)
     signals = []
 
     for hub_key, hub_info in ERCOT_HUBS.items():
+        hub_name = hub_info["hub_name"]
+        hub_price = hub_prices.get(hub_name, grid_avg)
+
+        per_hub_data = dict(ercot_data)
+        per_hub_data["hub_price"] = hub_price
+
         signal = get_ercot_solar_signal(
             hub_info["lat"], hub_info["lon"],
+            hub_key=hub_key,
+            solar_sensitivity=hub_info["solar_sensitivity"],
             hours_ahead=24,
-            ercot_data=ercot_data,
+            ercot_data=per_hub_data,
         )
         signal["hub"] = hub_key
-        signal["hub_name"] = hub_info["hub_name"]
+        signal["hub_name"] = hub_name
         signal["city"] = hub_info["city"]
         signals.append(signal)
 
