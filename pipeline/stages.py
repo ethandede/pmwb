@@ -326,13 +326,18 @@ def execute_trade(config, signal: Signal, size, exchange,
     from kalshi.pricing import kalshi_fee
     from datetime import datetime, timezone
 
-    # Determine price
+    # Determine price from our side's perspective
+    side = size.side or signal.side
     price_cents = signal.price_cents
+    if side == "no":
+        # signal.price_cents is YES ask — convert to NO cost
+        price_cents = 100 - signal.price_cents
+
     strategy = "taker"
     if config.pricing_fn and signal.yes_bid is not None:
         is_sameday = signal.days_ahead == 0
         price_result = config.pricing_fn(
-            side=size.side or signal.side,
+            side=side,
             yes_bid=signal.yes_bid,
             yes_ask=signal.yes_ask,
             edge=abs(signal.edge),
