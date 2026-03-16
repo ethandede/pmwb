@@ -141,6 +141,23 @@ def filter_signals(config, signals: list[Signal], held_positions: list,
         if signal.confidence < conf_gate:
             continue
 
+        # Price-scaled edge gate: extreme prices need proportionally more edge.
+        # At 50c (fair odds), base edge gate applies. At 90c or 10c (9:1 odds),
+        # require ~2x the base edge to compensate for the asymmetric risk.
+        # This prevents the bot from loading up on 90c+ NO bets that win $1
+        # but lose $9 — even when the math is +EV, the variance is too high
+        # for our bankroll.
+        if config.exchange == "kalshi":
+            our_cost_cents = signal.price_cents
+            if signal.side == "no":
+                our_cost_cents = 100 - signal.price_cents  # NO cost
+            # How far from 50c (fair odds)? 0 at 50c, 1 at 0c or 100c
+            price_extremity = abs(our_cost_cents - 50) / 50.0
+            # Scale edge gate: 1x at 50c, up to 2.5x at 95c/5c
+            price_edge_multiplier = 1.0 + 1.5 * price_extremity ** 2
+            if abs(signal.edge) < edge_gate * price_edge_multiplier:
+                continue
+
         # Already holding this ticker
         if signal.ticker in held_tickers:
             continue
