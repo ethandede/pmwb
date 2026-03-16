@@ -67,7 +67,9 @@ function buildGrid(positions, page, sortState, paginatorId) {
 
     const rows = slice.map(p => {
         const settles = p.settles ? p.settles.slice(5) : '\u2014';
-        const fcast = p.forecast_high !== null ? `${p.forecast_high}\u00b0` : '\u2014';
+        const fcast = p.forecast_precip !== null && p.forecast_precip !== undefined
+            ? `${p.forecast_precip} in`
+            : p.forecast_high !== null ? `${p.forecast_high}\u00b0` : '\u2014';
         const rowClass = p.likely === 'WIN' ? 'pnl-positive' : p.likely === 'LOSS' ? 'pnl-negative' : '';
         const likelyClass = p.likely === 'WIN' ? 'val-positive' : p.likely === 'LOSS' ? 'val-negative' : '';
 
