@@ -12,8 +12,10 @@ const COLUMNS = [
     { key: 'side',    label: 'Side',    num: false },
     { key: 'price',   label: 'Entry',   num: true  },
     { key: 'qty',     label: 'Qty',     num: true  },
-    { key: 'outcome', label: 'Result',  num: false },
-    { key: 'pnl',     label: 'P&L',     num: true  },
+    { key: 'outcome',  label: 'Result',  num: false },
+    { key: 'strategy', label: 'Type',   num: false },
+    { key: 'fee',      label: 'Fee',    num: true  },
+    { key: 'pnl',      label: 'P&L',    num: true  },
 ];
 
 const COLS_CSS = COLUMNS.map(c => c.num ? 'auto' : '1fr').join(' ');
@@ -99,6 +101,8 @@ function settledGrid(items, page) {
           <span class="num mono" style="--mo:10" data-label="Entry">${t.price}\u00a2</span>
           <span class="num mono" style="--mo:11">\u00d7${t.qty}</span>
           <span class="${resultClass}">${t.outcome === 'win' ? 'WIN' : 'LOSS'}</span>
+          <span>${t.strategy === 'maker' ? '<span class="val-positive">MAKER</span>' : t.strategy === 'taker' ? '<span class="val-amber">TAKER</span>' : '\u2014'}</span>
+          <span class="num mono">${t.fee > 0 ? '$' + t.fee.toFixed(3) : '$0'}</span>
           <span class="num mono ${pnlClass}">${t.pnl >= 0 ? '+' : ''}$${Math.abs(t.pnl).toFixed(2)}</span>
         </div>`;
     }).join('\n');

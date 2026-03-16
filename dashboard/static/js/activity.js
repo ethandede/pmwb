@@ -14,6 +14,8 @@ const COLUMNS = [
     { key: 'qty',        label: 'Qty',      num: true  },
     { key: 'edge',       label: 'Edge',     num: true  },
     { key: 'confidence', label: 'Conf',     num: true  },
+    { key: 'strategy',   label: 'Type',     num: false },
+    { key: 'fee',        label: 'Fee',      num: true  },
     { key: 'outcome',    label: 'Outcome',  num: false },
     { key: 'pnl',        label: 'P&L',      num: true  },
 ];
@@ -95,6 +97,8 @@ function activityGrid(items, page) {
           <span class="num mono">\u00d7${t.qty}</span>
           <span class="num mono ${edgeClass}" data-label="Edge">${fmtEdge(t.edge)}</span>
           <span class="num mono ${confClass}" data-label="Conf">${t.confidence !== null && t.confidence !== undefined ? t.confidence.toFixed(1) : '\u2014'}</span>
+          <span data-label="Type">${t.strategy === 'maker' ? '<span class="val-positive">MAKER</span>' : t.strategy === 'taker' ? '<span class="val-amber">TAKER</span>' : '\u2014'}</span>
+          <span class="num mono" data-label="Fee">${t.fee > 0 ? '$' + t.fee.toFixed(3) : '$0'}</span>
           <span>${outcomeHtml}</span>
           <span class="num mono">${pnlHtml}</span>
         </div>`;
