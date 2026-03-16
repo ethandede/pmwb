@@ -108,6 +108,90 @@ def _fetch_historical_precip(lat: float, lon: float, month: int) -> tuple[float,
     return round(avg, 5), round(std, 5), len(all_daily)
 
 
+def get_temp_std(city: str, month: int, lat: float, lon: float) -> float:
+    """Get historical standard deviation of daily high temps (°F) for a city/month.
+
+    Returns cached value if available, otherwise fetches from Open-Meteo archive.
+    Used by _deterministic_bucket_prob as the spread parameter instead of the
+    hardcoded 4.5°F.
+    """
+    conn = _get_db()
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS temp_climate (
+            city TEXT,
+            month INTEGER,
+            avg_high_f REAL,
+            std_high_f REAL,
+            sample_days INTEGER,
+            last_updated TEXT,
+            PRIMARY KEY (city, month)
+        )
+    """)
+    conn.commit()
+
+    row = conn.execute(
+        "SELECT std_high_f FROM temp_climate WHERE city=? AND month=?",
+        (city, month),
+    ).fetchone()
+
+    if row is not None:
+        conn.close()
+        return row[0]
+
+    # Fetch historical data
+    avg, std, n = _fetch_historical_temps(lat, lon, month)
+
+    conn.execute(
+        """INSERT OR REPLACE INTO temp_climate
+           (city, month, avg_high_f, std_high_f, sample_days, last_updated)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (city, month, avg, std, n, datetime.now(timezone.utc).isoformat()),
+    )
+    conn.commit()
+    conn.close()
+    return std
+
+
+def _fetch_historical_temps(lat: float, lon: float, month: int) -> tuple[float, float, int]:
+    """Fetch daily max temps (°F) from last N years for a given month."""
+    import math
+
+    current_year = datetime.now(timezone.utc).year
+    all_temps = []
+
+    for year in range(current_year - LOOKBACK_YEARS, current_year):
+        import calendar
+        last_day = calendar.monthrange(year, month)[1]
+        start_date = f"{year}-{month:02d}-01"
+        end_date = f"{year}-{month:02d}-{last_day:02d}"
+
+        try:
+            url = (
+                f"https://archive-api.open-meteo.com/v1/archive"
+                f"?latitude={lat}&longitude={lon}"
+                f"&daily=temperature_2m_max"
+                f"&temperature_unit=fahrenheit"
+                f"&timezone=auto"
+                f"&start_date={start_date}&end_date={end_date}"
+            )
+            r = requests.get(url, timeout=15)
+            r.raise_for_status()
+            temps = r.json().get("daily", {}).get("temperature_2m_max", [])
+            all_temps.extend([t for t in temps if t is not None])
+        except Exception:
+            pass
+        time.sleep(0.1)
+
+    if not all_temps:
+        return 50.0, 8.0, 0  # conservative fallback
+
+    avg = sum(all_temps) / len(all_temps)
+    variance = sum((t - avg) ** 2 for t in all_temps) / len(all_temps)
+    std = math.sqrt(variance)
+
+    return round(avg, 2), round(std, 2), len(all_temps)
+
+
 def estimate_blind_day_precip(city: str, month: int, lat: float, lon: float, blind_days: int) -> tuple[float, float]:
     """Estimate total precip for blind (unforecasted) days using climatology.
 

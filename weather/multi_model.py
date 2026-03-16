@@ -266,6 +266,14 @@ def fuse_forecast(
     weights = dict(FUSION_WEIGHTS)
     details = {}
 
+    # City-specific temperature variability (replaces hardcoded 4.5°F)
+    from weather.climate import get_temp_std
+    try:
+        temp_spread = get_temp_std(city, month, lat, lon)
+    except Exception:
+        temp_spread = 8.0  # conservative fallback
+    details["temp_spread"] = temp_spread
+
     # --- Model 1: Open-Meteo Ensemble (unchanged) ---
     cache_key_ens = (round(lat, 2), round(lon, 2), temp_type, days_ahead, unit)
     ensemble_temps = fcache.get("ensemble", *cache_key_ens)
@@ -277,7 +285,7 @@ def fuse_forecast(
         if ensemble_temps:
             fcache.put("ensemble", *cache_key_ens, value=ensemble_temps)
     bias_ens, n_ens = get_bias(city, month, "ensemble")
-    if bias_ens and n_ens >= 5:
+    if bias_ens and n_ens >= 30:
         ensemble_temps = [round(t - bias_ens, 1) for t in ensemble_temps]
     if ensemble_temps:
         ensemble_prob = get_bucket_prob(ensemble_temps, low, high)
@@ -304,9 +312,9 @@ def fuse_forecast(
     noaa_prob = None
     if noaa_temp is not None:
         bias_noaa, n_noaa = get_bias(city, month, "noaa")
-        if bias_noaa and n_noaa >= 5:
+        if bias_noaa and n_noaa >= 30:
             noaa_temp = round(noaa_temp - bias_noaa, 1)
-        noaa_prob = _deterministic_bucket_prob(noaa_temp, low, high)   # ← NEW SAFE CALL
+        noaa_prob = _deterministic_bucket_prob(noaa_temp, low, high, spread=temp_spread)
         details["noaa"] = {"prob": noaa_prob, "temp": noaa_temp, "bias": round(bias_noaa, 1), "n": n_noaa}
     else:
         details["noaa"] = {"prob": None, "error": "unavailable"}
@@ -321,9 +329,9 @@ def fuse_forecast(
     hrrr_prob = None
     if hrrr_temp is not None:
         bias_hrrr, n_hrrr = get_bias(city, month, "hrrr")
-        if bias_hrrr and n_hrrr >= 5:
+        if bias_hrrr and n_hrrr >= 30:
             hrrr_temp = round(hrrr_temp - bias_hrrr, 1)
-        hrrr_prob = _deterministic_bucket_prob(hrrr_temp, low, high)   # ← NEW SAFE CALL
+        hrrr_prob = _deterministic_bucket_prob(hrrr_temp, low, high, spread=temp_spread)
         details["hrrr"] = {"prob": hrrr_prob, "temp": hrrr_temp, "bias": round(bias_hrrr, 1), "n": n_hrrr}
     else:
         details["hrrr"] = {"prob": None, "error": "unavailable"}
