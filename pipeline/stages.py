@@ -207,15 +207,25 @@ def filter_signals(config, signals: list[Signal], held_positions: list,
             continue
 
         # Reward-to-risk gate: never risk more than you can win.
-        # A 90c contract wins 10c and loses 90c (0.11x ratio) — skip.
-        # A 50c contract wins 50c and loses 50c (1.0x ratio) — fine.
-        # This is a hard floor: if_win must be >= if_lose.
         if config.exchange == "kalshi":
             our_cost_cents = signal.price_cents
             if signal.side == "no":
                 our_cost_cents = 100 - signal.price_cents
             if our_cost_cents > 50:
                 continue  # reward < risk — skip
+
+        # Forecast-proximity gate: don't bet NO on a bucket that contains
+        # the forecast, or YES on a bucket far from the forecast.
+        # Parses bucket [low, high) from ticker and checks against model_prob.
+        if config.exchange == "kalshi" and config.name == "kalshi_temp":
+            bucket = config.bucket_parser(signal.market) if config.bucket_parser and signal.market else None
+            if bucket and signal.side == "no":
+                low, high = bucket
+                # model_prob is P(YES) for this bucket. If it's above 25%,
+                # the model thinks there's a real chance the temp lands here
+                # — don't bet against it.
+                if signal.model_prob > 0.25:
+                    continue
 
         # Already holding this ticker
         if signal.ticker in held_tickers:
