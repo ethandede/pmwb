@@ -374,11 +374,17 @@ def run_position_manager(exchange=None):
     mode_label = "PAPER" if PAPER_MODE else "LIVE"
 
     if exits:
+        # Build map of resting sell qty per ticker to prevent overselling
+        resting_sell_qty = {}
         try:
             resting = exchange.get_orders(status="resting")
-            resting_tickers = {o.get("ticker", "") for o in resting if o.get("action") == "sell"}
+            for o in resting:
+                if o.get("action") == "sell":
+                    t = o.get("ticker", "")
+                    remaining = int(float(o.get("remaining_count_fp", "0") or "0"))
+                    resting_sell_qty[t] = resting_sell_qty.get(t, 0) + remaining
         except Exception:
-            resting_tickers = set()
+            pass
 
         console.print(f"\n[bold yellow]Executing {len(exits)} exits...[/bold yellow]\n")
 
@@ -388,9 +394,14 @@ def run_position_manager(exchange=None):
             price = result.get("sell_price_cents", MIN_SELL_CENTS)
             reason = result["reason"]
 
-            if ticker in resting_tickers:
-                console.print(f"  [dim]SKIP {ticker} \u2014 resting sell order already exists[/dim]")
+            # Subtract resting sells to avoid overselling
+            already_selling = resting_sell_qty.get(ticker, 0)
+            if already_selling >= qty:
+                console.print(f"  [dim]SKIP {ticker} \u2014 {already_selling}x already resting to sell[/dim]")
                 continue
+            qty = qty - already_selling
+            if already_selling > 0:
+                console.print(f"  [dim]{ticker}: reducing sell from {result['qty']}x to {qty}x ({already_selling}x already resting)[/dim]")
 
             console.print(f"  [{mode_label}] SELL {side.upper()} {qty}x {ticker} @ {price}\u00a2")
             console.print(f"    Reason: {reason}")
