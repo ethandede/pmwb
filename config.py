@@ -75,19 +75,36 @@ ERCOT_API_KEY = os.getenv("ERCOT_API_KEY", "")
 ERCOT_USERNAME = os.getenv("ERCOT_USERNAME", "")
 ERCOT_PASSWORD = os.getenv("ERCOT_PASSWORD", "")
 ERCOT_HUBS = {
-    "North":     {"city": "Dallas",      "lat": 32.78,  "lon": -96.80,  "hub_name": "HB_NORTH"},
-    "Houston":   {"city": "Houston",     "lat": 29.76,  "lon": -95.37,  "hub_name": "HB_HOUSTON"},
-    "South":     {"city": "San Antonio", "lat": 29.42,  "lon": -98.49,  "hub_name": "HB_SOUTH"},
-    "West":      {"city": "Midland",     "lat": 31.99,  "lon": -102.08, "hub_name": "HB_WEST"},
-    "Panhandle": {"city": "Amarillo",    "lat": 35.22,  "lon": -101.83, "hub_name": "HB_PAN"},
+    "North":     {"city": "Dallas",      "lat": 32.78,  "lon": -96.80,  "hub_name": "HB_NORTH",   "solar_sensitivity": 0.15},
+    "Houston":   {"city": "Houston",     "lat": 29.76,  "lon": -95.37,  "hub_name": "HB_HOUSTON", "solar_sensitivity": 0.10},
+    "South":     {"city": "San Antonio", "lat": 29.42,  "lon": -98.49,  "hub_name": "HB_SOUTH",   "solar_sensitivity": 0.20},
+    "West":      {"city": "Midland",     "lat": 31.99,  "lon": -102.08, "hub_name": "HB_WEST",    "solar_sensitivity": 0.35},
+    "Panhandle": {"city": "Amarillo",    "lat": 35.22,  "lon": -101.83, "hub_name": "HB_PAN",     "solar_sensitivity": 0.25},
 }
 
 ERCOT_PAPER_BANKROLL = 10_000.0
 ERCOT_PAPER_MODE = True
-ERCOT_MIN_EDGE = 0.5
+ERCOT_MIN_EDGE = 0.03  # Reference only — live gate is pipeline/config.py edge_gate
 ERCOT_MIN_CONFIDENCE = 50
-ERCOT_FORTIFY_EDGE_INCREASE = 0.5
+ERCOT_FORTIFY_EDGE_INCREASE = 0.03
 ERCOT_EXIT_EDGE_DECAY = 0.30
 ERCOT_MAX_POSITIONS_PER_HUB = 3
 ERCOT_MAX_POSITIONS_TOTAL = 10
 ERCOT_POSITION_TTL_HOURS = 24
+
+ERCOT_LOAD_SENSITIVITY = 0.15
+
+ERCOT_SEASONAL_NORMS = {
+    1:  {"solar": 10.0, "load": 50_000},
+    2:  {"solar": 12.0, "load": 47_000},
+    3:  {"solar": 16.0, "load": 45_000},
+    4:  {"solar": 20.0, "load": 43_000},
+    5:  {"solar": 22.0, "load": 48_000},
+    6:  {"solar": 25.0, "load": 60_000},
+    7:  {"solar": 26.0, "load": 70_000},
+    8:  {"solar": 25.0, "load": 68_000},
+    9:  {"solar": 20.0, "load": 55_000},
+    10: {"solar": 16.0, "load": 45_000},
+    11: {"solar": 12.0, "load": 43_000},
+    12: {"solar": 10.0, "load": 48_000},
+}
