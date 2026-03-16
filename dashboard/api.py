@@ -604,6 +604,82 @@ async def get_settled(limit: int = Query(50)):
     return {"summary": summary, "trades": trades}
 
 
+@app.get("/api/performance/fees")
+async def get_fee_chart():
+    """Cumulative P&L vs fees time series for chart."""
+    from dashboard.equity_db import EQUITY_DB
+    equity_path = Path(EQUITY_DB)
+    if not equity_path.exists():
+        return []
+    conn = sqlite3.connect(str(equity_path))
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        "SELECT date, realized_pnl, fees_paid FROM equity_snapshots ORDER BY date"
+    ).fetchall()
+    conn.close()
+
+    result = []
+    for r in rows:
+        # realized_pnl and fees_paid are already cumulative lifetime totals
+        # from Kalshi settled positions (recorded daily in daemon Phase 4)
+        result.append({
+            "date": r["date"],
+            "cumulative_pnl": round(r["realized_pnl"], 2),
+            "cumulative_fees": round(r["fees_paid"], 2),
+        })
+    return result
+
+
+@app.get("/api/fees/summary")
+async def get_fee_summary():
+    """Fee summary: total fees, maker/taker counts, savings estimate."""
+    from kalshi.pricing import kalshi_fee
+    from dashboard.equity_db import EQUITY_DB
+
+    # Get maker/taker counts and savings estimate from trades.db
+    maker_count = 0
+    taker_count = 0
+    estimated_taker_fees_for_makers = 0.0
+
+    if TRADES_DB.exists():
+        conn = sqlite3.connect(str(TRADES_DB))
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT strategy, fill_price, fill_qty FROM trades WHERE strategy IS NOT NULL"
+        ).fetchall()
+        conn.close()
+
+        for r in rows:
+            if r["strategy"] == "maker":
+                maker_count += 1
+                if r["fill_price"] and r["fill_qty"]:
+                    estimated_taker_fees_for_makers += kalshi_fee(
+                        r["fill_price"], r["fill_qty"], is_taker=True
+                    )
+            elif r["strategy"] == "taker":
+                taker_count += 1
+
+    # Get total fees from equity_db (recorded daily, avoids live API call)
+    total_fees = 0.0
+    equity_path = Path(EQUITY_DB)
+    if equity_path.exists():
+        conn = sqlite3.connect(str(equity_path))
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT fees_paid FROM equity_snapshots ORDER BY date DESC LIMIT 1"
+        ).fetchone()
+        conn.close()
+        if row:
+            total_fees = row["fees_paid"]
+
+    return {
+        "total_fees_paid": round(total_fees, 2),
+        "maker_trades": maker_count,
+        "taker_trades": taker_count,
+        "fee_savings": round(estimated_taker_fees_for_makers, 2),
+    }
+
+
 ANALYTICS_DB = Path(__file__).resolve().parent.parent / "data" / "analytics.db"
 
 
