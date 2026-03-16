@@ -425,14 +425,18 @@ def get_ercot_solar_signal(lat: float, lon: float, hours_ahead: int = 24, ercot_
         current_price = float(ercot_data.get("price", 40.0))
         actual_solar_mw = float(ercot_data.get("solar_mw", 0.0))
     else:
+        from config import ERCOT_API_KEY
+        _headers = {"Ocp-Apim-Subscription-Key": ERCOT_API_KEY} if ERCOT_API_KEY else {}
         try:
-            r = requests.get("https://www.ercot.com/api/public-reports/np6788/rtmLmp", timeout=8)
+            r = requests.get("https://www.ercot.com/api/public-reports/np6788/rtmLmp",
+                             headers=_headers, timeout=8)
             data = r.json()
             current_price = float(data[-1]["price"]) if data else 40.0
         except:
             current_price = 40.0
         try:
-            r = requests.get("https://www.ercot.com/api/public-reports/np4-738-cd/spp_actual_5min_avg_values", timeout=8)
+            r = requests.get("https://www.ercot.com/api/public-reports/np4-738-cd/spp_actual_5min_avg_values",
+                             headers=_headers, timeout=8)
             data = r.json()
             actual_solar_mw = float(data[-1].get("value", 0)) if data else 0.0
         except Exception as e:

@@ -5,8 +5,10 @@ Caches ERCOT API responses for 5 minutes to avoid redundant calls across hub sca
 
 import time
 import requests
-from config import ERCOT_HUBS
+from config import ERCOT_HUBS, ERCOT_API_KEY
 from weather.multi_model import get_ercot_solar_signal
+
+_ERCOT_HEADERS = {"Ocp-Apim-Subscription-Key": ERCOT_API_KEY} if ERCOT_API_KEY else {}
 
 # Module-level cache for ERCOT market data (shared across all 5 hub scans)
 _ercot_cache: dict = {}
@@ -29,8 +31,10 @@ def _fetch_ercot_market_data() -> dict:
     # Real-time LMP
     try:
         r = requests.get(
-            "https://www.ercot.com/api/public-reports/np6788/rtmLmp", timeout=8
+            "https://www.ercot.com/api/public-reports/np6788/rtmLmp",
+            headers=_ERCOT_HEADERS, timeout=8,
         )
+        r.raise_for_status()
         data = r.json()
         if data:
             result["price"] = float(data[-1]["price"])
@@ -41,20 +45,22 @@ def _fetch_ercot_market_data() -> dict:
     try:
         r = requests.get(
             "https://www.ercot.com/api/public-reports/np4-738-cd/spp_actual_5min_avg_values",
-            timeout=8,
+            headers=_ERCOT_HEADERS, timeout=8,
         )
+        r.raise_for_status()
         data = r.json()
         if data:
             result["solar_mw"] = float(data[-1].get("value", 12000.0))
     except Exception as e:
         print(f"  ERCOT solar gen fetch error: {e}")
 
-    # 7-day load forecast (reserved for future signal refinement — not used in v1)
+    # 7-day load forecast
     try:
         r = requests.get(
             "https://www.ercot.com/api/public-reports/np3-566-cd/lf_by_model_study_area",
-            timeout=8,
+            headers=_ERCOT_HEADERS, timeout=8,
         )
+        r.raise_for_status()
         data = r.json()
         if data:
             result["load_forecast"] = float(data[-1].get("value", 50000.0))
