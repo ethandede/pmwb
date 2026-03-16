@@ -29,39 +29,39 @@ def _fetch_ercot_market_data() -> dict:
 
     headers = get_ercot_headers()
 
-    # Real-time LMP (Settlement Point Prices)
+    # Real-time LMP — fetch recent records, find hub prices
     try:
         r = requests.get(
             "https://api.ercot.com/api/public-reports/np6-788-cd/lmp_node_zone_hub",
-            headers=headers, timeout=10,
+            headers=headers, params={"size": 200}, timeout=15,
         )
         r.raise_for_status()
-        data = r.json()
-        records = data.get("data", [])
-        if records:
-            # Find a hub price (HB_HOUSTON or first available)
-            for rec in records:
-                if rec.get("SettlementPoint", "").startswith("HB_"):
-                    result["price"] = float(rec.get("LMP", 40.0))
-                    break
+        records = r.json().get("data", [])
+        # Records are arrays: [timestamp, repeatHourFlag, settlementPoint, LMP]
+        for rec in records:
+            sp = rec[2] if isinstance(rec, list) else rec.get("settlementPoint", "")
+            if str(sp).startswith("HB_"):
+                lmp = rec[3] if isinstance(rec, list) else rec.get("LMP", 0)
+                result["price"] = float(lmp)
+                break
     except Exception as e:
         print(f"  ERCOT price fetch error: {e}")
 
-    # Actual solar generation
+    # Solar generation — use SPP actual/forecast by geo
     try:
         r = requests.get(
             "https://api.ercot.com/api/public-reports/np4-738-cd/spp_hrly_actual_fcast_geo",
-            headers=headers, timeout=10,
+            headers=headers, params={"size": 50}, timeout=15,
         )
         r.raise_for_status()
-        data = r.json()
-        records = data.get("data", [])
+        records = r.json().get("data", [])
         if records:
-            # Sum solar generation across all zones
-            solar_vals = [float(rec.get("actual", 0) or 0) for rec in records
-                          if "solar" in rec.get("fuelType", "").lower()]
-            if solar_vals:
-                result["solar_mw"] = sum(solar_vals)
+            # Try to extract solar MW from available fields
+            for rec in records:
+                val = rec[-1] if isinstance(rec, list) else rec.get("actual", 0)
+                if val and float(val) > 0:
+                    result["solar_mw"] = float(val)
+                    break
     except Exception as e:
         print(f"  ERCOT solar gen fetch error: {e}")
 
@@ -69,13 +69,14 @@ def _fetch_ercot_market_data() -> dict:
     try:
         r = requests.get(
             "https://api.ercot.com/api/public-reports/np3-566-cd/lf_by_model_study_area",
-            headers=headers, timeout=10,
+            headers=headers, params={"size": 10}, timeout=15,
         )
         r.raise_for_status()
-        data = r.json()
-        records = data.get("data", [])
+        records = r.json().get("data", [])
         if records:
-            result["load_forecast"] = float(records[-1].get("SystemTotal", 50000.0))
+            rec = records[-1]
+            val = rec[-1] if isinstance(rec, list) else rec.get("SystemTotal", 50000.0)
+            result["load_forecast"] = float(val)
     except Exception as e:
         print(f"  ERCOT load forecast fetch error: {e}")
 
