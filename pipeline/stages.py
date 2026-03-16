@@ -36,12 +36,14 @@ def score_signal(config, market: dict) -> Signal:
     if config.name == "ercot":
         forecast_result = config.forecast_fn(
             market.get("lat", 0), market.get("lon", 0),
+            hub_key=market.get("hub_key", ""),
+            solar_sensitivity=market.get("solar_sensitivity", 0.15),
             hours_ahead=24,
             ercot_data=market.get("_ercot_data"),
         )
-        model_prob = max(0.01, min(0.99, 1.0 - forecast_result.get("edge", 0)))  # clamp to valid probability
-        confidence = forecast_result.get("confidence", 50)
         edge = forecast_result.get("edge", 0)
+        model_prob = max(0.01, min(0.99, 0.5 + edge))
+        confidence = forecast_result.get("confidence", 50)
         ercot_signal = forecast_result.get("signal", "NEUTRAL")
         side = "no" if ercot_signal == "SHORT" else "yes"
         days_ahead = 0

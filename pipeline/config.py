@@ -175,7 +175,7 @@ def _build_configs() -> tuple:
         bucket_parser=None,
         forecast_fn=get_ercot_solar_signal,
         fusion_weights=None,
-        edge_gate=0.005,
+        edge_gate=0.03,
         confidence_gate=50,
         sameday_overrides=None,
         sanity_fn=None,

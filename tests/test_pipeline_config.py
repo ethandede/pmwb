@@ -35,3 +35,8 @@ def test_all_configs_have_required_callables():
         assert callable(cfg.execute_fn), f"{cfg.name} missing execute_fn"
         assert callable(cfg.manage_fn), f"{cfg.name} missing manage_fn"
         assert callable(cfg.settle_fn), f"{cfg.name} missing settle_fn"
+
+
+def test_ercot_edge_gate_recalibrated():
+    """ERCOT edge gate should be 0.03 for the new fair-price model."""
+    assert ERCOT.edge_gate == 0.03
