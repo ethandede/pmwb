@@ -18,6 +18,33 @@ from weather import cache as fcache
 from weather.precip_model import gamma_precip_prob
 from config import BIAS_DB_PATH, FUSION_WEIGHTS, PRECIP_FUSION_WEIGHTS
 
+# --- Forecast source health tracking ---
+_model_fail_counts: dict[str, int] = {}
+_ALERT_THRESHOLD = 3  # alert after 3 consecutive failures per model
+
+
+def _track_model_failures(down: set[str], active: dict[str, float]):
+    """Track which models are failing and alert after sustained outages."""
+    all_models = {"ensemble", "noaa", "hrrr", "ecmwf", "visualcrossing"}
+    for model in all_models:
+        if model in down:
+            _model_fail_counts[model] = _model_fail_counts.get(model, 0) + 1
+            if _model_fail_counts[model] == _ALERT_THRESHOLD:
+                try:
+                    from alerts.telegram_alert import send_alert
+                    active_names = ", ".join(sorted(active.keys()))
+                    send_alert(
+                        f"Forecast Source Down: {model}",
+                        f"{model} has failed {_ALERT_THRESHOLD} consecutive times.\n"
+                        f"Active models ({len(active)}): {active_names}\n"
+                        f"Weights auto-rebalanced across remaining sources.",
+                        dedup_key=f"model_down_{model}",
+                    )
+                except Exception:
+                    pass
+        else:
+            _model_fail_counts[model] = 0  # reset on success
+
 
 # ===========================================================================
 # NEW ROBUST PROBABILITY ENGINE (replaces old fragile function)
@@ -457,9 +484,16 @@ def fuse_forecast(
     if not active:
         return ensemble_prob or 0.5, 40.0, details
 
+    # Alert on degraded model coverage
+    all_models = {"ensemble", "noaa", "hrrr", "ecmwf", "visualcrossing"}
+    down_models = all_models - set(active.keys())
+    if down_models:
+        _track_model_failures(down_models, active)
+
     fused_prob = fuse_model_probs(active, weights)
     details["fused_prob"] = fused_prob
     details["models_used"] = len(active)
+    details["models_down"] = sorted(down_models) if down_models else []
 
     # --- Confidence score (your original code — unchanged) ---
     point_temps = []
