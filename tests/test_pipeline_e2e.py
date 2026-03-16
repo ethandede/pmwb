@@ -24,9 +24,9 @@ class TestFullPipelineE2E:
                 "title": "NYC High Temperature >= 58°F",
                 "strike_type": "greater",
                 "floor_strike": 58.0,
-                "yes_ask": 55,
-                "yes_bid": 50,
-                "last_price": 52,
+                "yes_ask": 45,
+                "yes_bid": 40,
+                "last_price": 42,
                 "volume_24h_fp": "5000",
                 "open_interest_fp": "3000",
                 "status": "open",
@@ -75,7 +75,7 @@ class TestFullPipelineE2E:
 
         assert len(signals) == 2
         assert signals[0].ticker == "KXHIGHNY-26MAR16-T58"
-        assert signals[0].edge == pytest.approx(0.20, abs=0.01)  # 0.75 - 0.55
+        assert signals[0].edge == pytest.approx(0.30, abs=0.01)  # 0.75 - 0.45
         assert signals[0].side == "yes"
         assert signals[1].edge == pytest.approx(-0.02, abs=0.01)  # 0.28 - 0.30
 

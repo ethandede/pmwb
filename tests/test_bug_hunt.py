@@ -146,10 +146,10 @@ class TestPaperTradeDedup:
             market_type="kalshi_temp",
             side="yes",
             model_prob=0.80,
-            market_prob=0.55,
-            edge=0.25,
+            market_prob=0.45,
+            edge=0.35,
             confidence=80.0,
-            price_cents=55,
+            price_cents=45,
             days_ahead=1,
             market={"volume_24h_fp": "1000", "open_interest_fp": "1000"},
         )
@@ -742,8 +742,8 @@ class TestFilterSignals:
         signal = Signal(
             ticker="KXHIGHNY-26MAR16-T58",
             city="nyc", market_type="kalshi_temp",
-            side="yes", model_prob=0.80, market_prob=0.55,
-            edge=0.25, confidence=80.0, price_cents=55, days_ahead=1,
+            side="yes", model_prob=0.80, market_prob=0.45,
+            edge=0.35, confidence=80.0, price_cents=45, days_ahead=1,
             market={"volume_24h_fp": "5000", "open_interest_fp": "3000"},
         )
         filtered = filter_signals(KALSHI_TEMP, [signal], [], set())
