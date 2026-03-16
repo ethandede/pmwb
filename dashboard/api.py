@@ -171,10 +171,13 @@ async def get_portfolio():
                 qty = abs(qty_fp)
                 ticker = p.get("ticker", "")
                 exposure = float(p.get("market_exposure_dollars", 0))
+                total_traded = float(p.get("total_traded_dollars", 0) or 0)
                 cost = cost_basis.get(ticker, 0)
-                # Negative cost means churn recovered more than current buy cost — position is "free"
+                # If no cost basis in trades.db, use Kalshi's total_traded_dollars
+                if cost == 0 and total_traded > 0:
+                    cost = total_traded
                 pnl = round(exposure - cost, 2) if cost != 0 else 0
-                entry = round(max(0, cost) / qty, 2) if qty > 0 and cost > 0 else 0
+                entry = round(min(0.99, max(0, cost) / qty), 2) if qty > 0 and cost > 0 else 0
 
                 # Parse settlement date and contract from ticker
                 # e.g. KXHIGHNY-26MAR14-T56 → date=2026-03-14, contract=">56°F"
