@@ -175,6 +175,12 @@ def filter_signals(config, signals: list[Signal], held_positions: list,
     held_tickers = {p.get("ticker", "") for p in held_positions
                     if float(p.get("position_fp", 0)) != 0}
 
+    # Track held precip events (one position per city/month)
+    held_events: set[str] = set()
+    for t in held_tickers:
+        if "RAIN" in t and "-" in t:
+            held_events.add(t.rsplit("-", 1)[0])
+
     # Build temperature constraints from existing positions for cross-contract check
     if held_sides is None:
         held_sides = {}
@@ -240,6 +246,14 @@ def filter_signals(config, signals: list[Signal], held_positions: list,
         if signal.ticker in resting_tickers:
             continue
 
+        # One-per-event dedup for precip: multiple buckets on the same
+        # city/month partially offset each other — pick strongest edge only.
+        if config.name == "kalshi_precip":
+            # Event = everything before the last dash (e.g. KXRAINMIAM-26MAR)
+            event_key = signal.ticker.rsplit("-", 1)[0] if "-" in signal.ticker else signal.ticker
+            if event_key in held_events:
+                continue
+
         # Cross-contract consistency: block signals that contradict
         # existing positions on the same city/date.
         parsed = _parse_temp_constraint(signal.ticker, signal.side)
@@ -260,8 +274,10 @@ def filter_signals(config, signals: list[Signal], held_positions: list,
 
         results.append(signal)
 
-        # Track accepted signal for within-cycle cross-contract checks
+        # Track accepted signal for within-cycle dedup
         held_tickers.add(signal.ticker)
+        if "RAIN" in signal.ticker and "-" in signal.ticker:
+            held_events.add(signal.ticker.rsplit("-", 1)[0])
         if parsed:
             key, new_lower, new_upper = parsed
             if key not in market_constraints:
