@@ -460,7 +460,7 @@ async def get_activity(limit: int = Query(50)):
     conn.row_factory = sqlite3.Row
     rows = conn.execute(
         """SELECT ticker, city, side, fill_price, fill_qty, fill_time,
-                  settlement_outcome, pnl
+                  settlement_outcome, pnl, strategy, fee
            FROM trades WHERE fill_qty > 0
            ORDER BY fill_time DESC LIMIT ?""",
         (limit,),
@@ -502,6 +502,8 @@ async def get_activity(limit: int = Query(50)):
             "pnl": round(r["pnl"], 2) if r["pnl"] is not None else None,
             "edge": round(edge, 4) if edge is not None else None,
             "confidence": round(scan["confidence"], 1) if "confidence" in scan else None,
+            "strategy": r["strategy"],
+            "fee": round(r["fee"], 4) if r["fee"] else 0.0,
         })
     return result
 
@@ -568,11 +570,22 @@ async def get_settled(limit: int = Query(50)):
 
     # Recent settled trades (entry fills only, not exit fills)
     rows = conn.execute("""
-        SELECT ticker, city, side, fill_price, fill_qty, fill_time, settlement_outcome, pnl
+        SELECT ticker, city, side, fill_price, fill_qty, fill_time, settlement_outcome, pnl, strategy, fee
         FROM trades WHERE settlement_outcome IN ('win', 'loss') AND fill_qty > 0
         ORDER BY fill_time DESC LIMIT ?
     """, (limit,)).fetchall()
+
+    fee_row = conn.execute("""
+        SELECT COALESCE(SUM(fee), 0) as total_fees,
+               SUM(CASE WHEN strategy='maker' THEN 1 ELSE 0 END) as maker_count,
+               SUM(CASE WHEN strategy='taker' THEN 1 ELSE 0 END) as taker_count
+        FROM trades WHERE strategy IS NOT NULL AND settlement_outcome IN ('win', 'loss')
+    """).fetchone()
     conn.close()
+
+    summary["total_fees"] = round(fee_row["total_fees"], 4)
+    summary["maker_count"] = fee_row["maker_count"]
+    summary["taker_count"] = fee_row["taker_count"]
 
     trades = []
     for r in rows:
@@ -584,6 +597,8 @@ async def get_settled(limit: int = Query(50)):
             "time": r["fill_time"],
             "outcome": r["settlement_outcome"],
             "pnl": round(r["pnl"], 2) if r["pnl"] is not None else None,
+            "strategy": r["strategy"],
+            "fee": round(r["fee"], 4) if r["fee"] else 0.0,
         })
 
     return {"summary": summary, "trades": trades}
