@@ -92,4 +92,68 @@ function renderTriptych(portfolio, performance, config) {
     renderHealthBadge('health-badge');
 }
 
-export { renderTriptych };
+function renderFeeSummary(data) {
+    const el = document.getElementById('fee-summary');
+    if (!el || !data) return;
+
+    const total = data.maker_trades + data.taker_trades;
+    const makerPct = total > 0 ? (data.maker_trades / total * 100).toFixed(0) : '0';
+
+    el.innerHTML = `
+        <div class="metric-row">
+            <div class="metric-card metric-negative">
+                <div class="metric-label">Total Fees</div>
+                <div class="metric-value mono">$${data.total_fees_paid.toFixed(2)}</div>
+            </div>
+            <div class="metric-card metric-positive">
+                <div class="metric-label">Fee Savings</div>
+                <div class="metric-value mono">$${data.fee_savings.toFixed(2)}</div>
+            </div>
+            <div class="metric-card metric-neutral">
+                <div class="metric-label">Maker Rate</div>
+                <div class="metric-value mono">${data.maker_trades}/${total} (${makerPct}%)</div>
+            </div>
+        </div>`;
+}
+
+function renderFeeChart(data) {
+    const el = document.getElementById('fee-chart');
+    if (!el || !data || data.length === 0) return;
+
+    const dates = data.map(d => d.date);
+    const pnl = data.map(d => d.cumulative_pnl);
+    const fees = data.map(d => d.cumulative_fees);
+
+    const tracePnl = {
+        x: dates, y: pnl, type: 'scatter', mode: 'lines',
+        name: 'Realized P&L',
+        line: { color: '#10b981', width: 2 },
+    };
+    const traceFees = {
+        x: dates, y: fees, type: 'scatter', mode: 'lines',
+        name: 'Cumulative Fees',
+        line: { color: '#ef4444', width: 2, dash: 'dot' },
+    };
+
+    const layout = {
+        paper_bgcolor: 'rgba(0,0,0,0)',
+        plot_bgcolor: 'rgba(0,0,0,0)',
+        font: { color: 'rgba(255,255,255,0.85)', family: 'Roboto, sans-serif', size: 12 },
+        margin: { l: 50, r: 20, t: 10, b: 40 },
+        xaxis: { showgrid: false, color: 'rgba(255,255,255,0.4)' },
+        yaxis: {
+            showgrid: true, gridcolor: 'rgba(255,255,255,0.08)',
+            color: 'rgba(255,255,255,0.4)',
+            tickprefix: '$',
+        },
+        legend: {
+            orientation: 'h', y: -0.15,
+            font: { size: 11 },
+        },
+        showlegend: true,
+    };
+
+    Plotly.newPlot(el, [tracePnl, traceFees], layout, PLOTLY_CONFIG);
+}
+
+export { renderTriptych, renderFeeSummary, renderFeeChart };

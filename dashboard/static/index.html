@@ -201,6 +201,16 @@
 
             <!-- View: History -->
             <div class="we-view" id="view-history">
+                <section id="fee-section">
+                    <h2>Fee Analysis</h2>
+                    <p class="section-desc">Maker strategy savings and cumulative fee impact on P&L.</p>
+                    <div id="fee-summary"></div>
+                    <div class="chart-card" style="margin-top: 1rem;">
+                        <div class="chart-label">Cumulative P&L vs Fees</div>
+                        <div id="fee-chart" style="height: 250px;"></div>
+                    </div>
+                </section>
+                <hr class="we-divider">
                 <section id="settled-section">
                     <h2>Settled Trades</h2>
                     <p class="section-desc">Completed trades with final outcomes. Win = contract settled in your favor.</p>
@@ -214,6 +224,6 @@
         </div>
     </div>
 
-    <script type="module" src="/static/js/app.js?v=27"></script>
+    <script type="module" src="/static/js/app.js?v=28"></script>
 </body>
 </html>

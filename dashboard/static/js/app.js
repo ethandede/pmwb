@@ -1,11 +1,11 @@
 // dashboard/static/js/app.js
-import { renderPortfolio } from './portfolio.js?v=27';
-import { renderMarkets } from './markets.js?v=27';
-import { renderTriptych } from './performance.js?v=27';
-import { renderActivity } from './activity.js?v=27';
-import { renderSettled } from './settled.js?v=27';
-import { renderScorecard, renderTrends, renderRecommendations, renderActions } from './analytics.js?v=27';
-import { renderResting } from './resting.js?v=27';
+import { renderPortfolio } from './portfolio.js?v=28';
+import { renderMarkets } from './markets.js?v=28';
+import { renderTriptych, renderFeeSummary, renderFeeChart } from './performance.js?v=28';
+import { renderActivity } from './activity.js?v=28';
+import { renderSettled } from './settled.js?v=28';
+import { renderScorecard, renderTrends, renderRecommendations, renderActions } from './analytics.js?v=28';
+import { renderResting } from './resting.js?v=28';
 
 let _configCache = null;
 
@@ -54,6 +54,8 @@ async function refreshAll() {
         loadSection('/api/analytics/trends', renderTrends, 'trends-content'),
         loadSection('/api/analytics/actions', renderActions, 'actions-content'),
         loadSection('/api/analytics/recommendations', renderRecommendations, 'recommendations-content'),
+        loadSection('/api/fees/summary', renderFeeSummary, 'fee-summary'),
+        loadSection('/api/performance/fees', renderFeeChart, 'fee-chart'),
     ]);
 
     btn.classList.remove('spinning');
