@@ -5,11 +5,36 @@ from datetime import date
 from typing import List
 from weather.http import get as http_get
 
+# Ensemble API: try self-hosted first, fall back to public
+_ENSEMBLE_LOCAL = "http://localhost:8080/v1/ensemble"
+_ENSEMBLE_PUBLIC = "https://ensemble-api.open-meteo.com/v1/ensemble"
+
+
+def _ensemble_get(params: str, timeout: int = 15):
+    """Try localhost ensemble, fall back to public API. Returns (response, source)."""
+    for source, base in [("localhost", _ENSEMBLE_LOCAL), ("public", _ENSEMBLE_PUBLIC)]:
+        try:
+            r = http_get(f"{base}{params}", timeout=timeout)
+            r.raise_for_status()
+            data = r.json()
+            # Check for all-null daily data (sync not ready yet)
+            daily = data.get("daily", {})
+            if daily:
+                first_key = next((k for k in daily if k != "time"), None)
+                if first_key and all(v is None for v in daily[first_key]):
+                    print(f"  Ensemble {source}: all-null data, trying next")
+                    continue
+            print(f"  Ensemble source: {source}")
+            return r, source
+        except Exception as e:
+            print(f"  Ensemble {source} failed: {e}")
+            continue
+    raise ConnectionError("All ensemble sources failed")
+
 def get_ensemble_max_temps(lat: float, lon: float, days_ahead: int = 1, unit: str = "f") -> List[float]:
     """Open-Meteo Ensemble — returns daily max temps in the correct unit (F or C)."""
     unit_param = "fahrenheit" if unit == "f" else "celsius"
-    url = (
-        f"https://ensemble-api.open-meteo.com/v1/ensemble"
+    params = (
         f"?latitude={lat}&longitude={lon}"
         f"&daily=temperature_2m_max"
         f"&temperature_unit={unit_param}"
@@ -18,8 +43,7 @@ def get_ensemble_max_temps(lat: float, lon: float, days_ahead: int = 1, unit: st
     )
 
     try:
-        r = http_get(url, timeout=15)
-        r.raise_for_status()
+        r, _src = _ensemble_get(params, timeout=15)
         data = r.json()
 
         temps = []
@@ -52,8 +76,7 @@ def get_ensemble_max_temps(lat: float, lon: float, days_ahead: int = 1, unit: st
 def get_ensemble_min_temps(lat: float, lon: float, days_ahead: int = 1, unit: str = "f") -> List[float]:
     """Open-Meteo Ensemble — returns daily min temps in the correct unit (F or C)."""
     unit_param = "fahrenheit" if unit == "f" else "celsius"
-    url = (
-        f"https://ensemble-api.open-meteo.com/v1/ensemble"
+    params = (
         f"?latitude={lat}&longitude={lon}"
         f"&daily=temperature_2m_min"
         f"&temperature_unit={unit_param}"
@@ -62,8 +85,7 @@ def get_ensemble_min_temps(lat: float, lon: float, days_ahead: int = 1, unit: st
     )
 
     try:
-        r = http_get(url, timeout=15)
-        r.raise_for_status()
+        r, _src = _ensemble_get(params, timeout=15)
         data = r.json()
 
         temps = []
@@ -167,8 +189,7 @@ def get_ensemble_precip(lat: float, lon: float, forecast_days: int | None = None
     Otherwise returns single-day values for day 1.
     """
     days = forecast_days if forecast_days is not None else 2
-    url = (
-        f"https://ensemble-api.open-meteo.com/v1/ensemble"
+    params = (
         f"?latitude={lat}&longitude={lon}"
         f"&daily=precipitation_sum"
         f"&timezone=auto"
@@ -176,8 +197,7 @@ def get_ensemble_precip(lat: float, lon: float, forecast_days: int | None = None
     )
 
     try:
-        r = http_get(url, timeout=15)
-        r.raise_for_status()
+        r, _src = _ensemble_get(params, timeout=15)
         data = r.json()
 
         totals = []

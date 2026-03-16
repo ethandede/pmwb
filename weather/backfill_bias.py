@@ -73,14 +73,13 @@ def _fetch_gfs_history(lat, lon, start_date, end_date, unit, variables):
 
 
 def _fetch_ensemble_history(lat, lon, start_date, end_date, unit, variables):
-    """Fetch ensemble model means for past dates."""
+    """Fetch ensemble model means for past dates. Tries localhost first."""
     unit_param = "fahrenheit" if unit == "f" else "celsius"
     # Ensemble API supports past_days for recent history
     today = datetime.now(timezone.utc).date()
     start = datetime.strptime(start_date, "%Y-%m-%d").date()
     past_days = (today - start).days
-    url = (
-        f"https://ensemble-api.open-meteo.com/v1/ensemble"
+    params = (
         f"?latitude={lat}&longitude={lon}"
         f"&daily={','.join(variables)}"
         f"&temperature_unit={unit_param}"
@@ -88,9 +87,23 @@ def _fetch_ensemble_history(lat, lon, start_date, end_date, unit, variables):
         f"&past_days={past_days}"
         f"&forecast_days=1"
     )
-    r = requests.get(url, timeout=20)
-    r.raise_for_status()
-    data = r.json()
+    bases = [
+        ("localhost", "http://localhost:8080/v1/ensemble"),
+        ("public", "https://ensemble-api.open-meteo.com/v1/ensemble"),
+    ]
+    data = None
+    for source, base in bases:
+        try:
+            r = requests.get(f"{base}{params}", timeout=20)
+            r.raise_for_status()
+            data = r.json()
+            print(f"  Ensemble history source: {source}")
+            break
+        except Exception as e:
+            print(f"  Ensemble history {source} failed: {e}")
+            continue
+    if data is None:
+        raise ConnectionError("All ensemble sources failed")
     daily = data.get("daily", {})
     dates = daily.get("time", [])
     result = {"dates": dates}
