@@ -8,6 +8,7 @@ import re
 from datetime import date
 
 from pipeline.types import Signal, CycleState, TradeResult
+from weather.metar import check_forecast_bust
 
 
 def fetch_markets(config, exchange) -> list[dict]:
@@ -88,6 +89,29 @@ def score_signal(config, market: dict) -> Signal:
         else:
             model_prob = float(forecast_result)
             confidence = 50.0
+
+        # --- METAR reality check (same-day temp only) ---
+        if config.name == "kalshi_temp" and days_ahead == 0 and temp_type == "max":
+            # Extract forecast high from fusion details (avg of model temps)
+            details = forecast_result[2] if isinstance(forecast_result, tuple) and len(forecast_result) >= 3 else {}
+            forecast_temps = [d.get("temp") for d in details.values()
+                              if isinstance(d, dict) and d.get("temp") is not None]
+            forecast_high = sum(forecast_temps) / len(forecast_temps) if forecast_temps else None
+            if forecast_high is not None:
+                bust = check_forecast_bust(city, forecast_high, days_ahead, temp_type)
+                if bust.get("active"):
+                    # Floor clamp: if obs already exceeds bucket upper bound,
+                    # the "below X" probability should collapse
+                    floor = bust.get("floor")
+                    if floor and high is not None and high < floor:
+                        model_prob = max(0.01, model_prob * 0.1)
+                    # Confidence penalty for busted forecasts
+                    penalty = bust.get("confidence_penalty", 0)
+                    if penalty > 0:
+                        confidence = confidence - penalty
+                    # Log bust data for dashboard visibility
+                    if isinstance(details, dict):
+                        details["metar"] = bust
 
         edge = model_prob - market_prob
         side = "yes" if edge > 0 else "no"
