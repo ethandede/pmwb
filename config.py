@@ -67,6 +67,43 @@ SAMEDAY_KELLY_FLOOR = 0.35
 PRECIP_FUSION_WEIGHTS = {"ensemble": 0.60, "noaa": 0.40}
 MAX_ENSEMBLE_HORIZON_DAYS = 16
 
+# METAR station mapping — city internal name → ICAO airport code
+# Stations chosen to match Kalshi settlement observation points
+METAR_STATIONS = {
+    "nyc": "KLGA",           # LaGuardia — matches Kalshi NYC settlement
+    "chicago": "KORD",       # O'Hare
+    "miami": "KMIA",         # Miami Intl
+    "austin": "KAUS",        # Austin-Bergstrom
+    "los_angeles": "KLAX",   # LAX
+    "seattle": "KSEA",       # Sea-Tac
+    "houston": "KIAH",       # George Bush Intercontinental
+    "san_francisco": "KSFO", # SFO
+    "atlanta": "KATL",       # Hartsfield-Jackson
+    "washington_dc": "KDCA", # Reagan National
+    "boston": "KBOS",         # Logan
+    "phoenix": "KPHX",       # Sky Harbor
+    "san_antonio": "KSAT",   # San Antonio Intl
+    "las_vegas": "KLAS",     # Harry Reid Intl
+}
+
+# City timezone mapping for METAR time-of-day guard
+CITY_TIMEZONES = {
+    "nyc": "America/New_York",
+    "chicago": "America/Chicago",
+    "miami": "America/New_York",
+    "austin": "America/Chicago",
+    "los_angeles": "America/Los_Angeles",
+    "seattle": "America/Los_Angeles",
+    "houston": "America/Chicago",
+    "san_francisco": "America/Los_Angeles",
+    "atlanta": "America/New_York",
+    "washington_dc": "America/New_York",
+    "boston": "America/New_York",
+    "phoenix": "America/Phoenix",
+    "san_antonio": "America/Chicago",
+    "las_vegas": "America/Los_Angeles",
+}
+
 ANALYTICS_ENABLED = True
 TELEGRAM_DAILY_SCORECARD = True
 
