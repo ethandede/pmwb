@@ -252,32 +252,34 @@ def get_noaa_point_forecast(lat: float, lon: float, days_ahead: int = 1, unit: s
 
 
 # ---------------------------------------------------------------------------
-# GFS + HRRR seamless (unchanged)
+# HRRR (via Open-Meteo gfs_hrrr) — 0-48h high-res CONUS forecast
 # ---------------------------------------------------------------------------
 
+_HRRR_LOCAL = "http://localhost:8080/v1/forecast"
+_HRRR_PUBLIC = "https://api.open-meteo.com/v1/forecast"
+
 def get_hrrr_forecast(lat: float, lon: float, days_ahead: int = 1, unit: str = "f", temp_type: str = "max") -> Optional[float]:
-    try:
-        unit_param = "fahrenheit" if unit == "f" else "celsius"
-        daily_var = "temperature_2m_max" if temp_type == "max" else "temperature_2m_min"
-        url = (
-            f"http://localhost:8080/v1/forecast"
-            f"?latitude={lat}&longitude={lon}"
-            f"&daily={daily_var}"
-            f"&models=gfs_seamless"
-            f"&temperature_unit={unit_param}"
-            f"&timezone=auto"
-            f"&forecast_days={days_ahead + 2}"
-        )
-        r = http_get(url, timeout=10)
-        r.raise_for_status()
-        data = r.json()
-        temps = data.get("daily", {}).get(daily_var, [])
-        if len(temps) > days_ahead and temps[days_ahead] is not None:
-            return round(float(temps[days_ahead]), 1)
-        return None
-    except Exception as e:
-        print(f"  HRRR/GFS forecast error: {e}")
-        return None
+    unit_param = "fahrenheit" if unit == "f" else "celsius"
+    daily_var = "temperature_2m_max" if temp_type == "max" else "temperature_2m_min"
+    params = (
+        f"?latitude={lat}&longitude={lon}"
+        f"&daily={daily_var}"
+        f"&models=gfs_hrrr"
+        f"&temperature_unit={unit_param}"
+        f"&timezone=auto"
+        f"&forecast_days={days_ahead + 2}"
+    )
+    for base in (_HRRR_LOCAL, _HRRR_PUBLIC):
+        try:
+            r = http_get(f"{base}{params}", timeout=10)
+            r.raise_for_status()
+            data = r.json()
+            temps = data.get("daily", {}).get(daily_var, [])
+            if len(temps) > days_ahead and temps[days_ahead] is not None:
+                return round(float(temps[days_ahead]), 1)
+        except Exception as e:
+            print(f"  HRRR forecast error ({base}): {e}")
+    return None
 
 
 # ---------------------------------------------------------------------------
