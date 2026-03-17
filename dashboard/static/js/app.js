@@ -1,11 +1,11 @@
 // dashboard/static/js/app.js
-import { renderPortfolio } from './portfolio.js?v=28';
-import { renderMarkets } from './markets.js?v=28';
-import { renderTriptych, renderFeeSummary, renderFeeChart } from './performance.js?v=28';
-import { renderActivity } from './activity.js?v=28';
-import { renderSettled } from './settled.js?v=28';
-import { renderScorecard, renderTrends, renderRecommendations, renderActions } from './analytics.js?v=28';
-import { renderResting } from './resting.js?v=28';
+import { renderPortfolio } from './portfolio.js?v=29';
+import { renderMarkets } from './markets.js?v=29';
+import { renderTriptych, renderFeeSummary, renderFeeChart } from './performance.js?v=29';
+import { renderActivity } from './activity.js?v=29';
+import { renderSettled } from './settled.js?v=29';
+import { renderScorecard, renderTrends, renderRecommendations, renderActions } from './analytics.js?v=29';
+import { renderResting } from './resting.js?v=29';
 
 let _configCache = null;
 
@@ -45,8 +45,8 @@ async function refreshAll() {
     }
 
     await Promise.allSettled([
-        loadSection('/api/markets/temp', (d) => renderMarkets(d, 'temp'), 'temp-table'),
-        loadSection('/api/markets/precip', (d) => renderMarkets(d, 'precip'), 'precip-table'),
+        loadSection('/api/markets/temp', (d) => renderMarkets(d, 'temp', _configCache), 'temp-table'),
+        loadSection('/api/markets/precip', (d) => renderMarkets(d, 'precip', _configCache), 'precip-table'),
         loadSection('/api/activity', renderActivity, 'activity-table'),
         loadSection('/api/resting', renderResting, 'resting-table'),
         loadSection('/api/settled', renderSettled, 'settled-table'),
@@ -117,7 +117,7 @@ async function forceRescan(marketType) {
     btn.disabled = true;
     try {
         const data = await fetchJSON(`/api/markets/${marketType}?force=true`, 90000);
-        renderMarkets(data, marketType);
+        renderMarkets(data, marketType, _configCache);
     } catch (e) {
         console.error(`Rescan ${marketType} failed:`, e);
     } finally {

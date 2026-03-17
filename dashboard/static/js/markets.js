@@ -17,6 +17,7 @@ window._signalCounts = window._signalCounts || {};
 const _sortState = {};
 const _pageState = {};
 const _marketData = {};
+let _configCache = null;
 
 function fmtScanTime(isoStr) {
     try {
@@ -192,7 +193,8 @@ function edgeHeatmap(history, containerId, labelId) {
     }, PLOTLY_CONFIG);
 }
 
-async function renderMarkets(data, type) {
+async function renderMarkets(data, type, config) {
+    if (config) _configCache = config;
     const { scan_time, markets = [] } = data;
     _marketData[type] = markets;
     _pageState[type] = _pageState[type] || 1;
@@ -211,7 +213,9 @@ async function renderMarkets(data, type) {
             else confidenceScatter(markets, heatmapId, labelId);
         } else { confidenceScatter(markets, heatmapId, labelId); }
     } catch (_) { confidenceScatter(markets, heatmapId, labelId); }
-    const tradeworthy = markets.filter(m => m.edge > 0.07 && m.confidence >= 50);
+    const edgeGate = _configCache?.edge_gate ?? 0.07;
+    const confGate = _configCache?.confidence_gate ?? 60;
+    const tradeworthy = markets.filter(m => m.edge >= edgeGate && m.confidence >= confGate);
     const badgeEl = document.getElementById(`${type}-signal-badge`);
     if (badgeEl) {
         const count = tradeworthy.length;

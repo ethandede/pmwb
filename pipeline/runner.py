@@ -25,6 +25,37 @@ class PipelineRunner:
         self.circuit_breaker = CircuitBreaker()
         self._consecutive_errors: dict[str, int] = {}
 
+    @staticmethod
+    def _write_scan_cache(config, signals: list):
+        """Write scored signals to scan_cache.db for dashboard consumption."""
+        if not signals or config.exchange == "ercot":
+            return
+        try:
+            from dashboard.scan_cache import write_scan_results
+            # Map config.name to dashboard market_type
+            mt = "temp" if "temp" in config.name else "precip" if "precip" in config.name else None
+            if mt is None:
+                return
+            rows = []
+            for s in signals:
+                direction = "BUY YES" if s.side == "yes" else "BUY NO"
+                rows.append({
+                    "market_type": mt,
+                    "ticker": s.ticker,
+                    "city": s.city,
+                    "model_prob": s.model_prob,
+                    "market_price": s.market_prob,
+                    "edge": s.edge,
+                    "direction": direction,
+                    "confidence": s.confidence,
+                    "method": "pipeline",
+                    "threshold": None,
+                    "days_left": s.days_ahead,
+                })
+            write_scan_results(rows)
+        except Exception as e:
+            print(f"  Scan cache write failed: {e}")
+
     def run_cycle(self, paper_mode: bool):
         """Run one full scan cycle across all configs."""
         # Sync bankroll from Kalshi API
@@ -107,6 +138,9 @@ class PipelineRunner:
                         signals.append(score_signal(config, m))
                     except Exception as e:
                         state.errors.append(f"score: {e}")
+
+                # Persist scored signals to scan_cache for dashboard Markets view
+                self._write_scan_cache(config, signals)
 
                 filtered = filter_signals(config, signals, held_positions, resting_tickers,
                                           held_sides=held_sides)

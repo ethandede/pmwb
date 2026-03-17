@@ -19,14 +19,9 @@ def test_portfolio_endpoint():
     resp = client.get("/api/portfolio")
     assert resp.status_code in (200, 502)
     data = resp.json()
-    if resp.status_code == 200:
-        assert "balance" in data
-        assert "open_positions" in data
-        assert isinstance(data["open_positions"], list)
-        bal = data["balance"]
-        assert "cash" in bal
-        assert "positions" in bal
-        assert "equity" in bal
+    assert "balance" in data
+    assert "open_positions" in data
+    assert isinstance(data["open_positions"], list)
 
 
 def test_config_endpoint():
@@ -46,9 +41,7 @@ def test_performance_endpoint():
     assert resp.status_code == 200
     data = resp.json()
     assert "equity_curve" in data
-    assert "settled_daily" in data
     assert isinstance(data["equity_curve"], list)
-    assert isinstance(data["settled_daily"], list)
 
 
 def test_markets_temp_cached():

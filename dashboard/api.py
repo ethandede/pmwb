@@ -11,7 +11,7 @@ from fastapi import FastAPI, Query
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
-from dashboard.scan_cache import init_scan_cache_db, get_latest_scan, get_scan_history
+from dashboard.scan_cache import init_scan_cache_db, get_latest_scan, get_scan_history, cleanup_old_scans
 from dashboard.equity_db import init_equity_db, get_equity_curve
 from dashboard.ticker_map import ticker_to_city
 from dashboard.ercot_api import ercot_router
@@ -21,6 +21,95 @@ _kalshi = KalshiExchange()
 from config import PAPER_MODE
 
 TRADES_DB = Path(__file__).resolve().parent.parent / "data" / "trades.db"
+
+# ── Shared month lookup ──────────────────────────────────────────────
+_MONTHS = {"JAN":"01","FEB":"02","MAR":"03","APR":"04","MAY":"05","JUN":"06",
+           "JUL":"07","AUG":"08","SEP":"09","OCT":"10","NOV":"11","DEC":"12"}
+
+
+def _parse_settle_date(ticker: str) -> str:
+    """Extract settlement date from ticker like KXHIGHNY-26MAR14-T56 → '2026-03-14'.
+
+    Also handles precip monthly tickers like KXRAINMIAM-26MAR-2 → end-of-month.
+    Returns '' if unparseable.
+    """
+    parts = ticker.split("-")
+    if len(parts) < 2:
+        return ""
+    # Daily: 26MAR14
+    m = re.match(r"(\d{2})([A-Z]{3})(\d{2})", parts[1])
+    if m:
+        yr, mon_str, day = m.groups()
+        mon = _MONTHS.get(mon_str, "01")
+        return f"20{yr}-{mon}-{day}"
+    # Monthly precip: 26MAR (no day) → end of month
+    m2 = re.match(r"(\d{2})([A-Z]{3})$", parts[1])
+    if m2:
+        import calendar as _cal
+        yr, mon_str = m2.groups()
+        mon = _MONTHS.get(mon_str, "01")
+        last_day = _cal.monthrange(2000 + int(yr), int(mon))[1]
+        return f"20{yr}-{mon}-{last_day:02d}"
+    return ""
+
+
+def _parse_contract(ticker: str, side: str = "YES") -> str:
+    """Extract contract display string from ticker strike.
+
+    Handles temp (T56 → '>56°', B51.5 → '51-52°') and
+    precip (numeric → '> 2 in' / '< 2 in' depending on side).
+    """
+    parts = ticker.split("-")
+    if len(parts) < 3:
+        return ""
+    strike = parts[2]
+    is_precip = "RAIN" in ticker.upper()
+    if is_precip:
+        try:
+            threshold_in = float(strike)
+            direction = ">" if side == "NO" else "<"
+            return f"{direction} {threshold_in:.0f} in"
+        except ValueError:
+            return strike
+    if strike.startswith("T"):
+        return f">{strike[1:]}\u00b0"
+    if strike.startswith("B"):
+        try:
+            val = float(strike[1:])
+            return f"{val:.0f}-{val+2:.0f}\u00b0"
+        except ValueError:
+            return strike
+    return ""
+
+
+def _predict_likely(ticker: str, side: str, forecast_high: float | None,
+                    forecast_precip: float | None) -> str | None:
+    """Predict WIN/LOSS based on forecast vs contract strike."""
+    parts = ticker.split("-")
+    if len(parts) < 3:
+        return None
+    strike = parts[2]
+    is_precip = "RAIN" in ticker.upper()
+
+    if is_precip and forecast_precip is not None:
+        try:
+            threshold_in = float(strike)
+            above = forecast_precip >= threshold_in
+            return ("WIN" if above else "LOSS") if side == "YES" else ("WIN" if not above else "LOSS")
+        except ValueError:
+            return None
+
+    if not is_precip and forecast_high is not None:
+        if strike.startswith("T"):
+            threshold = float(strike[1:])
+            temp_above = forecast_high >= threshold
+            return ("WIN" if temp_above else "LOSS") if side == "YES" else ("LOSS" if temp_above else "WIN")
+        if strike.startswith("B"):
+            threshold = float(strike[1:])
+            in_bucket = threshold <= forecast_high < threshold + 2
+            return ("WIN" if in_bucket else "LOSS") if side == "YES" else ("WIN" if not in_bucket else "LOSS")
+
+    return None
 
 
 def _get_cost_basis() -> dict:
@@ -52,15 +141,21 @@ def _get_cost_basis() -> dict:
 
     basis = {}
     for ticker, fills in by_ticker.items():
-        # Get all buy fills (ignore sells for cost basis — we know we hold the position)
-        buy_fills = [f for f in fills if not (f["side"] or "").startswith("sell")]
-        if not buy_fills:
+        # Walk fills in order: buys accumulate, sells reset the position.
+        # After the last sell, remaining buys are the current position's cost.
+        buy_fills_since_last_sell = []
+        for f in fills:
+            if (f["side"] or "").startswith("sell"):
+                buy_fills_since_last_sell = []
+            else:
+                buy_fills_since_last_sell.append(f)
+        if not buy_fills_since_last_sell:
             continue
-        # Use the last buy fill as the current entry cost
-        last_buy = buy_fills[-1]
-        cost_cents = (last_buy["fill_price"] or 0) * (last_buy["fill_qty"] or 0)
-        if cost_cents > 0:
-            basis[ticker] = round(cost_cents / 100.0, 2)
+        # Weighted average cost across all buys in current position
+        total_cost_cents = sum((f["fill_price"] or 0) * (f["fill_qty"] or 0)
+                               for f in buy_fills_since_last_sell)
+        if total_cost_cents > 0:
+            basis[ticker] = round(total_cost_cents / 100.0, 2)
 
     return basis
 
@@ -93,8 +188,9 @@ def _get_paper_positions() -> list:
     return [dict(r) for r in rows]
 
 
-# Initialise DBs
+# Initialise DBs + prune stale scan data
 init_scan_cache_db()
+cleanup_old_scans()
 init_equity_db()
 
 app = FastAPI(title="Weather Edge Dashboard")
@@ -162,35 +258,30 @@ async def get_portfolio():
             except Exception:
                 _forecast_cache[city_name] = {"high": [None, None], "low": [None, None], "current": None}
 
-        # Fetch GFS precip forecasts for precip cities
+        # Fetch ensemble precip forecasts for precip cities
+        # Uses 30-member ensemble (same data as scoring model) instead of
+        # single GFS run, which inflates beyond ~7-day reliable window.
         from datetime import date as _date_mod
+        from statistics import median
         today = _date_mod.today()
         import calendar
         days_left = calendar.monthrange(today.year, today.month)[1] - today.day + 1
+        from weather.forecast import get_ensemble_precip, get_observed_mtd_precip
         for prefix, info in PRECIP_SERIES.items():
             city_name = info["city"]
             if city_name in _precip_cache:
                 continue
             try:
-                r = _req.get(
-                    f"http://localhost:8080/v1/forecast?latitude={info['lat']}&longitude={info['lon']}"
-                    f"&daily=precipitation_sum&models=gfs_seamless"
-                    f"&precipitation_unit=inch&timezone=auto&forecast_days={days_left}",
-                    timeout=3,
-                )
-                d = r.json()
-                daily_precip = d.get("daily", {}).get("precipitation_sum", [])
-                remaining_total = sum(p for p in daily_precip if p)
-                # Get MTD observed from forecast function
+                members = get_ensemble_precip(info["lat"], info["lon"], forecast_days=days_left)
+                remaining_median = median(members) if members else 0.0
                 try:
-                    from weather.forecast import get_observed_mtd_precip
                     mtd = get_observed_mtd_precip(info["lat"], info["lon"])
                 except Exception:
                     mtd = 0.0
                 _precip_cache[city_name] = {
-                    "remaining_forecast": round(remaining_total, 2),
+                    "remaining_forecast": round(remaining_median, 2),
                     "mtd_observed": round(mtd, 2),
-                    "month_total_forecast": round(mtd + remaining_total, 2),
+                    "month_total_forecast": round(mtd + remaining_median, 2),
                 }
             except Exception:
                 _precip_cache[city_name] = {"remaining_forecast": None, "mtd_observed": None, "month_total_forecast": None}
@@ -213,27 +304,8 @@ async def get_portfolio():
                 pnl = round(exposure - cost, 2) if cost != 0 else 0
                 entry = round(min(0.99, max(0, cost) / qty), 2) if qty > 0 and cost > 0 else 0
 
-                # Parse settlement date and contract from ticker
-                # e.g. KXHIGHNY-26MAR14-T56 → date=2026-03-14, contract=">56°F"
-                # e.g. KXHIGHNY-26MAR14-B51.5 → date=2026-03-14, contract="51-52°F"
-                settles = ""
-                contract = ""
-                parts = ticker.split("-")
-                if len(parts) >= 2:
-                    m = re.match(r"(\d{2})([A-Z]{3})(\d{2})", parts[1])
-                    if m:
-                        yr, mon_str, day = m.groups()
-                        months = {"JAN":"01","FEB":"02","MAR":"03","APR":"04","MAY":"05","JUN":"06",
-                                  "JUL":"07","AUG":"08","SEP":"09","OCT":"10","NOV":"11","DEC":"12"}
-                        mon = months.get(mon_str, "01")
-                        settles = f"20{yr}-{mon}-{day}"
-                if len(parts) >= 3:
-                    strike = parts[2]
-                    if strike.startswith("T"):
-                        contract = f">{strike[1:]}\u00b0"
-                    elif strike.startswith("B"):
-                        val = float(strike[1:])
-                        contract = f"{val:.0f}-{val+2:.0f}\u00b0"
+                settles = _parse_settle_date(ticker)
+                contract = _parse_contract(ticker, side_str)
 
                 # Look up forecast for this city
                 city_slug = None
@@ -249,25 +321,8 @@ async def get_portfolio():
                 forecast_high = fc_high[fc_idx] if fc_idx < len(fc_high) else None
                 forecast_low = fc_low[fc_idx] if fc_idx < len(fc_low) else None
 
-                # Predict likely result based on forecast vs contract
-                likely = None
                 side_str = "YES" if qty_fp > 0 else "NO"
-                if forecast_high is not None and len(parts) >= 3:
-                    strike = parts[2]
-                    if strike.startswith("T"):
-                        threshold = float(strike[1:])
-                        temp_above = forecast_high >= threshold
-                        if side_str == "YES":
-                            likely = "WIN" if temp_above else "LOSS"
-                        else:
-                            likely = "LOSS" if temp_above else "WIN"
-                    elif strike.startswith("B"):
-                        threshold = float(strike[1:])
-                        in_bucket = threshold <= forecast_high < threshold + 2
-                        if side_str == "YES":
-                            likely = "WIN" if in_bucket else "LOSS"
-                        else:
-                            likely = "WIN" if not in_bucket else "LOSS"
+                likely = _predict_likely(ticker, side_str, forecast_high, None)
 
                 market_type = "precip" if "RAIN" in ticker.upper() else "temp"
                 open_pos.append({
@@ -297,46 +352,9 @@ async def get_portfolio():
                 is_no = "no" in side_raw
                 side_str = "NO" if is_no else "YES"
 
-                settles = ""
-                contract = ""
                 is_precip = "RAIN" in ticker.upper()
-                parts = ticker.split("-")
-                if len(parts) >= 2:
-                    m = re.match(r"(\d{2})([A-Z]{3})(\d{2})", parts[1])
-                    if m:
-                        yr, mon_str, day = m.groups()
-                        months = {"JAN":"01","FEB":"02","MAR":"03","APR":"04","MAY":"05","JUN":"06",
-                                  "JUL":"07","AUG":"08","SEP":"09","OCT":"10","NOV":"11","DEC":"12"}
-                        mon = months.get(mon_str, "01")
-                        settles = f"20{yr}-{mon}-{day}"
-                    elif not is_precip:
-                        pass  # no date parsed
-                    else:
-                        # Precip: 26MAR (no day) → end of month
-                        m2 = re.match(r"(\d{2})([A-Z]{3})$", parts[1])
-                        if m2:
-                            yr, mon_str = m2.groups()
-                            months = {"JAN":"01","FEB":"02","MAR":"03","APR":"04","MAY":"05","JUN":"06",
-                                      "JUL":"07","AUG":"08","SEP":"09","OCT":"10","NOV":"11","DEC":"12"}
-                            mon = months.get(mon_str, "01")
-                            import calendar as _cal
-                            last_day = _cal.monthrange(2000 + int(yr), int(mon))[1]
-                            settles = f"20{yr}-{mon}-{last_day:02d}"
-
-                if is_precip and len(parts) >= 3:
-                    # Precip contract: KXRAINMIAM-26MAR-2 → threshold = 2 inches
-                    try:
-                        threshold_in = float(parts[2])
-                        contract = f"{'>' if is_no else '<'} {threshold_in:.0f} in"
-                    except ValueError:
-                        contract = parts[2]
-                elif len(parts) >= 3:
-                    strike = parts[2]
-                    if strike.startswith("T"):
-                        contract = f">{strike[1:]}\u00b0"
-                    elif strike.startswith("B"):
-                        val = float(strike[1:])
-                        contract = f"{val:.0f}-{val+2:.0f}\u00b0"
+                settles = _parse_settle_date(ticker)
+                contract = _parse_contract(ticker, side_str)
 
                 # Look up city from both temp and precip series
                 city_slug = None
@@ -347,35 +365,17 @@ async def get_portfolio():
 
                 forecast_high = None
                 forecast_precip = None
-                likely = None
 
                 if is_precip:
-                    # Precip forecast
                     pc = _precip_cache.get(city_slug, {})
                     forecast_precip = pc.get("month_total_forecast")
-                    if forecast_precip is not None and len(parts) >= 3:
-                        try:
-                            threshold_in = float(parts[2])
-                            above = forecast_precip >= threshold_in
-                            likely = ("WIN" if above else "LOSS") if side_str == "YES" else ("WIN" if not above else "LOSS")
-                        except ValueError:
-                            pass
                 else:
-                    # Temp forecast
                     fc = _forecast_cache.get(city_slug, {})
                     fc_idx = 0 if settles <= today_str else 1
                     fc_high = fc.get("high", [None, None])
                     forecast_high = fc_high[fc_idx] if fc_idx < len(fc_high) else None
-                    if forecast_high is not None and len(parts) >= 3:
-                        strike = parts[2]
-                        if strike.startswith("T"):
-                            threshold = float(strike[1:])
-                            temp_above = forecast_high >= threshold
-                            likely = ("WIN" if temp_above else "LOSS") if side_str == "YES" else ("LOSS" if temp_above else "WIN")
-                        elif strike.startswith("B"):
-                            threshold = float(strike[1:])
-                            in_bucket = threshold <= forecast_high < threshold + 2
-                            likely = ("WIN" if in_bucket else "LOSS") if side_str == "YES" else ("WIN" if not in_bucket else "LOSS")
+
+                likely = _predict_likely(ticker, side_str, forecast_high, forecast_precip)
 
                 fill_cost = (r["fill_price"] or 0) * (r["fill_qty"] or 0) / 100.0
                 market_type = "precip" if is_precip else "temp"
@@ -415,9 +415,9 @@ async def get_markets(market_type: str, force: bool = Query(False)):
     if market_type not in ("temp", "precip"):
         return {"error": "Invalid market_type"}
 
-    if force:
-        # You can call run_scanner() here later if you want "Force Rescan" to trigger a new scan
-        pass
+    # TODO: wire force rescan to pipeline — scan_cache.db is currently only
+    # populated when the pipeline writes results (see pipeline/runner.py).
+    # Until then, force=true returns the latest cached scan like a normal request.
 
     return get_latest_scan(market_type)
 
@@ -433,7 +433,6 @@ async def market_history(market_type: str, days: int = Query(30)):
 async def get_performance():
     return {
         "equity_curve": get_equity_curve(),
-        "settled_daily": [],  # Expand later if needed
     }
 
 
@@ -527,16 +526,7 @@ async def get_resting():
         price_cents = int(float(price or 0) * 100)
         created = (o.get("created_time", "")[:16].replace("T", " "))
 
-        # Parse contract from ticker
-        contract = ""
-        parts = ticker.split("-")
-        if len(parts) >= 3:
-            strike = parts[2]
-            if strike.startswith("T"):
-                contract = f">{strike[1:]}\u00b0"
-            elif strike.startswith("B"):
-                val = float(strike[1:])
-                contract = f"{val:.0f}-{val+2:.0f}\u00b0"
+        contract = _parse_contract(ticker, side.upper())
 
         result.append({
             "city": ticker_to_city(ticker),
