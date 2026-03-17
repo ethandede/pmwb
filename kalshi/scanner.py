@@ -142,7 +142,9 @@ def parse_kalshi_bucket(market: dict) -> Optional[Tuple[float, float | None]]:
     if strike_type == "between" and floor_strike is not None and cap_strike is not None:
         return float(floor_strike), float(cap_strike)
     elif strike_type == "greater" and floor_strike is not None:
-        return float(floor_strike), None
+        # Kalshi "greater" contracts: YES = "below threshold"
+        # e.g. T93 → marketTitle "92° or below" → YES wins when temp < 93
+        return 0.0, float(floor_strike)
     elif strike_type == "less" and cap_strike is not None:
         return 0.0, float(cap_strike)
 

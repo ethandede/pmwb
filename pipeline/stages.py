@@ -106,9 +106,10 @@ def score_signal(config, market: dict) -> Signal:
                     if floor and high is not None and high < floor:
                         model_prob = max(0.01, model_prob * 0.1)
                     # Confidence penalty for busted forecasts
+                    # penalty is 0-0.3 fraction; confidence is 0-100 scale
                     penalty = bust.get("confidence_penalty", 0)
                     if penalty > 0:
-                        confidence = confidence - penalty
+                        confidence = confidence - (penalty * 100)
                     # Log bust data for dashboard visibility
                     if isinstance(details, dict):
                         details["metar"] = bust
@@ -168,16 +169,16 @@ def _parse_temp_constraint(ticker: str, side: str):
     bucket_type = bucket[0]
 
     lower = upper = None
-    if bucket_type == "B":          # "below X"
+    if bucket_type == "B":          # "between" bracket containing X
         if side == "no":
-            lower = threshold       # NOT below → temp >= X
+            lower = threshold       # NOT in bracket → temp >= X
         else:
-            upper = threshold       # below → temp < X
-    else:                           # "T" = "at or above X"
+            upper = threshold       # in bracket → temp < X
+    else:                           # "T" = "below X" (Kalshi YES = temp < X)
         if side == "yes":
-            lower = threshold       # at/above → temp >= X
+            upper = threshold       # below → temp < X
         else:
-            upper = threshold       # NOT at/above → temp < X
+            lower = threshold       # NOT below → temp >= X
 
     return (market_key, lower, upper)
 

@@ -360,14 +360,15 @@ class TestCrossContractConsistency:
         # Held: NO on B48.5 → temp >= 48.5 (lower bound)
         held_sides = {"KXHIGHCHI-26MAR13-B48.5": "no"}
 
-        # New: NO on T44 → temp < 44 (upper bound)
+        # New: YES on T44 → temp < 44 (upper bound)
+        # Kalshi T-type YES = "below threshold", so YES on T44 = temp < 44
         # 48.5 >= 44 → contradiction
         signals = [
             Signal(
                 ticker="KXHIGHCHI-26MAR13-T44",
                 city="chicago", market_type="kalshi_temp",
-                side="no", model_prob=0.25, market_prob=0.55,
-                edge=-0.30, confidence=80.0, price_cents=55, days_ahead=0,
+                side="yes", model_prob=0.75, market_prob=0.45,
+                edge=0.30, confidence=80.0, price_cents=40, days_ahead=0,
                 market={"volume_24h_fp": "1000", "open_interest_fp": "1000"},
             ),
         ]
@@ -1027,8 +1028,9 @@ class TestBucketParsing:
 
     def test_parse_greater_bucket(self):
         from kalshi.scanner import parse_kalshi_bucket
+        # Kalshi "greater" YES = "below threshold" (e.g. T65 = "64° or below")
         market = {"strike_type": "greater", "floor_strike": 65.0}
-        assert parse_kalshi_bucket(market) == (65.0, None)
+        assert parse_kalshi_bucket(market) == (0.0, 65.0)
 
     def test_parse_less_bucket(self):
         from kalshi.scanner import parse_kalshi_bucket
