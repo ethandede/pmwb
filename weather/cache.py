@@ -10,6 +10,7 @@ from typing import Any, Optional
 # Cache TTL in seconds
 FORECAST_TTL = 1800  # 30 minutes — weather models update every 1-6 hours
 MARKET_TTL = 60      # 1 minute — market prices move faster
+METAR_TTL = 300      # 5 minutes — METAR obs update roughly every hour
 
 _cache: dict[str, dict] = {}
 
@@ -24,7 +25,12 @@ def get(cache_type: str, *parts) -> Optional[Any]:
     entry = _cache.get(key)
     if entry is None:
         return None
-    ttl = MARKET_TTL if cache_type == "market" else FORECAST_TTL
+    if cache_type == "market":
+        ttl = MARKET_TTL
+    elif cache_type == "metar":
+        ttl = METAR_TTL
+    else:
+        ttl = FORECAST_TTL
     if time.time() - entry["ts"] > ttl:
         del _cache[key]
         return None
