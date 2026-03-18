@@ -553,12 +553,27 @@ def fuse_forecast(
 # ERCOT Solar / Power Price Signal
 # ---------------------------------------------------------------------------
 
+def _hourly_solar_curve(daily_solar: float, hour_ending: int, month: int) -> float:
+    """Distribute daily solar total across trading hours using cosine curve.
+
+    Peaks at solar noon (~HE14, 1pm CT). Sums to daily_solar across ERCOT_SOLAR_HOURS.
+    """
+    from config import ERCOT_SOLAR_HOURS
+    weight = max(0.0, math.cos((hour_ending - 13.5) * math.pi / 10))
+    sum_weights = sum(max(0.0, math.cos((h - 13.5) * math.pi / 10)) for h in ERCOT_SOLAR_HOURS)
+    if sum_weights <= 0:
+        return 0.0
+    return daily_solar * weight / sum_weights
+
+
 def get_ercot_solar_signal(
     lat: float, lon: float,
     hub_key: str = "",
     solar_sensitivity: float = 0.15,
     hours_ahead: int = 24,
     ercot_data: dict = None,
+    contract_hour: int = 0,
+    dam_price: float = 0.0,
 ) -> dict:
     """Solar irradiance + ERCOT price -> fair-price trading signal.
 
@@ -654,7 +669,42 @@ def get_ercot_solar_signal(
         actual_solar_mw = 12000.0
         load_forecast = norm_load
 
-    # 4. Fair price model
+    # 3b. Binary mode: P(RT >= DAM) for a specific contract_hour
+    if contract_hour > 0 and dam_price > 0:
+        from config import ERCOT_LOGISTIC_K
+        safe_expected_solrad = max(0.0, expected_solrad)
+        if norm_solar <= 0:
+            solar_deviation = 0.0
+        else:
+            solar_deviation = (norm_solar - safe_expected_solrad) / norm_solar
+        estimated_rt_shift = solar_deviation * solar_sensitivity * dam_price
+        model_prob = 1.0 / (1.0 + math.exp(-ERCOT_LOGISTIC_K * estimated_rt_shift))
+        model_prob = round(max(0.01, min(0.99, model_prob)), 4)
+        edge = round(model_prob - 0.50, 4)
+        if edge > 0:
+            signal = "LONG"
+        elif edge < 0:
+            signal = "SHORT"
+        else:
+            signal = "NEUTRAL"
+        base_conf = 30
+        agreement_bonus = 0
+        if vc_solrad is not None and om_solrad is not None:
+            if abs(vc_solrad - om_solrad) <= 2.0:
+                agreement_bonus = 20
+        price_deviation_bonus = min(30, abs(edge) * 300)
+        confidence = int(min(90, max(30, base_conf + agreement_bonus + price_deviation_bonus)))
+        return {
+            "signal": signal,
+            "edge": edge,
+            "model_prob": model_prob,
+            "expected_solrad_mjm2": round(safe_expected_solrad, 1),
+            "current_ercot_price": round(hub_price, 1),
+            "actual_solar_mw": round(actual_solar_mw, 0),
+            "confidence": confidence,
+        }
+
+    # 4. Fair price model (daily edge — backward-compat path)
     solar_impact = solar_sensitivity * (norm_solar - expected_solrad) / norm_solar
     load_impact = ERCOT_LOAD_SENSITIVITY * (load_forecast - norm_load) / norm_load
     edge = round(solar_impact + load_impact, 4)

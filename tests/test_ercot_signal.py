@@ -370,3 +370,119 @@ def test_daemon_calls_ercot_manager():
 
     assert "run_ercot_manager" in code
     assert "from ercot.position_manager import run_ercot_manager" in code
+
+
+# ============================================================================
+# Hourly solar curve helper
+# ============================================================================
+
+import math
+from unittest.mock import patch, MagicMock
+
+
+class TestHourlySolarCurve:
+    def test_peak_at_midday(self):
+        from weather.multi_model import _hourly_solar_curve
+        he13 = _hourly_solar_curve(daily_solar=20.0, hour_ending=13, month=3)
+        he11 = _hourly_solar_curve(daily_solar=20.0, hour_ending=11, month=3)
+        he18 = _hourly_solar_curve(daily_solar=20.0, hour_ending=18, month=3)
+        assert he13 > he11
+        assert he13 > he18
+
+    def test_sums_to_daily_total(self):
+        from weather.multi_model import _hourly_solar_curve
+        daily = 20.0
+        total = sum(_hourly_solar_curve(daily, he, 3) for he in range(11, 19))
+        assert abs(total - daily) < 0.01
+
+    def test_all_non_negative(self):
+        from weather.multi_model import _hourly_solar_curve
+        for he in range(11, 19):
+            assert _hourly_solar_curve(20.0, he, 3) >= 0
+
+
+# ============================================================================
+# P(RT >= DAM) binary signal model
+# ============================================================================
+
+class TestProbRtGteDam:
+    @patch("config.VISUAL_CROSSING_API_KEY", "test-key-123")
+    @patch("weather.multi_model.http_get")
+    def test_solar_deficit_gives_high_prob(self, mock_get):
+        from weather.multi_model import get_ercot_solar_signal
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {"days": [{"solarenergy": 8.0}]}
+        mock_resp.raise_for_status = lambda: None
+        mock_get.return_value = mock_resp
+
+        result = get_ercot_solar_signal(
+            32.78, -96.80, hub_key="North", solar_sensitivity=0.15,
+            contract_hour=14, dam_price=40.0,
+            ercot_data={"hub_price": 40.0, "load_forecast": 45000, "solar_mw": 12000},
+        )
+        assert result["model_prob"] > 0.50
+        assert result["signal"] == "LONG"
+
+    @patch("config.VISUAL_CROSSING_API_KEY", "test-key-123")
+    @patch("weather.multi_model.http_get")
+    def test_solar_surplus_gives_low_prob(self, mock_get):
+        from weather.multi_model import get_ercot_solar_signal
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {"days": [{"solarenergy": 24.0}]}
+        mock_resp.raise_for_status = lambda: None
+        mock_get.return_value = mock_resp
+
+        result = get_ercot_solar_signal(
+            32.78, -96.80, hub_key="North", solar_sensitivity=0.15,
+            contract_hour=14, dam_price=40.0,
+            ercot_data={"hub_price": 40.0, "load_forecast": 45000, "solar_mw": 12000},
+        )
+        assert result["model_prob"] < 0.50
+        assert result["signal"] == "SHORT"
+
+    @patch("weather.multi_model.http_get")
+    def test_normal_solar_gives_fifty_percent(self, mock_get):
+        from weather.multi_model import get_ercot_solar_signal
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {"days": [{"solarenergy": 16.0}]}
+        mock_resp.raise_for_status = lambda: None
+        mock_get.return_value = mock_resp
+
+        result = get_ercot_solar_signal(
+            32.78, -96.80, hub_key="North", solar_sensitivity=0.15,
+            contract_hour=14, dam_price=40.0,
+            ercot_data={"hub_price": 40.0, "load_forecast": 45000, "solar_mw": 12000},
+        )
+        assert 0.48 <= result["model_prob"] <= 0.52
+
+    @patch("weather.multi_model.http_get")
+    def test_backward_compat_no_contract_hour(self, mock_get):
+        from weather.multi_model import get_ercot_solar_signal
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {"days": [{"solarenergy": 10.0}]}
+        mock_resp.raise_for_status = lambda: None
+        mock_get.return_value = mock_resp
+
+        result = get_ercot_solar_signal(
+            32.78, -96.80, hub_key="North", solar_sensitivity=0.15,
+            ercot_data={"hub_price": 40.0, "load_forecast": 45000, "solar_mw": 12000},
+        )
+        assert "signal" in result
+        assert "edge" in result
+        assert result["signal"] in ("LONG", "SHORT", "NEUTRAL")
+
+    @patch("weather.multi_model.http_get")
+    def test_zero_norm_solar_no_crash(self, mock_get):
+        from weather.multi_model import get_ercot_solar_signal
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {"days": [{"solarenergy": 10.0}]}
+        mock_resp.raise_for_status = lambda: None
+        mock_get.return_value = mock_resp
+
+        with patch("config.ERCOT_SEASONAL_NORMS", {3: {"solar": 0.0, "load": 45000}}):
+            result = get_ercot_solar_signal(
+                32.78, -96.80, hub_key="North", solar_sensitivity=0.15,
+                contract_hour=14, dam_price=40.0,
+                ercot_data={"hub_price": 40.0, "load_forecast": 45000, "solar_mw": 12000},
+            )
+        assert 0.0 < result["model_prob"] < 1.0
