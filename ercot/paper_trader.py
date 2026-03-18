@@ -1,68 +1,93 @@
-"""ERCOT paper trading engine — SQLite-backed simulated positions.
+"""ERCOT paper trading engine — binary options with hourly settlement.
 
-Tracks paper positions with Kelly sizing, P&L, and expiry.
-Uses shared risk limits from risk/position_limits.py.
+Binary contracts: P(RT >= DAM) per hub per hour.
+Settlement: $100 if RT >= DAM, $0 otherwise.
 """
 
 import os
+import shutil
 import sqlite3
-from datetime import datetime, timezone, timedelta
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import config as _config
 from config import (
     FRACTIONAL_KELLY, MAX_BANKROLL_PCT_PER_TRADE,
-    ERCOT_PAPER_BANKROLL, ERCOT_POSITION_TTL_HOURS,
+    ERCOT_PAPER_BANKROLL,
+    ERCOT_MAX_POSITIONS_PER_HUB, ERCOT_MAX_POSITIONS_TOTAL,
 )
 from risk.position_limits import check_limits
 
 ERCOT_PAPER_DB = "data/ercot_paper.db"
 
+CT = ZoneInfo("America/Chicago")
+
+_SCHEMA = """
+CREATE TABLE IF NOT EXISTS ercot_positions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    hub TEXT NOT NULL,
+    hub_name TEXT NOT NULL,
+    contract_date TEXT NOT NULL,
+    contract_hour INTEGER NOT NULL,
+    side TEXT NOT NULL,
+    dam_price REAL NOT NULL,
+    entry_price REAL NOT NULL,
+    size_dollars REAL NOT NULL,
+    model_prob REAL NOT NULL,
+    edge REAL NOT NULL,
+    confidence INTEGER NOT NULL,
+    opened_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS ercot_trades (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    hub TEXT NOT NULL,
+    hub_name TEXT NOT NULL,
+    contract_date TEXT NOT NULL,
+    contract_hour INTEGER NOT NULL,
+    side TEXT NOT NULL,
+    dam_price REAL NOT NULL,
+    rt_price REAL,
+    entry_price REAL NOT NULL,
+    size_dollars REAL NOT NULL,
+    settlement_value INTEGER,
+    pnl REAL NOT NULL,
+    model_prob REAL NOT NULL,
+    edge REAL NOT NULL,
+    confidence INTEGER NOT NULL,
+    opened_at TEXT NOT NULL,
+    closed_at TEXT NOT NULL,
+    exit_reason TEXT
+);
+
+CREATE TABLE IF NOT EXISTS ercot_scan_cache (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    hub TEXT NOT NULL,
+    hub_name TEXT NOT NULL,
+    contract_date TEXT NOT NULL,
+    contract_hour INTEGER NOT NULL,
+    side TEXT NOT NULL,
+    dam_price REAL NOT NULL,
+    model_prob REAL NOT NULL,
+    edge REAL NOT NULL,
+    expected_solrad_mjm2 REAL,
+    confidence INTEGER NOT NULL,
+    scanned_at TEXT NOT NULL
+);
+"""
+
 
 def _init_db():
     os.makedirs(os.path.dirname(ERCOT_PAPER_DB) or ".", exist_ok=True)
+    # Back up existing DB if present (schema migration)
+    if os.path.exists(ERCOT_PAPER_DB):
+        bak = ERCOT_PAPER_DB + ".bak"
+        try:
+            shutil.copy2(ERCOT_PAPER_DB, bak)
+        except OSError:
+            pass
     conn = sqlite3.connect(ERCOT_PAPER_DB)
-    conn.executescript("""
-        CREATE TABLE IF NOT EXISTS ercot_positions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            hub TEXT NOT NULL,
-            hub_name TEXT NOT NULL,
-            signal TEXT NOT NULL,
-            entry_price REAL NOT NULL,
-            size_dollars REAL NOT NULL,
-            edge REAL NOT NULL,
-            confidence INTEGER NOT NULL,
-            opened_at TEXT NOT NULL,
-            expires_at TEXT NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS ercot_trades (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            hub TEXT NOT NULL,
-            hub_name TEXT NOT NULL,
-            signal TEXT NOT NULL,
-            exit_signal TEXT,
-            entry_price REAL NOT NULL,
-            exit_price REAL NOT NULL,
-            size_dollars REAL NOT NULL,
-            pnl REAL NOT NULL,
-            edge_at_entry REAL NOT NULL,
-            confidence INTEGER NOT NULL,
-            opened_at TEXT NOT NULL,
-            closed_at TEXT NOT NULL,
-            exit_reason TEXT
-        );
-        CREATE TABLE IF NOT EXISTS ercot_scan_cache (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            hub TEXT NOT NULL,
-            hub_name TEXT NOT NULL,
-            signal TEXT NOT NULL,
-            edge REAL NOT NULL,
-            expected_solrad_mjm2 REAL,
-            current_ercot_price REAL,
-            actual_solar_mw REAL,
-            confidence INTEGER NOT NULL,
-            scanned_at TEXT NOT NULL
-        );
-    """)
+    conn.executescript(_SCHEMA)
     conn.close()
 
 
@@ -76,31 +101,46 @@ def _conn():
 def open_position(hub_signal: dict, bankroll: float, max_size: float = None) -> dict | None:
     """Open a paper position with Kelly sizing. Returns position dict or None if blocked.
 
-    Args:
-        max_size: optional cap on position size (used by fortify to prevent doubling).
+    hub_signal keys required:
+        hub, hub_name, contract_date, contract_hour, side, dam_price,
+        entry_price, model_prob, edge, confidence
     """
     conn = _conn()
 
-    # Check per-hub limit
     hub = hub_signal["hub"]
+    contract_date = hub_signal["contract_date"]
+    contract_hour = hub_signal["contract_hour"]
+
+    # Dedup: one position per hub + contract_date + contract_hour
+    existing = conn.execute(
+        "SELECT COUNT(*) FROM ercot_positions WHERE hub = ? AND contract_date = ? AND contract_hour = ?",
+        (hub, contract_date, contract_hour),
+    ).fetchone()[0]
+    if existing > 0:
+        conn.close()
+        return None
+
+    # Check per-hub limit (across all hours for this hub)
     hub_count = conn.execute(
         "SELECT COUNT(*) FROM ercot_positions WHERE hub = ?", (hub,)
     ).fetchone()[0]
-    if hub_count >= _config.ERCOT_MAX_POSITIONS_PER_HUB:
+    if hub_count >= ERCOT_MAX_POSITIONS_PER_HUB:
         conn.close()
         return None
 
     # Check total limit
     total_count = conn.execute("SELECT COUNT(*) FROM ercot_positions").fetchone()[0]
-    if total_count >= _config.ERCOT_MAX_POSITIONS_TOTAL:
+    if total_count >= ERCOT_MAX_POSITIONS_TOTAL:
         conn.close()
         return None
 
-    # Kelly sizing: size = min(edge * kelly * bankroll, max_pct * bankroll)
-    edge = abs(hub_signal["edge"])
+    # Kelly sizing: size = min(|edge| * kelly * bankroll, max_pct * bankroll)
+    edge = hub_signal["edge"]
     effective_bankroll = min(bankroll, ERCOT_PAPER_BANKROLL)
-    size = min(edge * FRACTIONAL_KELLY * effective_bankroll,
-               MAX_BANKROLL_PCT_PER_TRADE * effective_bankroll)
+    size = min(
+        abs(edge) * FRACTIONAL_KELLY * effective_bankroll,
+        MAX_BANKROLL_PCT_PER_TRADE * effective_bankroll,
+    )
 
     # Check risk limits
     total_exposure = sum(
@@ -121,16 +161,21 @@ def open_position(hub_signal: dict, bankroll: float, max_size: float = None) -> 
     if max_size is not None:
         size = min(size, max_size)
 
-    now = datetime.now(timezone.utc)
-    expires = now + timedelta(hours=ERCOT_POSITION_TTL_HOURS)
+    now = datetime.now(CT).isoformat()
 
     conn.execute(
         """INSERT INTO ercot_positions
-           (hub, hub_name, signal, entry_price, size_dollars, edge, confidence, opened_at, expires_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (hub, hub_signal["hub_name"], hub_signal["signal"],
-         hub_signal["current_ercot_price"], round(size, 2), edge,
-         hub_signal["confidence"], now.isoformat(), expires.isoformat()),
+           (hub, hub_name, contract_date, contract_hour, side, dam_price,
+            entry_price, size_dollars, model_prob, edge, confidence, opened_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            hub, hub_signal["hub_name"],
+            contract_date, contract_hour,
+            hub_signal["side"], hub_signal["dam_price"],
+            hub_signal["entry_price"], round(size, 2),
+            hub_signal["model_prob"], edge,
+            hub_signal["confidence"], now,
+        ),
     )
     conn.commit()
     pos_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
@@ -139,59 +184,82 @@ def open_position(hub_signal: dict, bankroll: float, max_size: float = None) -> 
     return dict(row)
 
 
-def close_position(position_id: int, exit_price: float, exit_signal: str, reason: str):
-    """Close a paper position and record trade with P&L."""
+def settle_expired_hours(fetch_rt_fn) -> list:
+    """Settle all positions whose contract_hour has expired.
+
+    For each open position where now_ct >= expiry (contract_date HE contract_hour),
+    call fetch_rt_fn(hub, contract_hour, contract_date). If it returns None, skip.
+    Otherwise determine settlement_value and record P&L.
+
+    Args:
+        fetch_rt_fn: callable(hub: str, hour: int, date: str) -> float | None
+            Returns real-time price for the hub/hour/date, or None if unavailable.
+
+    Returns:
+        List of settled trade dicts.
+    """
     conn = _conn()
-    row = conn.execute("SELECT * FROM ercot_positions WHERE id = ?", (position_id,)).fetchone()
-    if not row:
-        conn.close()
-        return
+    now_ct = datetime.now(CT)
+    positions = conn.execute("SELECT * FROM ercot_positions ORDER BY opened_at").fetchall()
 
-    direction = -1.0 if row["signal"] == "SHORT" else 1.0
-    pnl = direction * (exit_price - row["entry_price"]) / row["entry_price"] * row["size_dollars"]
+    settled = []
+    for row in positions:
+        # Parse expiry: contract_hour is HE, so the hour ending at contract_hour:00
+        # e.g. HE14 ends at 14:00 (2:00 PM CT)
+        try:
+            expiry = datetime(
+                *[int(x) for x in row["contract_date"].split("-")],
+                row["contract_hour"], 0, 0,
+                tzinfo=CT,
+            )
+        except (ValueError, TypeError):
+            continue
 
-    now = datetime.now(timezone.utc).isoformat()
-    conn.execute(
-        """INSERT INTO ercot_trades
-           (hub, hub_name, signal, exit_signal, entry_price, exit_price, size_dollars,
-            pnl, edge_at_entry, confidence, opened_at, closed_at, exit_reason)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (row["hub"], row["hub_name"], row["signal"], exit_signal,
-         row["entry_price"], exit_price, row["size_dollars"],
-         round(pnl, 2), row["edge"], row["confidence"],
-         row["opened_at"], now, reason),
-    )
-    conn.execute("DELETE FROM ercot_positions WHERE id = ?", (position_id,))
-    conn.commit()
-    conn.close()
+        if now_ct < expiry:
+            continue
 
+        # Fetch real-time price
+        rt_price = fetch_rt_fn(row["hub"], row["contract_hour"], row["contract_date"])
+        if rt_price is None:
+            continue
 
-def expire_positions(current_price: float):
-    """Auto-close any positions past their expiry time."""
-    conn = _conn()
-    now = datetime.now(timezone.utc).isoformat()
-    expired = conn.execute(
-        "SELECT * FROM ercot_positions WHERE expires_at < ?", (now,)
-    ).fetchall()
+        # Binary settlement
+        settlement_value = 100 if rt_price >= row["dam_price"] else 0
 
-    for row in expired:
-        direction = -1.0 if row["signal"] == "SHORT" else 1.0
-        pnl = direction * (current_price - row["entry_price"]) / row["entry_price"] * row["size_dollars"]
+        # P&L calculation
+        entry = row["entry_price"]
+        size = row["size_dollars"]
+        if row["side"] == "yes":
+            pnl = (settlement_value / 100.0 - entry) * size
+        else:
+            pnl = ((100 - settlement_value) / 100.0 - entry) * size
 
+        closed_at = now_ct.isoformat()
         conn.execute(
             """INSERT INTO ercot_trades
-               (hub, hub_name, signal, exit_signal, entry_price, exit_price, size_dollars,
-                pnl, edge_at_entry, confidence, opened_at, closed_at, exit_reason)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (row["hub"], row["hub_name"], row["signal"], "EXPIRED",
-             row["entry_price"], current_price, row["size_dollars"],
-             round(pnl, 2), row["edge"], row["confidence"],
-             row["opened_at"], now, "expired"),
+               (hub, hub_name, contract_date, contract_hour, side, dam_price,
+                rt_price, entry_price, size_dollars, settlement_value, pnl,
+                model_prob, edge, confidence, opened_at, closed_at, exit_reason)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                row["hub"], row["hub_name"],
+                row["contract_date"], row["contract_hour"],
+                row["side"], row["dam_price"],
+                rt_price, entry, size,
+                settlement_value, round(pnl, 2),
+                row["model_prob"], row["edge"], row["confidence"],
+                row["opened_at"], closed_at, "settled",
+            ),
         )
         conn.execute("DELETE FROM ercot_positions WHERE id = ?", (row["id"],))
 
+        trade_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+        trade_row = conn.execute("SELECT * FROM ercot_trades WHERE id = ?", (trade_id,)).fetchone()
+        settled.append(dict(trade_row))
+
     conn.commit()
     conn.close()
+    return settled
 
 
 def get_open_positions() -> list:
@@ -234,17 +302,22 @@ def get_paper_summary() -> dict:
 
 def write_scan_cache(signals: list):
     conn = _conn()
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(CT).isoformat()
     conn.execute("DELETE FROM ercot_scan_cache")
     for sig in signals:
         conn.execute(
             """INSERT INTO ercot_scan_cache
-               (hub, hub_name, signal, edge, expected_solrad_mjm2,
-                current_ercot_price, actual_solar_mw, confidence, scanned_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (sig["hub"], sig["hub_name"], sig["signal"], sig["edge"],
-             sig.get("expected_solrad_mjm2", 0), sig.get("current_ercot_price", 0),
-             sig.get("actual_solar_mw", 0), sig["confidence"], now),
+               (hub, hub_name, contract_date, contract_hour, side, dam_price,
+                model_prob, edge, expected_solrad_mjm2, confidence, scanned_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                sig["hub"], sig["hub_name"],
+                sig.get("contract_date", ""), sig.get("contract_hour", 0),
+                sig.get("side", ""), sig.get("dam_price", 0.0),
+                sig.get("model_prob", 0.0), sig["edge"],
+                sig.get("expected_solrad_mjm2", None),
+                sig["confidence"], now,
+            ),
         )
     conn.commit()
     conn.close()

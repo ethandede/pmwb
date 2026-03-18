@@ -1,153 +1,134 @@
-"""Tests for ercot/paper_trader.py — paper position management."""
-import os
 import sqlite3
-from datetime import datetime, timezone, timedelta
-
 import pytest
+from datetime import datetime
+from unittest.mock import patch
+from zoneinfo import ZoneInfo
 
-TEST_DB = "data/test_ercot_paper.db"
-
+CT = ZoneInfo("America/Chicago")
 
 @pytest.fixture(autouse=True)
-def clean_db():
-    """Use a test DB and clean up after."""
-    import ercot.paper_trader as pt
-    pt.ERCOT_PAPER_DB = TEST_DB
-    pt._init_db()
-    yield
-    if os.path.exists(TEST_DB):
-        os.remove(TEST_DB)
+def temp_db(tmp_path):
+    db_path = str(tmp_path / "ercot_paper.db")
+    with patch("ercot.paper_trader.ERCOT_PAPER_DB", db_path):
+        yield db_path
 
 
-def _make_signal(hub="North", hub_name="HB_NORTH", signal="SHORT", edge=1.5, confidence=70, price=40.0):
-    return {
-        "hub": hub, "hub_name": hub_name, "city": "Dallas",
-        "signal": signal, "edge": edge, "confidence": confidence,
-        "current_ercot_price": price, "expected_solrad_mjm2": 20.0,
-        "actual_solar_mw": 12000.0,
-    }
+class TestBinarySchema:
+    def test_init_creates_tables_with_new_columns(self, temp_db):
+        from ercot.paper_trader import _init_db
+        _init_db()
+        conn = sqlite3.connect(temp_db)
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(ercot_positions)").fetchall()]
+        assert "contract_hour" in cols
+        assert "contract_date" in cols
+        assert "dam_price" in cols
+        assert "side" in cols
+        assert "model_prob" in cols
+        conn.close()
 
 
-def test_open_position():
-    from ercot.paper_trader import open_position, get_open_positions
+class TestBinaryOpenPosition:
+    def test_open_position_with_binary_fields(self, temp_db):
+        from ercot.paper_trader import open_position
+        pos = open_position({
+            "hub": "West", "hub_name": "HB_WEST",
+            "contract_date": "2026-03-18", "contract_hour": 14,
+            "side": "yes", "dam_price": 42.50, "entry_price": 0.50,
+            "model_prob": 0.64, "edge": 0.14, "confidence": 70,
+        }, bankroll=10000)
+        assert pos is not None
+        assert pos["contract_hour"] == 14
+        assert pos["dam_price"] == 42.50
+        assert pos["side"] == "yes"
 
-    sig = _make_signal()
-    result = open_position(sig, bankroll=10000.0)
-    assert result is not None
-    assert result["hub"] == "North"
-    assert result["signal"] == "SHORT"
-    assert result["size_dollars"] > 0
+    def test_dedup_same_hub_date_hour(self, temp_db):
+        from ercot.paper_trader import open_position
+        sig = {
+            "hub": "West", "hub_name": "HB_WEST",
+            "contract_date": "2026-03-18", "contract_hour": 14,
+            "side": "yes", "dam_price": 42.50, "entry_price": 0.50,
+            "model_prob": 0.64, "edge": 0.14, "confidence": 70,
+        }
+        pos1 = open_position(sig, bankroll=10000)
+        pos2 = open_position(sig, bankroll=10000)
+        assert pos1 is not None
+        assert pos2 is None
 
-    positions = get_open_positions()
-    assert len(positions) == 1
-    assert positions[0]["hub"] == "North"
-
-
-def test_close_position_pnl_short():
-    """SHORT position: entry $40, exit $30 = profit."""
-    from ercot.paper_trader import open_position, close_position, get_trade_history
-
-    sig = _make_signal(price=40.0)
-    pos = open_position(sig, bankroll=10000.0)
-
-    close_position(pos["id"], exit_price=30.0, exit_signal="LONG", reason="signal flipped")
-
-    trades = get_trade_history()
-    assert len(trades) == 1
-    assert trades[0]["pnl"] > 0  # price dropped, SHORT wins
-    assert trades[0]["exit_reason"] == "signal flipped"
-    assert trades[0]["exit_signal"] == "LONG"
-
-
-def test_close_position_pnl_long():
-    """LONG position: entry $40, exit $50 = profit."""
-    from ercot.paper_trader import open_position, close_position, get_trade_history
-
-    sig = _make_signal(signal="LONG", edge=1.2, price=40.0)
-    pos = open_position(sig, bankroll=10000.0)
-
-    close_position(pos["id"], exit_price=50.0, exit_signal="NEUTRAL", reason="edge decay")
-
-    trades = get_trade_history()
-    assert len(trades) == 1
-    assert trades[0]["pnl"] > 0  # price rose, LONG wins
+    def test_different_hours_same_hub_allowed(self, temp_db):
+        from ercot.paper_trader import open_position
+        base = {
+            "hub": "West", "hub_name": "HB_WEST",
+            "contract_date": "2026-03-18", "side": "yes",
+            "dam_price": 42.50, "entry_price": 0.50,
+            "model_prob": 0.64, "edge": 0.14, "confidence": 70,
+        }
+        pos1 = open_position({**base, "contract_hour": 14}, bankroll=10000)
+        pos2 = open_position({**base, "contract_hour": 15}, bankroll=10000)
+        assert pos1 is not None
+        assert pos2 is not None
 
 
-def test_max_positions_per_hub():
-    from ercot.paper_trader import open_position, get_open_positions
-    import config
-    original = config.ERCOT_MAX_POSITIONS_PER_HUB
-    config.ERCOT_MAX_POSITIONS_PER_HUB = 2
+class TestBinarySettlement:
+    def test_settle_rt_above_dam_yes_wins(self, temp_db):
+        from ercot.paper_trader import open_position, settle_expired_hours
+        open_position({
+            "hub": "West", "hub_name": "HB_WEST",
+            "contract_date": "2026-03-17", "contract_hour": 14,
+            "side": "yes", "dam_price": 40.0, "entry_price": 0.50,
+            "model_prob": 0.64, "edge": 0.14, "confidence": 70,
+        }, bankroll=10000)
+        settled = settle_expired_hours(fetch_rt_fn=lambda hub, hour, date: 45.0)
+        assert len(settled) == 1
+        assert settled[0]["settlement_value"] == 100
+        assert settled[0]["pnl"] > 0
 
-    sig = _make_signal()
-    open_position(sig, bankroll=10000.0)
-    open_position(sig, bankroll=10000.0)
-    result = open_position(sig, bankroll=10000.0)  # should be blocked
+    def test_settle_rt_below_dam_yes_loses(self, temp_db):
+        from ercot.paper_trader import open_position, settle_expired_hours
+        open_position({
+            "hub": "West", "hub_name": "HB_WEST",
+            "contract_date": "2026-03-17", "contract_hour": 14,
+            "side": "yes", "dam_price": 40.0, "entry_price": 0.50,
+            "model_prob": 0.64, "edge": 0.14, "confidence": 70,
+        }, bankroll=10000)
+        settled = settle_expired_hours(fetch_rt_fn=lambda hub, hour, date: 35.0)
+        assert len(settled) == 1
+        assert settled[0]["settlement_value"] == 0
+        assert settled[0]["pnl"] < 0
 
-    assert result is None
-    assert len(get_open_positions()) == 2
-    config.ERCOT_MAX_POSITIONS_PER_HUB = original
+    def test_settle_rt_below_dam_no_wins(self, temp_db):
+        from ercot.paper_trader import open_position, settle_expired_hours
+        open_position({
+            "hub": "West", "hub_name": "HB_WEST",
+            "contract_date": "2026-03-17", "contract_hour": 14,
+            "side": "no", "dam_price": 40.0, "entry_price": 0.50,
+            "model_prob": 0.36, "edge": -0.14, "confidence": 70,
+        }, bankroll=10000)
+        settled = settle_expired_hours(fetch_rt_fn=lambda hub, hour, date: 35.0)
+        assert len(settled) == 1
+        assert settled[0]["settlement_value"] == 0
+        assert settled[0]["pnl"] > 0
 
+    def test_settle_skips_when_rt_unavailable(self, temp_db):
+        from ercot.paper_trader import open_position, settle_expired_hours, get_open_positions
+        open_position({
+            "hub": "West", "hub_name": "HB_WEST",
+            "contract_date": "2026-03-17", "contract_hour": 14,
+            "side": "yes", "dam_price": 40.0, "entry_price": 0.50,
+            "model_prob": 0.64, "edge": 0.14, "confidence": 70,
+        }, bankroll=10000)
+        settled = settle_expired_hours(fetch_rt_fn=lambda hub, hour, date: None)
+        positions = get_open_positions()
+        assert len(settled) == 0
+        assert len(positions) == 1
 
-def test_max_positions_total():
-    from ercot.paper_trader import open_position, get_open_positions
-    import config
-    original = config.ERCOT_MAX_POSITIONS_TOTAL
-    config.ERCOT_MAX_POSITIONS_TOTAL = 2
-
-    open_position(_make_signal(hub="North", hub_name="HB_NORTH"), bankroll=10000.0)
-    open_position(_make_signal(hub="Houston", hub_name="HB_HOUSTON"), bankroll=10000.0)
-    result = open_position(_make_signal(hub="South", hub_name="HB_SOUTH"), bankroll=10000.0)
-
-    assert result is None
-    assert len(get_open_positions()) == 2
-    config.ERCOT_MAX_POSITIONS_TOTAL = original
-
-
-def test_expire_positions():
-    from ercot.paper_trader import open_position, expire_positions, get_open_positions, get_trade_history
-
-    sig = _make_signal(price=40.0)
-    open_position(sig, bankroll=10000.0)
-
-    # Manually set expires_at to the past
-    conn = sqlite3.connect(TEST_DB)
-    conn.execute("UPDATE ercot_positions SET expires_at = ?",
-                 ((datetime.now(timezone.utc) - timedelta(hours=1)).isoformat(),))
-    conn.commit()
-    conn.close()
-
-    expire_positions(current_price=42.0)
-
-    assert len(get_open_positions()) == 0
-    trades = get_trade_history()
-    assert len(trades) == 1
-    assert trades[0]["exit_reason"] == "expired"
-
-
-def test_paper_summary():
-    from ercot.paper_trader import open_position, close_position, get_paper_summary
-
-    sig = _make_signal(price=40.0)
-    pos = open_position(sig, bankroll=10000.0)
-    close_position(pos["id"], exit_price=30.0, exit_signal="LONG", reason="test")
-
-    summary = get_paper_summary()
-    assert summary["total_trades"] == 1
-    assert summary["total_pnl"] > 0
-    assert summary["open_count"] == 0
-
-
-def test_scan_cache_write_and_read():
-    from ercot.paper_trader import write_scan_cache, get_cached_signals
-
-    signals = [
-        {"hub": "North", "hub_name": "HB_NORTH", "signal": "SHORT",
-         "edge": 1.5, "expected_solrad_mjm2": 20.0,
-         "current_ercot_price": 40.0, "actual_solar_mw": 12000.0,
-         "confidence": 70},
-    ]
-    write_scan_cache(signals)
-    cached = get_cached_signals()
-    assert len(cached) >= 1
-    assert cached[0]["hub"] == "North"
+    def test_does_not_settle_future_positions(self, temp_db):
+        from ercot.paper_trader import open_position, settle_expired_hours, get_open_positions
+        open_position({
+            "hub": "West", "hub_name": "HB_WEST",
+            "contract_date": "2099-12-31", "contract_hour": 14,
+            "side": "yes", "dam_price": 40.0, "entry_price": 0.50,
+            "model_prob": 0.64, "edge": 0.14, "confidence": 70,
+        }, bankroll=10000)
+        settled = settle_expired_hours(fetch_rt_fn=lambda hub, hour, date: 45.0)
+        assert len(settled) == 0
+        assert len(get_open_positions()) == 1
