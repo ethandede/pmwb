@@ -420,7 +420,8 @@ def execute_trade(config, signal: Signal, size, exchange,
                 "confidence": int(signal.confidence),
                 "current_ercot_price": signal.market.get("current_ercot_price", 0) if signal.market else 0,
             }
-            pos = open_position(hub_signal, bankroll=cost)
+            from config import ERCOT_PAPER_BANKROLL
+            pos = open_position(hub_signal, bankroll=ERCOT_PAPER_BANKROLL)
             if pos is None:
                 return TradeResult(
                     ticker=signal.ticker, side=signal.side,
