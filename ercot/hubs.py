@@ -116,8 +116,8 @@ def fetch_dam_prices(date_str: str) -> "dict[str, dict[int, float]] | None":
         r = requests.get(
             "https://api.ercot.com/api/public-reports/np4-190-cd/dam_stlmnt_pnt_prices",
             headers=headers,
-            params={"size": 2000},
-            timeout=15,
+            params={"size": 10000},
+            timeout=30,
         )
         r.raise_for_status()
         records = r.json().get("data", [])
