@@ -52,21 +52,25 @@ class MarketConfig:
 # Imports are deferred inside _build_configs to avoid circular imports at module load.
 
 def _build_configs() -> tuple:
-    """Build all 3 configs. Called once at import time."""
+    """Build all 5 configs. Called once at import time."""
     from kalshi.scanner import (
         get_kalshi_weather_markets, get_kalshi_precip_markets,
         parse_kalshi_bucket, WEATHER_SERIES, PRECIP_SERIES,
     )
     from kalshi.market_types import parse_precip_bucket
-    from weather.multi_model import fuse_forecast, fuse_precip_forecast, get_ercot_solar_signal
+    from weather.multi_model import fuse_forecast, fuse_precip_forecast, get_ercot_solar_signal, get_pjm_solar_signal, get_caiso_solar_signal
     from kalshi.pricing import choose_price_strategy
     from ercot.hubs import fetch_ercot_markets
-    from config import ERCOT_HUBS
+    from pjm.hubs import fetch_pjm_markets
+    from caiso.hubs import fetch_caiso_markets
+    from config import ERCOT_HUBS, PJM_HUBS, CAISO_HUBS
 
     from pipeline.stages import execute_trade
     from kalshi.position_manager import run_position_manager
     from kalshi.settler import run_settler
     from ercot.position_manager import run_ercot_manager
+    from pjm.position_manager import run_pjm_manager
+    from caiso.position_manager import run_caiso_manager
 
     def gfs_temp_sanity(signal) -> bool:
         """GFS cross-reference sanity check for temperature signals.
@@ -190,8 +194,56 @@ def _build_configs() -> tuple:
         settle_fn=run_ercot_manager,
     )
 
-    return kalshi_temp, kalshi_precip, ercot
+    pjm = MarketConfig(
+        name="pjm",
+        display_name="PJM Solar",
+        exchange="pjm",
+        fetch_fn=fetch_pjm_markets,
+        series=PJM_HUBS,
+        bucket_parser=None,
+        forecast_fn=get_pjm_solar_signal,
+        fusion_weights=None,
+        edge_gate=0.03,
+        confidence_gate=50,
+        sameday_overrides=None,
+        sanity_fn=None,
+        scan_frac=0.10,
+        kelly_floor=0.25,
+        max_contracts_per_event=3,
+        execute_fn=execute_trade,
+        pricing_fn=None,
+        manage_fn=run_pjm_manager,
+        exit_rules={"edge_decay_pct": 0.30, "signal_flip": True, "ttl_hours": 24},
+        settlement_timeline="hourly",
+        settle_fn=run_pjm_manager,
+    )
+
+    caiso = MarketConfig(
+        name="caiso",
+        display_name="CAISO Solar",
+        exchange="caiso",
+        fetch_fn=fetch_caiso_markets,
+        series=CAISO_HUBS,
+        bucket_parser=None,
+        forecast_fn=get_caiso_solar_signal,
+        fusion_weights=None,
+        edge_gate=0.03,
+        confidence_gate=50,
+        sameday_overrides=None,
+        sanity_fn=None,
+        scan_frac=0.10,
+        kelly_floor=0.25,
+        max_contracts_per_event=3,
+        execute_fn=execute_trade,
+        pricing_fn=None,
+        manage_fn=run_caiso_manager,
+        exit_rules={"edge_decay_pct": 0.30, "signal_flip": True, "ttl_hours": 24},
+        settlement_timeline="hourly",
+        settle_fn=run_caiso_manager,
+    )
+
+    return kalshi_temp, kalshi_precip, ercot, pjm, caiso
 
 
-KALSHI_TEMP, KALSHI_PRECIP, ERCOT = _build_configs()
-ALL_CONFIGS = [KALSHI_TEMP, KALSHI_PRECIP, ERCOT]
+KALSHI_TEMP, KALSHI_PRECIP, ERCOT, PJM, CAISO = _build_configs()
+ALL_CONFIGS = [KALSHI_TEMP, KALSHI_PRECIP, ERCOT, PJM, CAISO]
