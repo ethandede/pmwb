@@ -910,6 +910,176 @@ def get_pjm_solar_signal(
     }
 
 
+def get_caiso_solar_signal(
+    lat: float, lon: float,
+    hub_key: str = "",
+    solar_sensitivity: float = 0.15,
+    hours_ahead: int = 24,
+    caiso_data: dict = None,
+    contract_hour: int = 0,
+    dam_price: float = 0.0,
+) -> dict:
+    """Solar irradiance + CAISO price -> fair-price trading signal.
+
+    Uses per-hub solar sensitivity and load forecast to estimate
+    whether the current hub price is above or below fair value.
+    """
+    from config import (
+        VISUAL_CROSSING_API_KEY, CAISO_SEASONAL_NORMS,
+        CAISO_LOAD_SENSITIVITY,
+    )
+
+    # 1. Seasonal norms for current month
+    month = datetime.now(timezone.utc).month
+    norms = CAISO_SEASONAL_NORMS.get(month)
+    if norms is None:
+        try:
+            from alerts.telegram_alert import send_alert
+            send_alert("CAISO Norms Missing", f"No seasonal norms for month {month}",
+                       dedup_key="caiso_norms_missing")
+        except Exception:
+            pass
+        norms = {"solar": 20.0, "load": 27_000}
+    norm_solar = norms["solar"]
+    norm_load = norms["load"]
+
+    # 2a. Visual Crossing solrad (primary)
+    vc_solrad = None
+    if VISUAL_CROSSING_API_KEY:
+        try:
+            vc_r = http_get(
+                f"https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline"
+                f"/{lat},{lon}/next3days",
+                params={"key": VISUAL_CROSSING_API_KEY, "unitGroup": "metric",
+                        "include": "days", "elements": "solarenergy"},
+                timeout=10,
+            )
+            vc_r.raise_for_status()
+            vc_days = vc_r.json().get("days", [])
+            target_idx = min(hours_ahead // 24, len(vc_days) - 1)
+            if vc_days and vc_days[target_idx].get("solarenergy") is not None:
+                vc_solrad = float(vc_days[target_idx]["solarenergy"])
+        except Exception as e:
+            print(f"  Visual Crossing solar error: {e}")
+
+    # 2b. Open-Meteo solrad (cross-reference for confidence)
+    om_solrad = None
+    try:
+        url = (
+            f"https://api.open-meteo.com/v1/forecast"
+            f"?latitude={lat}&longitude={lon}"
+            f"&daily=shortwave_radiation_sum"
+            f"&forecast_days=3"
+            f"&timezone=auto"
+        )
+        r = http_get(url, timeout=10)
+        r.raise_for_status()
+        data = r.json()
+        radiation = data.get("daily", {}).get("shortwave_radiation_sum", [])
+        target_idx = min(hours_ahead // 24, len(radiation) - 1)
+        raw_om = radiation[target_idx] if radiation else None
+
+        if raw_om is not None:
+            # Unit validation — skip agreement check if unit unrecognized
+            unit = data.get("daily_units", {}).get("shortwave_radiation_sum", "")
+            if "kJ" in unit:
+                om_solrad = raw_om / 1000.0
+            elif "Wh" in unit:
+                om_solrad = raw_om * 0.0036
+            elif "MJ" in unit:
+                om_solrad = raw_om
+            else:
+                # Unrecognized unit — log warning, skip agreement check
+                print(f"  Open-Meteo unknown solar unit: {unit!r}, skipping agreement")
+                om_solrad = None  # don't use for agreement
+    except Exception as e:
+        print(f"  Open-Meteo solar error: {e}")
+
+    # 2c. Pick primary solrad: VC preferred, OM fallback, then seasonal norm
+    if vc_solrad is not None:
+        expected_solrad = vc_solrad
+    elif om_solrad is not None:
+        expected_solrad = om_solrad
+    else:
+        expected_solrad = norm_solar  # no data = no solar signal
+
+    # 3. CAISO market data
+    if caiso_data is not None:
+        hub_price = float(caiso_data.get("hub_price", caiso_data.get("price", 40.0)))
+        actual_solar_mw = float(caiso_data.get("solar_mw", 0.0))
+        load_forecast = float(caiso_data.get("load_forecast", norm_load))
+    else:
+        hub_price = 40.0
+        actual_solar_mw = 10000.0
+        load_forecast = norm_load
+
+    # 3b. Binary mode: P(RT >= DAM) for a specific contract_hour
+    if contract_hour > 0 and dam_price > 0:
+        from config import ERCOT_LOGISTIC_K
+        safe_expected_solrad = max(0.0, expected_solrad)
+        if norm_solar <= 0:
+            solar_deviation = 0.0
+        else:
+            solar_deviation = (norm_solar - safe_expected_solrad) / norm_solar
+        estimated_rt_shift = solar_deviation * solar_sensitivity * dam_price
+        model_prob = 1.0 / (1.0 + math.exp(-ERCOT_LOGISTIC_K * estimated_rt_shift))
+        model_prob = round(max(0.01, min(0.99, model_prob)), 4)
+        edge = round(model_prob - 0.50, 4)
+        if edge > 0:
+            signal = "LONG"
+        elif edge < 0:
+            signal = "SHORT"
+        else:
+            signal = "NEUTRAL"
+        base_conf = 30
+        agreement_bonus = 0
+        if vc_solrad is not None and om_solrad is not None:
+            if abs(vc_solrad - om_solrad) <= 2.0:
+                agreement_bonus = 20
+        price_deviation_bonus = min(30, abs(edge) * 300)
+        confidence = int(min(90, max(30, base_conf + agreement_bonus + price_deviation_bonus)))
+        return {
+            "signal": signal,
+            "edge": edge,
+            "model_prob": model_prob,
+            "expected_solrad_mjm2": round(safe_expected_solrad, 1),
+            "current_caiso_price": round(hub_price, 1),
+            "actual_solar_mw": round(actual_solar_mw, 0),
+            "confidence": confidence,
+        }
+
+    # 4. Fair price model (daily edge — backward-compat path)
+    solar_impact = solar_sensitivity * (norm_solar - expected_solrad) / norm_solar
+    load_impact = CAISO_LOAD_SENSITIVITY * (load_forecast - norm_load) / norm_load
+    edge = round(solar_impact + load_impact, 4)
+
+    # 5. Signal direction
+    if edge > 0:
+        signal = "LONG"
+    elif edge < 0:
+        signal = "SHORT"
+    else:
+        signal = "NEUTRAL"
+
+    # 6. Confidence: base + agreement + deviation
+    base_conf = 30
+    agreement_bonus = 0
+    if vc_solrad is not None and om_solrad is not None:
+        if abs(vc_solrad - om_solrad) <= 2.0:
+            agreement_bonus = 20
+    price_deviation_bonus = min(30, abs(edge) * 300)
+    confidence = int(min(90, max(30, base_conf + agreement_bonus + price_deviation_bonus)))
+
+    return {
+        "signal": signal,
+        "edge": round(edge, 4),
+        "expected_solrad_mjm2": round(expected_solrad, 1),
+        "current_caiso_price": round(hub_price, 1),
+        "actual_solar_mw": round(actual_solar_mw, 0),
+        "confidence": confidence,
+    }
+
+
 def fuse_precip_forecast(
     lat: float, lon: float, city: str, month: int,
     threshold: float, forecast_days: Optional[int] = None,
