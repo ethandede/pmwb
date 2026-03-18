@@ -195,6 +195,29 @@ Both follow the ERCOT pattern exactly:
 
 ## 6. Signal Model
 
+### Fair-Price Formula
+
+The edge calculation is the same across all three ISOs:
+
+```
+solar_impact = solar_sensitivity * (norm_solar - forecast_solar) / norm_solar
+load_impact  = load_sensitivity  * (load_forecast - norm_load)   / norm_load
+edge         = solar_impact + load_impact
+```
+
+**How it works:**
+- `solar_impact`: When forecast solar is **below** the seasonal norm, prices should rise (less cheap solar generation) → positive edge → LONG. When **above** norm → negative edge → SHORT.
+- `load_impact`: When load forecast is **above** norm, prices should rise (more demand) → positive edge → LONG. When **below** norm → negative edge → SHORT.
+- `solar_sensitivity` is per-hub (CAISO SP15 = 0.35, PJM PSEG = 0.08) — scales how much solar deviations move the price signal.
+- `load_sensitivity` is per-ISO (PJM = 0.20, ERCOT = 0.15, CAISO = 0.15) — PJM is higher because its prices are more load-driven with lower solar penetration.
+
+**Example — PJM Western Hub in July:**
+- `norm_solar = 20.5`, `norm_load = 105,000`
+- Forecast: `solar = 15.0 MJ/m²` (cloudy), `load = 112,000 MW` (heat wave)
+- `solar_impact = 0.20 * (20.5 - 15.0) / 20.5 = +0.054`
+- `load_impact = 0.20 * (112000 - 105000) / 105000 = +0.013`
+- `edge = +0.067` → **LONG** (price should be above current level)
+
 ### Reuse Strategy
 
 The fair-price model is identical across all three ISOs — the only differences are:
