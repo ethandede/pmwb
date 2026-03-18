@@ -185,9 +185,8 @@ def _build_configs() -> tuple:
         execute_fn=execute_trade,
         pricing_fn=None,
         manage_fn=run_ercot_manager,
-        exit_rules={"edge_decay_pct": 0.30, "signal_flip": True,
-                    "ttl_hours": 24},
-        settlement_timeline="hourly",
+        exit_rules={},
+        settlement_timeline="hourly_binary",
         settle_fn=run_ercot_manager,
     )
 

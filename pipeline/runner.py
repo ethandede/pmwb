@@ -40,9 +40,12 @@ class PipelineRunner:
                         "hub_name": s.market.get("hub_name", s.ticker) if s.market else s.ticker,
                         "signal": "SHORT" if s.side == "no" else "LONG",
                         "edge": abs(s.edge),
+                        "contract_date": s.market.get("contract_date", "") if s.market else "",
+                        "contract_hour": s.market.get("contract_hour", 0) if s.market else 0,
+                        "side": s.side,
+                        "dam_price": s.market.get("dam_price", 0) if s.market else 0,
+                        "model_prob": s.model_prob,
                         "expected_solrad_mjm2": s.market.get("expected_solrad_mjm2", 0) if s.market else 0,
-                        "current_ercot_price": s.market.get("current_ercot_price", 0) if s.market else 0,
-                        "actual_solar_mw": s.market.get("actual_solar_mw", 0) if s.market else 0,
                         "confidence": int(s.confidence),
                     })
                 write_scan_cache(ercot_signals)
@@ -133,12 +136,13 @@ class PipelineRunner:
         except Exception as e:
             print(f"  Paper dedup query failed: {e}")
 
-        # Expire stale ERCOT paper positions
+        # Settle expired ERCOT binary option positions
         try:
-            from ercot.paper_trader import expire_positions
-            expire_positions(current_price=0)
+            from ercot.paper_trader import settle_expired_hours
+            from ercot.hubs import fetch_rt_settlement
+            settle_expired_hours(fetch_rt_fn=fetch_rt_settlement)
         except Exception as e:
-            print(f"  ERCOT expiry check failed: {e}")
+            print(f"  ERCOT settlement check failed: {e}")
 
         # Process each config
         for config in self.configs:

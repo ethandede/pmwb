@@ -24,7 +24,7 @@ def test_ercot_config():
     assert ERCOT.exchange == "ercot"
     assert ERCOT.pricing_fn is None
     assert ERCOT.bucket_parser is None
-    assert ERCOT.settlement_timeline == "hourly"
+    assert ERCOT.settlement_timeline == "hourly_binary"
 
 
 def test_all_configs_have_required_callables():

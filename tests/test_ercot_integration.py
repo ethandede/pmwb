@@ -1,6 +1,7 @@
-"""End-to-end integration test for ERCOT solar signal pipeline."""
+"""End-to-end integration test for ERCOT binary options pipeline."""
 import os
 import pytest
+from unittest.mock import patch
 
 TEST_DB = "data/test_ercot_integration.db"
 
@@ -15,43 +16,67 @@ def clean_db():
         os.remove(TEST_DB)
 
 
+def _make_binary_signal(hub="North", hub_name="HB_NORTH", side="yes",
+                        contract_date="2026-03-18", contract_hour=14,
+                        dam_price=35.0, model_prob=0.65, edge=0.15, confidence=70):
+    return {
+        "hub": hub, "hub_name": hub_name,
+        "contract_date": contract_date, "contract_hour": contract_hour,
+        "side": side, "dam_price": dam_price,
+        "entry_price": 0.50,
+        "model_prob": model_prob, "edge": edge, "confidence": confidence,
+    }
+
+
 def test_full_pipeline():
-    """Scan hubs → open positions → evaluate → close."""
-    from ercot.hubs import scan_all_hubs
+    """Open a binary position and verify it appears in the summary."""
     from ercot.paper_trader import open_position, get_open_positions, get_paper_summary
-    from ercot.position_manager import evaluate_ercot_position
 
-    # 1. Scan all hubs
-    signals = scan_all_hubs()
-    assert len(signals) == 5
-
-    # 2. Open a position on the first tradeable signal
-    tradeable = [s for s in signals if abs(s["edge"]) > 0]
-    if not tradeable:
-        pytest.skip("No tradeable signals right now")
-
-    sig = tradeable[0]
+    sig = _make_binary_signal()
     pos = open_position(sig, bankroll=10000.0)
     assert pos is not None
     assert pos["hub"] == sig["hub"]
+    assert pos["contract_hour"] == sig["contract_hour"]
+    assert pos["side"] == sig["side"]
 
-    # 3. Evaluate the position
-    result = evaluate_ercot_position(pos, sig)
-    assert result["action"] in ("hold", "exit", "fortify")
-
-    # 4. Verify summary
     summary = get_paper_summary()
     assert summary["open_count"] >= 1
 
 
+def test_settlement_closes_expired_position():
+    """settle_expired_hours should close positions past their expiry."""
+    from ercot.paper_trader import open_position, settle_expired_hours, get_open_positions
+
+    # Use a past date/hour so it is expired
+    sig = _make_binary_signal(contract_date="2026-03-16", contract_hour=1)
+    pos = open_position(sig, bankroll=10000.0)
+    assert pos is not None
+
+    def mock_rt(hub, hour, date_str):
+        return 40.0  # RT above DAM (35.0) → settles YES=100
+
+    settled = settle_expired_hours(fetch_rt_fn=mock_rt)
+    assert len(settled) == 1
+    assert settled[0]["settlement_value"] == 100
+
+    remaining = get_open_positions()
+    assert len(remaining) == 0
+
+
 def test_scan_cache_roundtrip():
-    """Write scan results and read them back via dashboard API functions."""
-    from ercot.hubs import scan_all_hubs
+    """Write scan results and read them back."""
     from ercot.paper_trader import write_scan_cache, get_cached_signals
 
-    signals = scan_all_hubs()
+    signals = [
+        {"hub": "North", "hub_name": "HB_NORTH", "contract_date": "2026-03-18",
+         "contract_hour": 14, "side": "yes", "dam_price": 35.0,
+         "model_prob": 0.65, "edge": 0.15, "expected_solrad_mjm2": 20.0, "confidence": 70},
+        {"hub": "Houston", "hub_name": "HB_HOUSTON", "contract_date": "2026-03-18",
+         "contract_hour": 14, "side": "no", "dam_price": 40.0,
+         "model_prob": 0.38, "edge": 0.12, "expected_solrad_mjm2": 22.0, "confidence": 65},
+    ]
     write_scan_cache(signals)
 
     cached = get_cached_signals()
-    assert len(cached) == 5
-    assert {s["hub"] for s in cached} == {"North", "Houston", "South", "West", "Panhandle"}
+    assert len(cached) == 2
+    assert {s["hub"] for s in cached} == {"North", "Houston"}

@@ -41,9 +41,14 @@ def score_signal(config, market: dict) -> Signal:
             solar_sensitivity=market.get("solar_sensitivity", 0.15),
             hours_ahead=24,
             ercot_data=market.get("_ercot_data"),
+            contract_hour=market.get("contract_hour", 0),
+            dam_price=market.get("dam_price", 0),
         )
         edge = forecast_result.get("edge", 0)
-        model_prob = max(0.01, min(0.99, 0.5 + edge))
+        if "model_prob" in forecast_result:
+            model_prob = forecast_result["model_prob"]
+        else:
+            model_prob = max(0.01, min(0.99, 0.5 + edge))
         confidence = forecast_result.get("confidence", 50)
         ercot_signal = forecast_result.get("signal", "NEUTRAL")
         side = "no" if ercot_signal == "SHORT" else "yes"
@@ -411,16 +416,20 @@ def execute_trade(config, signal: Signal, size, exchange,
                 fee=fee if config.exchange == "kalshi" else 0.0,
             )
         elif config.exchange == "ercot":
-            from ercot.paper_trader import open_position, write_scan_cache
+            from ercot.paper_trader import open_position
+            from config import ERCOT_PAPER_BANKROLL
             hub_signal = {
-                "hub": signal.city or signal.ticker,
+                "hub": signal.market.get("hub_key", signal.city) if signal.market else signal.city,
                 "hub_name": signal.market.get("hub_name", signal.ticker) if signal.market else signal.ticker,
-                "signal": "SHORT" if signal.side == "no" else "LONG",
+                "contract_date": signal.market.get("contract_date", "") if signal.market else "",
+                "contract_hour": signal.market.get("contract_hour", 0) if signal.market else 0,
+                "side": size.side or signal.side,
+                "dam_price": signal.market.get("dam_price", 0) if signal.market else 0,
+                "entry_price": 0.50,
+                "model_prob": signal.model_prob,
                 "edge": abs(signal.edge),
                 "confidence": int(signal.confidence),
-                "current_ercot_price": signal.market.get("current_ercot_price", 0) if signal.market else 0,
             }
-            from config import ERCOT_PAPER_BANKROLL
             pos = open_position(hub_signal, bankroll=ERCOT_PAPER_BANKROLL)
             if pos is None:
                 return TradeResult(
