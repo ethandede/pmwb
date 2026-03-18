@@ -1,0 +1,710 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Power Markets — Weather Edge</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <style>
+        @charset "UTF-8";
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+        :root {
+            --pm-bg: #06080d;
+            --pm-surface: #0c1017;
+            --pm-surface-raised: #111820;
+            --pm-border: #1a2233;
+            --pm-border-bright: #243044;
+            --pm-text: #e2e8f0;
+            --pm-text-dim: #64748b;
+            --pm-text-muted: #475569;
+            --pm-accent: #38bdf8;
+            --pm-accent-dim: rgba(56, 189, 248, 0.12);
+            --pm-green: #34d399;
+            --pm-green-dim: rgba(52, 211, 153, 0.12);
+            --pm-red: #f87171;
+            --pm-red-dim: rgba(248, 113, 113, 0.12);
+            --pm-amber: #fbbf24;
+            --pm-amber-dim: rgba(251, 191, 36, 0.12);
+            --pm-ercot: #f97316;
+            --pm-pjm: #a78bfa;
+            --pm-caiso: #2dd4bf;
+            --pm-radius: 8px;
+            --pm-radius-lg: 14px;
+            --pm-mono: 'JetBrains Mono', 'Fira Mono', monospace;
+            --pm-sans: 'DM Sans', -apple-system, sans-serif;
+            --pm-display: 'Space Mono', monospace;
+        }
+
+        html { scroll-behavior: smooth; }
+
+        body {
+            font-family: var(--pm-sans);
+            font-size: 14px;
+            line-height: 1.5;
+            color: var(--pm-text);
+            background: var(--pm-bg);
+            min-height: 100vh;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        /* Noise overlay */
+        body::before {
+            content: '';
+            position: fixed;
+            inset: 0;
+            background: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E");
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        ::-webkit-scrollbar { width: 5px; height: 5px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: var(--pm-border-bright); border-radius: 3px; }
+        * { scrollbar-width: thin; scrollbar-color: var(--pm-border-bright) transparent; }
+
+        /* ═══ Layout ═══ */
+        .power-shell {
+            max-width: 1320px;
+            margin: 0 auto;
+            padding: 1.5rem 2rem 4rem;
+            position: relative;
+            z-index: 1;
+        }
+
+        /* ═══ Header ═══ */
+        .power-header {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            margin-bottom: 2rem;
+            padding-bottom: 1.5rem;
+            border-bottom: 1px solid var(--pm-border);
+        }
+        .power-header .back {
+            color: var(--pm-text-dim);
+            text-decoration: none;
+            font-size: 1.1rem;
+            transition: color 0.15s;
+        }
+        .power-header .back:hover { color: var(--pm-text); }
+        .power-header h1 {
+            font-family: var(--pm-display);
+            font-size: 1.15rem;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+            color: var(--pm-text);
+        }
+        .power-header .mode-tag {
+            font-family: var(--pm-mono);
+            font-size: 0.7rem;
+            font-weight: 600;
+            padding: 0.2rem 0.6rem;
+            border-radius: 4px;
+            background: var(--pm-amber-dim);
+            color: var(--pm-amber);
+            letter-spacing: 0.05em;
+        }
+        .power-header .refresh-btn {
+            margin-left: auto;
+            color: var(--pm-text-dim);
+            font-size: 0.9rem;
+            cursor: pointer;
+            transition: color 0.15s, transform 0.3s;
+            background: none;
+            border: none;
+        }
+        .power-header .refresh-btn:hover { color: var(--pm-accent); }
+        .power-header .refresh-btn.spinning { animation: spin 0.8s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .power-header .ts {
+            font-family: var(--pm-mono);
+            font-size: 0.7rem;
+            color: var(--pm-text-muted);
+        }
+
+        /* ═══ Aggregate Strip ═══ */
+        .agg-strip {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 1px;
+            background: var(--pm-border);
+            border-radius: var(--pm-radius-lg);
+            overflow: hidden;
+            margin-bottom: 2.5rem;
+        }
+        .agg-cell {
+            background: var(--pm-surface);
+            padding: 1.1rem 1.4rem;
+        }
+        .agg-cell .agg-label {
+            font-size: 0.68rem;
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--pm-text-muted);
+            margin-bottom: 0.35rem;
+        }
+        .agg-cell .agg-value {
+            font-family: var(--pm-mono);
+            font-size: 1.35rem;
+            font-weight: 700;
+            color: var(--pm-text);
+        }
+        .agg-cell .agg-sub {
+            font-family: var(--pm-mono);
+            font-size: 0.68rem;
+            color: var(--pm-text-dim);
+            margin-top: 0.2rem;
+        }
+
+        /* ═══ ISO Tabs ═══ */
+        .iso-tabs {
+            display: flex;
+            gap: 0;
+            margin-bottom: 2rem;
+            border-bottom: 1px solid var(--pm-border);
+        }
+        .iso-tab {
+            font-family: var(--pm-display);
+            font-size: 0.78rem;
+            font-weight: 700;
+            letter-spacing: 0.04em;
+            padding: 0.7rem 1.6rem;
+            color: var(--pm-text-dim);
+            cursor: pointer;
+            border: none;
+            background: none;
+            border-bottom: 2px solid transparent;
+            transition: color 0.15s, border-color 0.2s;
+            position: relative;
+        }
+        .iso-tab:hover { color: var(--pm-text); }
+        .iso-tab.active { color: var(--pm-text); }
+        .iso-tab[data-iso="ercot"].active { border-bottom-color: var(--pm-ercot); }
+        .iso-tab[data-iso="pjm"].active { border-bottom-color: var(--pm-pjm); }
+        .iso-tab[data-iso="caiso"].active { border-bottom-color: var(--pm-caiso); }
+        .iso-tab .tab-dot {
+            display: inline-block;
+            width: 6px; height: 6px;
+            border-radius: 50%;
+            margin-right: 0.5rem;
+            vertical-align: middle;
+        }
+        .iso-tab[data-iso="ercot"] .tab-dot { background: var(--pm-ercot); }
+        .iso-tab[data-iso="pjm"] .tab-dot { background: var(--pm-pjm); }
+        .iso-tab[data-iso="caiso"] .tab-dot { background: var(--pm-caiso); }
+
+        /* ═══ ISO Panel ═══ */
+        .iso-panel { display: none; }
+        .iso-panel.active { display: block; animation: panelIn 0.25s ease-out; }
+        @keyframes panelIn {
+            from { opacity: 0; transform: translateY(6px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* ═══ ISO Summary Bar ═══ */
+        .iso-summary {
+            display: grid;
+            grid-template-columns: repeat(5, 1fr);
+            gap: 1px;
+            background: var(--pm-border);
+            border-radius: var(--pm-radius);
+            overflow: hidden;
+            margin-bottom: 2rem;
+        }
+        .iso-stat {
+            background: var(--pm-surface);
+            padding: 0.9rem 1rem;
+        }
+        .iso-stat .stat-label {
+            font-size: 0.65rem;
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            color: var(--pm-text-muted);
+            margin-bottom: 0.25rem;
+        }
+        .iso-stat .stat-value {
+            font-family: var(--pm-mono);
+            font-size: 1.05rem;
+            font-weight: 600;
+        }
+
+        /* ═══ Hub Cards Grid ═══ */
+        .hub-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+            gap: 0.75rem;
+            margin-bottom: 2.5rem;
+        }
+        .hub-card {
+            background: var(--pm-surface);
+            border: 1px solid var(--pm-border);
+            border-radius: var(--pm-radius);
+            padding: 1rem 1.15rem;
+            position: relative;
+            overflow: hidden;
+            transition: border-color 0.2s;
+        }
+        .hub-card:hover { border-color: var(--pm-border-bright); }
+        .hub-card::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0;
+            width: 3px; height: 100%;
+        }
+        .hub-card.long::before { background: var(--pm-green); }
+        .hub-card.short::before { background: var(--pm-red); }
+        .hub-card.neutral::before { background: var(--pm-text-muted); }
+
+        .hub-card .hub-top {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 0.6rem;
+        }
+        .hub-card .hub-code {
+            font-family: var(--pm-mono);
+            font-size: 0.72rem;
+            font-weight: 600;
+            color: var(--pm-text-dim);
+            letter-spacing: 0.04em;
+        }
+        .hub-card .hub-city {
+            font-weight: 600;
+            font-size: 0.95rem;
+            color: var(--pm-text);
+            margin-bottom: 0.1rem;
+        }
+        .hub-card .hub-signal {
+            font-family: var(--pm-mono);
+            font-size: 1.5rem;
+            font-weight: 700;
+            line-height: 1;
+        }
+        .hub-card .hub-signal.long { color: var(--pm-green); }
+        .hub-card .hub-signal.short { color: var(--pm-red); }
+        .hub-card .hub-signal.neutral { color: var(--pm-text-muted); }
+        .hub-card .hub-edge {
+            font-family: var(--pm-mono);
+            font-size: 0.85rem;
+            font-weight: 500;
+        }
+        .hub-card .hub-edge.pos { color: var(--pm-green); }
+        .hub-card .hub-edge.neg { color: var(--pm-red); }
+
+        .hub-card .hub-metrics {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 0.3rem 1rem;
+            margin-top: 0.7rem;
+            padding-top: 0.6rem;
+            border-top: 1px solid var(--pm-border);
+        }
+        .hub-card .hub-metric {
+            font-size: 0.72rem;
+        }
+        .hub-card .hub-metric .m-label {
+            color: var(--pm-text-muted);
+        }
+        .hub-card .hub-metric .m-value {
+            font-family: var(--pm-mono);
+            font-weight: 500;
+            color: var(--pm-text-dim);
+        }
+
+        /* Confidence bar */
+        .conf-bar-wrap {
+            margin-top: 0.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        .conf-bar {
+            flex: 1;
+            height: 3px;
+            background: var(--pm-border);
+            border-radius: 2px;
+            overflow: hidden;
+        }
+        .conf-bar-fill {
+            height: 100%;
+            border-radius: 2px;
+            transition: width 0.4s ease-out;
+        }
+        .conf-bar-label {
+            font-family: var(--pm-mono);
+            font-size: 0.65rem;
+            color: var(--pm-text-muted);
+            min-width: 2.2rem;
+            text-align: right;
+        }
+
+        /* ═══ Section Headers ═══ */
+        .section-head {
+            font-family: var(--pm-display);
+            font-size: 0.8rem;
+            font-weight: 700;
+            letter-spacing: 0.04em;
+            color: var(--pm-text-dim);
+            text-transform: uppercase;
+            margin-bottom: 1rem;
+            padding-bottom: 0.5rem;
+            border-bottom: 1px solid var(--pm-border);
+        }
+
+        /* ═══ Tables ═══ */
+        .data-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.82rem;
+            margin-bottom: 2.5rem;
+        }
+        .data-table th {
+            font-family: var(--pm-sans);
+            font-weight: 600;
+            font-size: 0.68rem;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            color: var(--pm-text-muted);
+            text-align: left;
+            padding: 0.6rem 0.8rem;
+            border-bottom: 1px solid var(--pm-border);
+        }
+        .data-table td {
+            font-family: var(--pm-mono);
+            font-size: 0.8rem;
+            padding: 0.55rem 0.8rem;
+            border-bottom: 1px solid rgba(26, 34, 51, 0.5);
+            color: var(--pm-text-dim);
+        }
+        .data-table tr:hover td { background: rgba(56, 189, 248, 0.02); }
+        .data-table .pos { color: var(--pm-green); }
+        .data-table .neg { color: var(--pm-red); }
+        .data-table .side-long {
+            color: var(--pm-green);
+            font-weight: 600;
+        }
+        .data-table .side-short {
+            color: var(--pm-red);
+            font-weight: 600;
+        }
+        .data-table .empty-row td {
+            color: var(--pm-text-muted);
+            font-family: var(--pm-sans);
+            font-style: italic;
+        }
+
+        /* Reason pill */
+        .reason-pill {
+            font-size: 0.65rem;
+            padding: 0.15rem 0.45rem;
+            border-radius: 3px;
+            background: var(--pm-surface-raised);
+            color: var(--pm-text-dim);
+            white-space: nowrap;
+        }
+
+        /* ═══ Responsive ═══ */
+        @media (max-width: 900px) {
+            .power-shell { padding: 1rem; }
+            .agg-strip { grid-template-columns: repeat(2, 1fr); }
+            .iso-summary { grid-template-columns: repeat(3, 1fr); }
+            .hub-grid { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); }
+        }
+        @media (max-width: 600px) {
+            .agg-strip { grid-template-columns: 1fr 1fr; }
+            .iso-summary { grid-template-columns: 1fr 1fr; }
+            .iso-tabs { overflow-x: auto; }
+            .hub-grid { grid-template-columns: 1fr; }
+            .data-table { font-size: 0.75rem; }
+            .data-table th, .data-table td { padding: 0.4rem 0.5rem; }
+        }
+    </style>
+</head>
+<body>
+    <div class="power-shell">
+        <!-- Header -->
+        <div class="power-header">
+            <a href="/" class="back"><i class="fa-solid fa-arrow-left"></i></a>
+            <h1>POWER MARKETS</h1>
+            <span class="mode-tag" id="mode-tag">PAPER</span>
+            <button class="refresh-btn" id="refresh-btn" title="Refresh"><i class="fa-solid fa-arrows-rotate"></i></button>
+            <span class="ts" id="last-updated"></span>
+        </div>
+
+        <!-- Aggregate Summary -->
+        <div class="agg-strip" id="agg-strip">
+            <div class="agg-cell">
+                <div class="agg-label">Total Positions</div>
+                <div class="agg-value" id="agg-positions">—</div>
+                <div class="agg-sub" id="agg-positions-sub"></div>
+            </div>
+            <div class="agg-cell">
+                <div class="agg-label">Total Exposure</div>
+                <div class="agg-value" id="agg-exposure">—</div>
+            </div>
+            <div class="agg-cell">
+                <div class="agg-label">Combined P&L</div>
+                <div class="agg-value" id="agg-pnl">—</div>
+                <div class="agg-sub" id="agg-pnl-sub"></div>
+            </div>
+            <div class="agg-cell">
+                <div class="agg-label">Win Rate</div>
+                <div class="agg-value" id="agg-winrate">—</div>
+                <div class="agg-sub" id="agg-trades-sub"></div>
+            </div>
+        </div>
+
+        <!-- ISO Tabs -->
+        <div class="iso-tabs">
+            <button class="iso-tab active" data-iso="ercot"><span class="tab-dot"></span>ERCOT</button>
+            <button class="iso-tab" data-iso="pjm"><span class="tab-dot"></span>PJM</button>
+            <button class="iso-tab" data-iso="caiso"><span class="tab-dot"></span>CAISO</button>
+        </div>
+
+        <!-- ERCOT Panel -->
+        <div class="iso-panel active" id="panel-ercot">
+            <div class="iso-summary" id="ercot-summary"></div>
+            <div class="section-head">Hub Signals</div>
+            <div class="hub-grid" id="ercot-hubs"></div>
+            <div class="section-head">Open Positions</div>
+            <table class="data-table"><thead><tr>
+                <th>Hub</th><th>Side</th><th>Size</th><th>Entry</th><th>Current</th><th>P&L</th><th>Expires</th>
+            </tr></thead><tbody id="ercot-pos"></tbody></table>
+            <div class="section-head">Trade History</div>
+            <table class="data-table"><thead><tr>
+                <th>Hub</th><th>Side</th><th>Entry</th><th>Exit</th><th>Size</th><th>P&L</th><th>Reason</th><th>Closed</th>
+            </tr></thead><tbody id="ercot-trades"></tbody></table>
+        </div>
+
+        <!-- PJM Panel -->
+        <div class="iso-panel" id="panel-pjm">
+            <div class="iso-summary" id="pjm-summary"></div>
+            <div class="section-head">Hub Signals</div>
+            <div class="hub-grid" id="pjm-hubs"></div>
+            <div class="section-head">Open Positions</div>
+            <table class="data-table"><thead><tr>
+                <th>Hub</th><th>Side</th><th>Size</th><th>Entry</th><th>Current</th><th>P&L</th><th>Expires</th>
+            </tr></thead><tbody id="pjm-pos"></tbody></table>
+            <div class="section-head">Trade History</div>
+            <table class="data-table"><thead><tr>
+                <th>Hub</th><th>Side</th><th>Entry</th><th>Exit</th><th>Size</th><th>P&L</th><th>Reason</th><th>Closed</th>
+            </tr></thead><tbody id="pjm-trades"></tbody></table>
+        </div>
+
+        <!-- CAISO Panel -->
+        <div class="iso-panel" id="panel-caiso">
+            <div class="iso-summary" id="caiso-summary"></div>
+            <div class="section-head">Hub Signals</div>
+            <div class="hub-grid" id="caiso-hubs"></div>
+            <div class="section-head">Open Positions</div>
+            <table class="data-table"><thead><tr>
+                <th>Hub</th><th>Side</th><th>Size</th><th>Entry</th><th>Current</th><th>P&L</th><th>Expires</th>
+            </tr></thead><tbody id="caiso-pos"></tbody></table>
+            <div class="section-head">Trade History</div>
+            <table class="data-table"><thead><tr>
+                <th>Hub</th><th>Side</th><th>Entry</th><th>Exit</th><th>Size</th><th>P&L</th><th>Reason</th><th>Closed</th>
+            </tr></thead><tbody id="caiso-trades"></tbody></table>
+        </div>
+    </div>
+
+    <script>
+    // ═══ Config ═══
+    const ISOS = [
+        { id: 'ercot', name: 'ERCOT', color: '#f97316', priceKey: 'current_ercot_price' },
+        { id: 'pjm',   name: 'PJM',   color: '#a78bfa', priceKey: 'current_pjm_price' },
+        { id: 'caiso', name: 'CAISO', color: '#2dd4bf', priceKey: 'current_caiso_price' },
+    ];
+
+    // ═══ Tab Switching ═══
+    document.querySelectorAll('.iso-tab').forEach(tab => {
+        tab.addEventListener('click', () => {
+            document.querySelectorAll('.iso-tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.iso-panel').forEach(p => p.classList.remove('active'));
+            tab.classList.add('active');
+            document.getElementById(`panel-${tab.dataset.iso}`).classList.add('active');
+        });
+    });
+
+    // ═══ Helpers ═══
+    function fmt$(v, decimals = 0) {
+        if (v == null) return '—';
+        const prefix = v >= 0 ? '' : '-';
+        return `${prefix}$${Math.abs(v).toFixed(decimals)}`;
+    }
+    function fmtPnl(v) {
+        if (v == null) return '—';
+        return `${v >= 0 ? '+' : ''}$${v.toFixed(2)}`;
+    }
+    function pnlCls(v) { return v >= 0 ? 'pos' : 'neg'; }
+    function sideCls(s) { return s === 'SHORT' ? 'side-short' : 'side-long'; }
+    function shortTime(iso) {
+        if (!iso) return '—';
+        const d = new Date(iso);
+        return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + ' ' +
+               d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+    }
+
+    function confColor(c) {
+        if (c >= 70) return 'var(--pm-green)';
+        if (c >= 50) return 'var(--pm-accent)';
+        return 'var(--pm-text-muted)';
+    }
+
+    // ═══ Render Hub Cards ═══
+    function renderHubs(containerId, signals, iso) {
+        const el = document.getElementById(containerId);
+        if (!signals || !signals.length) {
+            el.innerHTML = '<div style="color:var(--pm-text-muted); font-style:italic; padding:1rem;">No signals cached</div>';
+            return;
+        }
+        el.innerHTML = signals.map(s => {
+            const cls = s.signal.toLowerCase();
+            const edgeCls = s.edge >= 0 ? 'pos' : 'neg';
+            const edgeStr = `${s.edge >= 0 ? '+' : ''}${s.edge.toFixed(4)}`;
+            const price = s[iso.priceKey] || s.current_ercot_price || s.current_pjm_price || s.current_caiso_price || 0;
+            return `
+            <div class="hub-card ${cls}">
+                <div class="hub-top">
+                    <div>
+                        <div class="hub-code">${s.hub_name || ''}</div>
+                        <div class="hub-city">${s.hub || s.city || ''}</div>
+                    </div>
+                    <div style="text-align:right">
+                        <div class="hub-signal ${cls}">${s.signal}</div>
+                        <div class="hub-edge ${edgeCls}">${edgeStr}</div>
+                    </div>
+                </div>
+                <div class="hub-metrics">
+                    <div class="hub-metric"><span class="m-label">Solar </span><span class="m-value">${(s.expected_solrad_mjm2 || 0).toFixed(1)} MJ/m²</span></div>
+                    <div class="hub-metric"><span class="m-label">Price </span><span class="m-value">$${price.toFixed(1)}/MWh</span></div>
+                    <div class="hub-metric"><span class="m-label">Gen </span><span class="m-value">${(s.actual_solar_mw || 0).toLocaleString()} MW</span></div>
+                    <div class="hub-metric"><span class="m-label">Conf </span><span class="m-value">${s.confidence}%</span></div>
+                </div>
+                <div class="conf-bar-wrap">
+                    <div class="conf-bar"><div class="conf-bar-fill" style="width:${s.confidence}%;background:${confColor(s.confidence)}"></div></div>
+                    <div class="conf-bar-label">${s.confidence}%</div>
+                </div>
+            </div>`;
+        }).join('');
+    }
+
+    // ═══ Render ISO Summary ═══
+    function renderSummary(containerId, sum, isoColor) {
+        const el = document.getElementById(containerId);
+        if (!sum) { el.innerHTML = ''; return; }
+        const pnlColor = sum.total_pnl >= 0 ? 'var(--pm-green)' : 'var(--pm-red)';
+        el.innerHTML = `
+            <div class="iso-stat"><div class="stat-label">Open</div><div class="stat-value">${sum.open_count}</div></div>
+            <div class="iso-stat"><div class="stat-label">Exposure</div><div class="stat-value">${fmt$(sum.open_exposure)}</div></div>
+            <div class="iso-stat"><div class="stat-label">Win Rate</div><div class="stat-value">${sum.win_rate.toFixed(1)}%</div></div>
+            <div class="iso-stat"><div class="stat-label">Trades</div><div class="stat-value">${sum.total_trades}</div></div>
+            <div class="iso-stat"><div class="stat-label">Net P&L</div><div class="stat-value" style="color:${pnlColor}">${fmtPnl(sum.total_pnl)}</div></div>
+        `;
+    }
+
+    // ═══ Render Positions Table ═══
+    function renderPositions(tbodyId, positions) {
+        const el = document.getElementById(tbodyId);
+        if (!positions || !positions.length) {
+            el.innerHTML = '<tr class="empty-row"><td colspan="7">No open positions</td></tr>';
+            return;
+        }
+        el.innerHTML = positions.map(p => `<tr>
+            <td>${p.hub_name}</td>
+            <td class="${sideCls(p.signal)}">${p.signal}</td>
+            <td>${fmt$(p.size_dollars)}</td>
+            <td>$${p.entry_price.toFixed(1)}</td>
+            <td>$${(p.current_price || p.entry_price).toFixed(1)}</td>
+            <td class="${pnlCls(p.unrealized_pnl || 0)}">${fmtPnl(p.unrealized_pnl || 0)}</td>
+            <td style="font-size:0.7rem">${shortTime(p.expires_at)}</td>
+        </tr>`).join('');
+    }
+
+    // ═══ Render Trades Table ═══
+    function renderTrades(tbodyId, trades) {
+        const el = document.getElementById(tbodyId);
+        if (!trades || !trades.length) {
+            el.innerHTML = '<tr class="empty-row"><td colspan="8">No trades yet</td></tr>';
+            return;
+        }
+        el.innerHTML = trades.map(t => `<tr>
+            <td>${t.hub_name}</td>
+            <td class="${sideCls(t.signal)}">${t.signal}</td>
+            <td>$${t.entry_price.toFixed(1)}</td>
+            <td>$${t.exit_price.toFixed(1)}</td>
+            <td>${fmt$(t.size_dollars)}</td>
+            <td class="${pnlCls(t.pnl)}">${fmtPnl(t.pnl)}</td>
+            <td><span class="reason-pill">${t.exit_reason || ''}</span></td>
+            <td style="font-size:0.7rem">${shortTime(t.closed_at)}</td>
+        </tr>`).join('');
+    }
+
+    // ═══ Load All Data ═══
+    async function loadAll() {
+        const btn = document.getElementById('refresh-btn');
+        btn.classList.add('spinning');
+
+        const allSummaries = [];
+
+        for (const iso of ISOS) {
+            try {
+                const [signals, positions, trades, summary] = await Promise.all([
+                    fetch(`/api/${iso.id}/signals`).then(r => r.json()).catch(() => []),
+                    fetch(`/api/${iso.id}/positions`).then(r => r.json()).catch(() => []),
+                    fetch(`/api/${iso.id}/trades?limit=20`).then(r => r.json()).catch(() => []),
+                    fetch(`/api/${iso.id}/summary`).then(r => r.json()).catch(() => null),
+                ]);
+
+                renderHubs(`${iso.id}-hubs`, signals, iso);
+                renderSummary(`${iso.id}-summary`, summary, iso.color);
+                renderPositions(`${iso.id}-pos`, positions);
+                renderTrades(`${iso.id}-trades`, trades);
+
+                if (summary) allSummaries.push(summary);
+            } catch (e) {
+                console.error(`${iso.name} load error`, e);
+            }
+        }
+
+        // Aggregate
+        if (allSummaries.length) {
+            const totalPos = allSummaries.reduce((s, x) => s + x.open_count, 0);
+            const totalExposure = allSummaries.reduce((s, x) => s + x.open_exposure, 0);
+            const totalPnl = allSummaries.reduce((s, x) => s + x.total_pnl, 0);
+            const totalTrades = allSummaries.reduce((s, x) => s + x.total_trades, 0);
+            const totalWins = allSummaries.reduce((s, x) => s + x.wins, 0);
+            const winRate = totalTrades > 0 ? (totalWins / totalTrades * 100) : 0;
+
+            document.getElementById('agg-positions').textContent = totalPos;
+            document.getElementById('agg-positions-sub').textContent =
+                allSummaries.map((s, i) => `${ISOS[i].name}: ${s.open_count}`).join(' · ');
+            document.getElementById('agg-exposure').textContent = fmt$(totalExposure);
+
+            const pnlEl = document.getElementById('agg-pnl');
+            pnlEl.textContent = fmtPnl(totalPnl);
+            pnlEl.style.color = totalPnl >= 0 ? 'var(--pm-green)' : 'var(--pm-red)';
+            document.getElementById('agg-pnl-sub').textContent =
+                allSummaries.map((s, i) => `${ISOS[i].name}: ${fmtPnl(s.total_pnl)}`).join(' · ');
+
+            document.getElementById('agg-winrate').textContent = `${winRate.toFixed(1)}%`;
+            document.getElementById('agg-trades-sub').textContent = `${totalTrades} trades (${totalWins}W/${totalTrades - totalWins}L)`;
+        }
+
+        // Timestamp
+        document.getElementById('last-updated').textContent = new Date().toLocaleTimeString();
+        btn.classList.remove('spinning');
+    }
+
+    // ═══ Init ═══
+    loadAll();
+    setInterval(loadAll, 60000);
+
+    document.getElementById('refresh-btn').addEventListener('click', loadAll);
+    </script>
+</body>
+</html>
