@@ -147,3 +147,71 @@ ERCOT_SEASONAL_NORMS = {
     11: {"solar": 12.0, "load": 43_000},
     12: {"solar": 10.0, "load": 48_000},
 }
+
+# --- PJM Power Price Signal ---
+PJM_HUBS = {
+    "Western":    {"city": "Pittsburgh",   "lat": 40.44, "lon": -80.00, "hub_name": "WESTERN", "solar_sensitivity": 0.20, "active": True},
+    "AEP-Dayton": {"city": "Columbus",     "lat": 39.96, "lon": -82.99, "hub_name": "AEP",     "solar_sensitivity": 0.15, "active": True},
+    "NI":         {"city": "Chicago",      "lat": 41.88, "lon": -87.63, "hub_name": "NI",      "solar_sensitivity": 0.10, "active": False},
+    "RTO":        {"city": "Philadelphia", "lat": 39.95, "lon": -75.16, "hub_name": "RTO",     "solar_sensitivity": 0.12, "active": False},
+    "PSEG":       {"city": "Newark",       "lat": 40.74, "lon": -74.17, "hub_name": "PSEG",    "solar_sensitivity": 0.08, "active": False},
+}
+
+PJM_PAPER_BANKROLL = 10_000.0
+PJM_PAPER_MODE = True
+PJM_MIN_EDGE = 0.03
+PJM_MIN_CONFIDENCE = 50
+PJM_FORTIFY_EDGE_INCREASE = 0.03
+PJM_EXIT_EDGE_DECAY = 0.30
+PJM_MAX_POSITIONS_PER_HUB = 3
+PJM_MAX_POSITIONS_TOTAL = 8
+PJM_POSITION_TTL_HOURS = 24
+PJM_LOAD_SENSITIVITY = 0.20
+
+PJM_SEASONAL_NORMS = {
+    1:  {"solar":  7.0, "load": 92_000},
+    2:  {"solar":  9.0, "load": 88_000},
+    3:  {"solar": 12.5, "load": 80_000},
+    4:  {"solar": 16.0, "load": 75_000},
+    5:  {"solar": 18.5, "load": 78_000},
+    6:  {"solar": 20.0, "load": 95_000},
+    7:  {"solar": 20.5, "load": 105_000},
+    8:  {"solar": 19.0, "load": 100_000},
+    9:  {"solar": 15.0, "load": 85_000},
+    10: {"solar": 11.5, "load": 76_000},
+    11: {"solar":  8.0, "load": 80_000},
+    12: {"solar":  6.5, "load": 90_000},
+}
+
+# --- CAISO Power Price Signal ---
+CAISO_HUBS = {
+    "SP15": {"city": "Los Angeles", "lat": 34.05, "lon": -118.24, "hub_name": "SP15", "solar_sensitivity": 0.35, "active": True},
+    "NP15": {"city": "Sacramento",  "lat": 38.58, "lon": -121.49, "hub_name": "NP15", "solar_sensitivity": 0.25, "active": False},
+    "ZP26": {"city": "Fresno",      "lat": 36.74, "lon": -119.77, "hub_name": "ZP26", "solar_sensitivity": 0.30, "active": False},
+}
+
+CAISO_PAPER_BANKROLL = 10_000.0
+CAISO_PAPER_MODE = True
+CAISO_MIN_EDGE = 0.03
+CAISO_MIN_CONFIDENCE = 50
+CAISO_FORTIFY_EDGE_INCREASE = 0.03
+CAISO_EXIT_EDGE_DECAY = 0.30
+CAISO_MAX_POSITIONS_PER_HUB = 3
+CAISO_MAX_POSITIONS_TOTAL = 6
+CAISO_POSITION_TTL_HOURS = 24
+CAISO_LOAD_SENSITIVITY = 0.15
+
+CAISO_SEASONAL_NORMS = {
+    1:  {"solar": 12.0, "load": 24_000},
+    2:  {"solar": 14.5, "load": 23_500},
+    3:  {"solar": 19.0, "load": 23_000},
+    4:  {"solar": 23.0, "load": 23_500},
+    5:  {"solar": 26.0, "load": 25_000},
+    6:  {"solar": 28.0, "load": 30_000},
+    7:  {"solar": 27.5, "load": 35_000},
+    8:  {"solar": 25.5, "load": 34_000},
+    9:  {"solar": 22.0, "load": 30_000},
+    10: {"solar": 17.0, "load": 26_000},
+    11: {"solar": 13.0, "load": 24_000},
+    12: {"solar": 11.0, "load": 24_500},
+}
