@@ -94,16 +94,18 @@ def _predict_likely(ticker: str, side: str, forecast_high: float | None,
     if is_precip and forecast_precip is not None:
         try:
             threshold_in = float(strike)
-            above = forecast_precip >= threshold_in
-            return ("WIN" if above else "LOSS") if side == "YES" else ("WIN" if not above else "LOSS")
+            # Kalshi precip: YES = "under threshold", NO = "above threshold"
+            under = forecast_precip < threshold_in
+            return ("WIN" if under else "LOSS") if side == "YES" else ("WIN" if not under else "LOSS")
         except ValueError:
             return None
 
     if not is_precip and forecast_high is not None:
         if strike.startswith("T"):
             threshold = float(strike[1:])
-            temp_above = forecast_high >= threshold
-            return ("WIN" if temp_above else "LOSS") if side == "YES" else ("LOSS" if temp_above else "WIN")
+            # Kalshi T-type: YES = "below threshold" (e.g. T93 = "92° or below")
+            temp_below = forecast_high < threshold
+            return ("WIN" if temp_below else "LOSS") if side == "YES" else ("LOSS" if temp_below else "WIN")
         if strike.startswith("B"):
             threshold = float(strike[1:])
             in_bucket = threshold <= forecast_high < threshold + 2
@@ -274,10 +276,9 @@ async def get_portfolio():
             try:
                 members = get_ensemble_precip(info["lat"], info["lon"], forecast_days=days_left)
                 remaining_median = median(members) if members else 0.0
-                try:
-                    mtd = get_observed_mtd_precip(info["lat"], info["lon"])
-                except Exception:
-                    mtd = 0.0
+                mtd = get_observed_mtd_precip(info["lat"], info["lon"])
+                if mtd is None:
+                    mtd = 0.0  # dashboard display only — trading uses None to block
                 _precip_cache[city_name] = {
                     "remaining_forecast": round(remaining_median, 2),
                     "mtd_observed": round(mtd, 2),
@@ -304,27 +305,40 @@ async def get_portfolio():
                 pnl = round(exposure - cost, 2) if cost != 0 else 0
                 entry = round(min(0.99, max(0, cost) / qty), 2) if qty > 0 and cost > 0 else 0
 
+                side_str = "YES" if qty_fp > 0 else "NO"
                 settles = _parse_settle_date(ticker)
                 contract = _parse_contract(ticker, side_str)
 
                 # Look up forecast for this city
                 city_slug = None
-                for prefix, info in WEATHER_SERIES.items():
+                is_precip = "RAIN" in ticker.upper()
+                series = {**WEATHER_SERIES, **PRECIP_SERIES} if is_precip else WEATHER_SERIES
+                for prefix, info in series.items():
                     if ticker.upper().startswith(prefix.upper()):
                         city_slug = info["city"]
                         break
-                fc = _forecast_cache.get(city_slug, {})
-                # Pick forecast day: day 0 for today's event, day 1 for tomorrow's
-                fc_idx = 0 if settles <= today_str else 1
-                fc_high = fc.get("high", [None, None])
-                fc_low = fc.get("low", [None, None])
-                forecast_high = fc_high[fc_idx] if fc_idx < len(fc_high) else None
-                forecast_low = fc_low[fc_idx] if fc_idx < len(fc_low) else None
 
-                side_str = "YES" if qty_fp > 0 else "NO"
-                likely = _predict_likely(ticker, side_str, forecast_high, None)
+                forecast_high = None
+                forecast_low = None
+                forecast_precip = None
+                current_val = None
 
-                market_type = "precip" if "RAIN" in ticker.upper() else "temp"
+                if is_precip:
+                    pc = _precip_cache.get(city_slug, {})
+                    forecast_precip = pc.get("month_total_forecast")
+                    current_val = pc.get("mtd_observed")
+                else:
+                    fc = _forecast_cache.get(city_slug, {})
+                    fc_idx = 0 if settles <= today_str else 1
+                    fc_high = fc.get("high", [None, None])
+                    fc_low = fc.get("low", [None, None])
+                    forecast_high = fc_high[fc_idx] if fc_idx < len(fc_high) else None
+                    forecast_low = fc_low[fc_idx] if fc_idx < len(fc_low) else None
+                    current_val = fc.get("current")
+
+                likely = _predict_likely(ticker, side_str, forecast_high, forecast_precip)
+
+                market_type = "precip" if is_precip else "temp"
                 open_pos.append({
                     "ticker": ticker,
                     "city": ticker_to_city(ticker),
@@ -339,7 +353,8 @@ async def get_portfolio():
                     "settles": settles,
                     "forecast_high": round(forecast_high, 1) if forecast_high is not None else None,
                     "forecast_low": round(forecast_low, 1) if forecast_low is not None else None,
-                    "current_temp": round(fc.get("current"), 1) if fc.get("current") is not None else None,
+                    "forecast_precip": round(forecast_precip, 2) if forecast_precip is not None else None,
+                    "current": round(current_val, 1) if current_val is not None else None,
                     "likely": likely,
                 })
 
@@ -369,11 +384,13 @@ async def get_portfolio():
                 if is_precip:
                     pc = _precip_cache.get(city_slug, {})
                     forecast_precip = pc.get("month_total_forecast")
+                    current_val = pc.get("mtd_observed")
                 else:
                     fc = _forecast_cache.get(city_slug, {})
                     fc_idx = 0 if settles <= today_str else 1
                     fc_high = fc.get("high", [None, None])
                     forecast_high = fc_high[fc_idx] if fc_idx < len(fc_high) else None
+                    current_val = fc.get("current")
 
                 likely = _predict_likely(ticker, side_str, forecast_high, forecast_precip)
 
@@ -391,6 +408,7 @@ async def get_portfolio():
                     "settles": settles,
                     "forecast_high": round(forecast_high, 1) if forecast_high is not None else None,
                     "forecast_precip": round(forecast_precip, 2) if forecast_precip is not None else None,
+                    "current": round(current_val, 1) if current_val is not None else None,
                     "likely": likely,
                 })
 
