@@ -394,7 +394,6 @@ def execute_trade(config, signal: Signal, size, exchange,
     cost = size.count * price_cents / 100.0
 
     if paper_mode:
-        # Log Kalshi paper trades to trades.db; ERCOT uses its own paper_trader
         if config.exchange == "kalshi":
             from kalshi.fill_tracker import init_trades_db, record_fill
             init_trades_db("data/trades.db")
@@ -411,6 +410,23 @@ def execute_trade(config, signal: Signal, size, exchange,
                 strategy=strategy,
                 fee=fee if config.exchange == "kalshi" else 0.0,
             )
+        elif config.exchange == "ercot":
+            from ercot.paper_trader import open_position, write_scan_cache
+            hub_signal = {
+                "hub": signal.city or signal.ticker,
+                "hub_name": signal.market.get("hub_name", signal.ticker) if signal.market else signal.ticker,
+                "signal": "SHORT" if signal.side == "no" else "LONG",
+                "edge": abs(signal.edge),
+                "confidence": int(signal.confidence),
+                "current_ercot_price": signal.market.get("current_ercot_price", 0) if signal.market else 0,
+            }
+            pos = open_position(hub_signal, bankroll=cost)
+            if pos is None:
+                return TradeResult(
+                    ticker=signal.ticker, side=signal.side,
+                    count=0, price_cents=price_cents, cost=0,
+                    order_id="", status="ercot_blocked", paper=True,
+                )
         return TradeResult(
             ticker=signal.ticker, side=size.side or signal.side,
             count=size.count, price_cents=price_cents, cost=cost,
