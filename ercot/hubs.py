@@ -5,7 +5,9 @@ Caches ERCOT API responses for 5 minutes to avoid redundant calls across hub sca
 
 import time
 import requests
-from config import ERCOT_HUBS
+from datetime import datetime, date, timedelta
+from zoneinfo import ZoneInfo
+from config import ERCOT_HUBS, ERCOT_SOLAR_HOURS
 from weather.multi_model import get_ercot_solar_signal
 from ercot.auth import get_ercot_headers
 
@@ -13,6 +15,14 @@ from ercot.auth import get_ercot_headers
 _ercot_cache: dict = {}
 _ercot_cache_time: float = 0.0
 _CACHE_TTL = 300  # 5 minutes
+
+# DAM cache keyed by date string — DAM prices never change after publication
+_dam_cache: dict[str, dict] = {}
+
+
+def _get_ct_now() -> datetime:
+    """Return current datetime in Central Time. Extracted for testability."""
+    return datetime.now(ZoneInfo("America/Chicago"))
 
 
 def _fetch_ercot_market_data() -> dict:
@@ -84,32 +94,171 @@ def _fetch_ercot_market_data() -> dict:
     return result
 
 
+def fetch_dam_prices(date_str: str) -> "dict[str, dict[int, float]] | None":
+    """Fetch Day-Ahead Market prices for all hubs for a given date.
+
+    Returns {hub_name: {hour: price}} or None on failure.
+    DAM prices are immutable after publication — cached per date string.
+    """
+    if date_str in _dam_cache:
+        return _dam_cache[date_str]
+
+    headers = get_ercot_headers()
+    try:
+        r = requests.get(
+            "https://api.ercot.com/api/public-reports/np4-190-cd/dam_stlmnt_pnt_prices",
+            headers=headers,
+            params={"size": 2000},
+            timeout=15,
+        )
+        r.raise_for_status()
+        records = r.json().get("data", [])
+
+        result: dict[str, dict[int, float]] = {}
+        for rec in records:
+            if isinstance(rec, list):
+                # [deliveryDate, deliveryHour, settlementPoint, settlementPointType, settlementPointPrice]
+                sp = rec[2]
+                hour = int(rec[1])
+                price = float(rec[4])
+            else:
+                sp = rec.get("settlementPoint", "")
+                hour = int(rec.get("deliveryHour", 0))
+                price = float(rec.get("settlementPointPrice", 0))
+
+            if not str(sp).startswith("HB_") or sp in ("HB_BUSAVG", "HB_HUBAVG"):
+                continue
+
+            if sp not in result:
+                result[sp] = {}
+            result[sp][hour] = price
+
+        _dam_cache[date_str] = result
+        return result
+    except Exception as e:
+        print(f"  ERCOT DAM price fetch error: {e}")
+        return None
+
+
+def fetch_rt_settlement(hub_name: str, hour: int, date_str: str) -> "float | None":
+    """Fetch Real-Time settlement price for a hub/hour/date.
+
+    Averages all interval prices (should be 4 × 15-min intervals) for the hour.
+    Returns None on failure or if no matching records found.
+    """
+    headers = get_ercot_headers()
+    try:
+        r = requests.get(
+            "https://api.ercot.com/api/public-reports/np6-905-cd/spp_node_zone_hub",
+            headers=headers,
+            params={"size": 500},
+            timeout=15,
+        )
+        r.raise_for_status()
+        records = r.json().get("data", [])
+
+        prices = []
+        for rec in records:
+            if isinstance(rec, list):
+                # [deliveryDate, deliveryHour, deliveryInterval, settlementPoint,
+                #  settlementPointType, settlementPointPrice, DSTFlag]
+                rec_date = str(rec[0])
+                rec_hour = int(rec[1])
+                sp = str(rec[3])
+                price = float(rec[5])
+            else:
+                rec_date = str(rec.get("deliveryDate", ""))
+                rec_hour = int(rec.get("deliveryHour", 0))
+                sp = str(rec.get("settlementPoint", ""))
+                price = float(rec.get("settlementPointPrice", 0))
+
+            if sp == hub_name and rec_hour == hour and rec_date == date_str:
+                prices.append(price)
+
+        if not prices:
+            return None
+        return sum(prices) / len(prices)
+    except Exception as e:
+        print(f"  ERCOT RT settlement fetch error for {hub_name} HE{hour}: {e}")
+        return None
+
+
 def fetch_ercot_markets() -> list[dict]:
-    """Return raw hub data + shared ERCOT market data for pipeline fetch stage."""
+    """Return per-hour binary option contracts for all ERCOT hubs.
+
+    When DAM prices are available, returns one dict per hub × hour with:
+      ticker, hub_key, hub_name, contract_date, contract_hour, dam_price, etc.
+
+    Falls back to one dict per hub (no hour dimension) when DAM is unavailable,
+    preserving backward compatibility with existing pipeline consumers.
+    """
     market_data = _fetch_ercot_market_data()
     hub_prices = market_data.get("hub_prices", {})
     grid_avg = market_data.get("price", 40.0)
+
+    now_ct = _get_ct_now()
+    tomorrow_str = (now_ct.date() + timedelta(days=1)).strftime("%Y-%m-%d")
+
+    # Fetch DAM prices for tomorrow (forward-looking binary option contracts).
+    # DAM prices are published the evening before; we trade them the next morning.
+    dam_tomorrow = fetch_dam_prices(tomorrow_str)
+
+    # If DAM fetch failed, fall back to legacy one-per-hub structure
+    if dam_tomorrow is None:
+        markets = []
+        for hub_key, info in ERCOT_HUBS.items():
+            hub_name = info["hub_name"]
+            hub_price = hub_prices.get(hub_name, grid_avg)
+
+            per_hub_data = dict(market_data)
+            per_hub_data["hub_price"] = hub_price
+
+            markets.append({
+                "hub": hub_key,
+                "hub_key": hub_key,
+                "hub_name": hub_name,
+                "city": info["city"],
+                "lat": info["lat"],
+                "lon": info["lon"],
+                "solar_sensitivity": info["solar_sensitivity"],
+                "current_ercot_price": hub_price,
+                "actual_solar_mw": market_data.get("solar_mw", 12000.0),
+                "_ercot_data": per_hub_data,
+            })
+        return markets
+
+    # Build per-hour contracts from tomorrow's DAM data
     markets = []
+    date_compact = tomorrow_str.replace("-", "")[2:]  # e.g. "260319"
+
     for hub_key, info in ERCOT_HUBS.items():
         hub_name = info["hub_name"]
         hub_price = hub_prices.get(hub_name, grid_avg)
 
-        # Build per-hub ercot_data with hub_price injected
         per_hub_data = dict(market_data)
         per_hub_data["hub_price"] = hub_price
 
-        markets.append({
-            "hub": hub_key,
-            "hub_key": hub_key,
-            "hub_name": hub_name,
-            "city": info["city"],
-            "lat": info["lat"],
-            "lon": info["lon"],
-            "solar_sensitivity": info["solar_sensitivity"],
-            "current_ercot_price": hub_price,
-            "actual_solar_mw": market_data.get("solar_mw", 12000.0),
-            "_ercot_data": per_hub_data,
-        })
+        hub_dam = dam_tomorrow.get(hub_name, {})
+        for hour, dam_price in hub_dam.items():
+            ticker = f"BOPT-ERCOT-{hub_name}-{date_compact}-{hour:02d}"
+
+            markets.append({
+                "ticker": ticker,
+                "hub": hub_key,
+                "hub_key": hub_key,
+                "hub_name": hub_name,
+                "city": info["city"],
+                "lat": info["lat"],
+                "lon": info["lon"],
+                "solar_sensitivity": info["solar_sensitivity"],
+                "contract_date": tomorrow_str,
+                "contract_hour": hour,
+                "dam_price": dam_price,
+                "current_ercot_price": hub_price,
+                "actual_solar_mw": market_data.get("solar_mw", 12000.0),
+                "_ercot_data": per_hub_data,
+            })
+
     return markets
 
 

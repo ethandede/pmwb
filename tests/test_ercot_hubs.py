@@ -1,5 +1,10 @@
 """Tests for ercot/hubs.py — hub scanning and ERCOT data caching."""
 import time
+from unittest.mock import patch, MagicMock
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+CT = ZoneInfo("America/Chicago")
 
 
 def test_scan_all_hubs_returns_five_signals():
@@ -99,3 +104,95 @@ def test_per_hub_prices_are_differentiated():
     assert prices["HB_NORTH"] == 35.0
     west_market = [m for m in markets if m["hub_name"] == "HB_WEST"][0]
     assert west_market["_ercot_data"]["hub_price"] == 20.0
+
+
+class TestFetchDamPrices:
+    def test_returns_hourly_prices_all_hubs(self):
+        from ercot.hubs import fetch_dam_prices
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status = lambda: None
+        mock_response.json.return_value = {"data": [
+            ["2026-03-18", 11, "HB_WEST", "Hub", 42.50],
+            ["2026-03-18", 12, "HB_WEST", "Hub", 38.00],
+            ["2026-03-18", 14, "HB_WEST", "Hub", 45.00],
+            ["2026-03-18", 11, "HB_NORTH", "Hub", 40.00],
+            ["2026-03-18", 12, "HB_NORTH", "Hub", 36.00],
+        ]}
+        with patch("ercot.hubs.requests.get", return_value=mock_response):
+            result = fetch_dam_prices("2026-03-18")
+        assert result is not None
+        assert result["HB_WEST"][11] == 42.50
+        assert result["HB_WEST"][14] == 45.00
+        assert result["HB_NORTH"][11] == 40.00
+
+    def test_returns_none_on_failure(self):
+        from ercot.hubs import fetch_dam_prices, _dam_cache
+        _dam_cache.clear()  # ensure no stale cache from prior test
+        with patch("ercot.hubs.requests.get", side_effect=Exception("timeout")):
+            result = fetch_dam_prices("2026-03-18")
+        assert result is None
+
+    def test_caches_per_date(self):
+        from ercot.hubs import fetch_dam_prices, _dam_cache
+        _dam_cache.clear()  # reset module cache
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status = lambda: None
+        mock_response.json.return_value = {"data": [
+            ["2026-03-18", 11, "HB_WEST", "Hub", 42.50],
+        ]}
+        with patch("ercot.hubs.requests.get", return_value=mock_response) as mock_get:
+            fetch_dam_prices("2026-03-18")
+            fetch_dam_prices("2026-03-18")
+            assert mock_get.call_count == 1
+
+
+class TestFetchRtSettlement:
+    def test_averages_four_intervals(self):
+        from ercot.hubs import fetch_rt_settlement
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status = lambda: None
+        mock_response.json.return_value = {"data": [
+            ["2026-03-18", 14, 1, "HB_WEST", "Hub", 40.0, "N"],
+            ["2026-03-18", 14, 2, "HB_WEST", "Hub", 42.0, "N"],
+            ["2026-03-18", 14, 3, "HB_WEST", "Hub", 38.0, "N"],
+            ["2026-03-18", 14, 4, "HB_WEST", "Hub", 44.0, "N"],
+        ]}
+        with patch("ercot.hubs.requests.get", return_value=mock_response):
+            result = fetch_rt_settlement("HB_WEST", 14, "2026-03-18")
+        assert result == 41.0
+
+    def test_returns_none_on_failure(self):
+        from ercot.hubs import fetch_rt_settlement
+        with patch("ercot.hubs.requests.get", side_effect=Exception("timeout")):
+            result = fetch_rt_settlement("HB_WEST", 14, "2026-03-18")
+        assert result is None
+
+
+class TestFetchErcotMarketsHourly:
+    def test_returns_per_hour_contracts(self):
+        from ercot.hubs import fetch_ercot_markets
+        dam_all = {
+            "HB_WEST": {11: 42.0, 12: 38.0, 14: 45.0},
+            "HB_NORTH": {11: 40.0, 12: 36.0},
+            "HB_HOUSTON": {11: 39.0},
+            "HB_SOUTH": {11: 41.0},
+            "HB_PAN": {11: 37.0},
+        }
+        mock_now = datetime(2026, 3, 18, 5, 0, tzinfo=CT)
+        with patch("ercot.hubs.fetch_dam_prices", return_value=dam_all), \
+             patch("ercot.hubs._fetch_ercot_market_data", return_value={
+                 "price": 40.0, "solar_mw": 12000, "load_forecast": 45000,
+                 "hub_prices": {"HB_WEST": 40.0, "HB_NORTH": 38.0,
+                                "HB_HOUSTON": 39.0, "HB_SOUTH": 41.0, "HB_PAN": 37.0},
+             }), \
+             patch("ercot.hubs._get_ct_now", return_value=mock_now):
+            markets = fetch_ercot_markets()
+        assert len(markets) == 8
+        west_markets = [m for m in markets if m["hub_name"] == "HB_WEST"]
+        assert len(west_markets) == 3
+        assert west_markets[0]["ticker"].startswith("BOPT-ERCOT-HB_WEST")
+        assert "dam_price" in west_markets[0]
+        assert "contract_hour" in west_markets[0]
