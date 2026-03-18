@@ -12,6 +12,7 @@ FORECAST_TTL = 1800  # 30 minutes — weather models update every 1-6 hours
 MARKET_TTL = 60      # 1 minute — market prices move faster
 METAR_TTL = 300      # 5 minutes — METAR obs update roughly every hour
 
+_MISSING = object()  # sentinel for "cached but value is None"
 _cache: dict[str, dict] = {}
 
 
@@ -20,7 +21,12 @@ def _key(*parts) -> str:
 
 
 def get(cache_type: str, *parts) -> Optional[Any]:
-    """Get a cached value if it exists and hasn't expired."""
+    """Get a cached value if it exists and hasn't expired.
+
+    Returns _MISSING sentinel (truthy) for cached None values,
+    plain None for cache misses. Callers should use `is not None`
+    to distinguish miss from cached-None — or use `has()` first.
+    """
     key = _key(cache_type, *parts)
     entry = _cache.get(key)
     if entry is None:
@@ -35,6 +41,24 @@ def get(cache_type: str, *parts) -> Optional[Any]:
         del _cache[key]
         return None
     return entry["val"]
+
+
+def has(cache_type: str, *parts) -> bool:
+    """Check if a non-expired entry exists (even if value is None)."""
+    key = _key(cache_type, *parts)
+    entry = _cache.get(key)
+    if entry is None:
+        return False
+    if cache_type == "market":
+        ttl = MARKET_TTL
+    elif cache_type == "metar":
+        ttl = METAR_TTL
+    else:
+        ttl = FORECAST_TTL
+    if time.time() - entry["ts"] > ttl:
+        del _cache[key]
+        return False
+    return True
 
 
 def put(cache_type: str, *parts, value: Any):

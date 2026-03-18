@@ -258,6 +258,7 @@ def get_noaa_point_forecast(lat: float, lon: float, days_ahead: int = 1, unit: s
 _HRRR_LOCAL = "http://localhost:8080/v1/forecast"
 _HRRR_PUBLIC = "https://api.open-meteo.com/v1/forecast"
 
+
 def get_hrrr_forecast(lat: float, lon: float, days_ahead: int = 1, unit: str = "f", temp_type: str = "max") -> Optional[float]:
     unit_param = "fahrenheit" if unit == "f" else "celsius"
     daily_var = "temperature_2m_max" if temp_type == "max" else "temperature_2m_min"
@@ -440,10 +441,10 @@ def fuse_forecast(
     # --- Model 4: ECMWF IFS (European model) ---
     cache_key_ecmwf = (round(lat, 2), round(lon, 2), temp_type, days_ahead, unit)
     ecmwf_temp = fcache.get("ecmwf", *cache_key_ecmwf)
-    if ecmwf_temp is None:
+    if ecmwf_temp is None and not fcache.has("ecmwf", *cache_key_ecmwf):
         ecmwf_temp = get_ecmwf_forecast(lat, lon, days_ahead=days_ahead, unit=unit, temp_type=temp_type)
-        if ecmwf_temp is not None:
-            fcache.put("ecmwf", *cache_key_ecmwf, value=ecmwf_temp)
+        # Cache both successes and failures
+        fcache.put("ecmwf", *cache_key_ecmwf, value=ecmwf_temp)
     ecmwf_prob = None
     if ecmwf_temp is not None:
         bias_ecmwf, n_ecmwf = get_bias(city, month, "ecmwf")
@@ -457,10 +458,10 @@ def fuse_forecast(
     # --- Model 5: Visual Crossing (Weather Underground) ---
     cache_key_vc = (round(lat, 2), round(lon, 2), temp_type, days_ahead, unit)
     vc_temp = fcache.get("visualcrossing", *cache_key_vc)
-    if vc_temp is None:
+    if vc_temp is None and not fcache.has("visualcrossing", *cache_key_vc):
         vc_temp = get_visualcrossing_forecast(lat, lon, days_ahead=days_ahead, unit=unit, temp_type=temp_type)
-        if vc_temp is not None:
-            fcache.put("visualcrossing", *cache_key_vc, value=vc_temp)
+        # Cache both successes and failures — prevents 429 retry storms
+        fcache.put("visualcrossing", *cache_key_vc, value=vc_temp)
     vc_prob = None
     if vc_temp is not None:
         bias_vc, n_vc = get_bias(city, month, "visualcrossing")
@@ -485,7 +486,9 @@ def fuse_forecast(
         active["visualcrossing"] = vc_prob
 
     if not active:
-        return ensemble_prob or 0.5, 40.0, details
+        # All models failed — refuse to trade (confidence 0 blocks all gates)
+        details["all_models_down"] = True
+        return 0.50, 0.0, details
 
     # Alert on degraded model coverage
     all_models = {"ensemble", "noaa", "hrrr", "ecmwf", "visualcrossing"}
@@ -702,7 +705,17 @@ def fuse_precip_forecast(
     effective_threshold = threshold
     if forecast_days and forecast_days > 1 and threshold > 0:
         from weather.forecast import get_observed_mtd_precip
-        mtd_precip = get_observed_mtd_precip(lat, lon)
+        mtd_raw = get_observed_mtd_precip(lat, lon)
+        if mtd_raw is None:
+            # MTD data unavailable (API down / rate limited).
+            # Trading without MTD is dangerous — a false zero leads to
+            # NO bets on thresholds already exceeded. Bail with low confidence.
+            details["mtd_error"] = "unavailable"
+            details["fused_prob"] = 0.50
+            details["models_used"] = 0
+            details["confidence"] = 0.0
+            return 0.50, 0.0, details
+        mtd_precip = mtd_raw
         effective_threshold = max(0.0, threshold - mtd_precip)
         details["mtd_observed_inches"] = mtd_precip
         details["original_threshold"] = threshold
@@ -724,7 +737,19 @@ def fuse_precip_forecast(
         if ensemble_precip:
             fcache.put("ensemble_precip", *cache_key, value=ensemble_precip)
 
+    # If ensemble is empty (API down), refuse to trade precip
+    if not ensemble_precip:
+        details["ensemble"] = {"prob": None, "error": "unavailable"}
+        details["fused_prob"] = 0.50
+        details["models_used"] = 0
+        details["confidence"] = 0.0
+        return 0.50, 0.0, details
+
     nws_pop, nws_qpf = get_nws_precip_forecast(lat, lon)
+    # NWS returns (None, None) on failure — treat as unavailable
+    if nws_pop is None:
+        nws_pop = 0.5  # neutral fallback for gamma blending only
+        nws_qpf = 0.0
 
     # Use effective_threshold (adjusted for MTD) instead of raw threshold
     csgd_result = gamma_precip_prob(ensemble_precip, threshold=effective_threshold, nws_pop=nws_pop)
@@ -745,19 +770,19 @@ def fuse_precip_forecast(
     }
 
     # NWS: scale QPF by remaining days for monthly contracts
-    if threshold <= 0.0:
-        noaa_prob = nws_pop
-    elif nws_qpf > 0:
-        # For monthly contracts, QPF is a single-day value.
-        # Scale by remaining days as rough estimate of total remaining precip.
-        remaining_days = forecast_days if forecast_days and forecast_days > 1 else 1
-        estimated_remaining_qpf = nws_qpf * remaining_days * 0.5  # conservative: halve naive scaling
-        ratio = min(1.0, estimated_remaining_qpf / max(effective_threshold, 0.01))
-        noaa_prob = nws_pop * ratio
-    else:
-        noaa_prob = nws_pop * 0.3
+    noaa_prob = None
+    if nws_qpf is not None:
+        if threshold <= 0.0:
+            noaa_prob = nws_pop
+        elif nws_qpf > 0:
+            remaining_days = forecast_days if forecast_days and forecast_days > 1 else 1
+            estimated_remaining_qpf = nws_qpf * remaining_days * 0.5
+            ratio = min(1.0, estimated_remaining_qpf / max(effective_threshold, 0.01))
+            noaa_prob = nws_pop * ratio
+        else:
+            noaa_prob = nws_pop * 0.3
+        noaa_prob = max(0.0, min(1.0, noaa_prob))
 
-    noaa_prob = max(0.0, min(1.0, noaa_prob))
     bias_noaa, n_noaa = get_bias(city, month, "noaa_precip")
     details["noaa"] = {"prob": noaa_prob, "pop": nws_pop, "qpf": nws_qpf,
                        "bias": round(bias_noaa, 3), "n": n_noaa}
