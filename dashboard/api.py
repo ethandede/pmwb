@@ -15,6 +15,8 @@ from dashboard.scan_cache import init_scan_cache_db, get_latest_scan, get_scan_h
 from dashboard.equity_db import init_equity_db, get_equity_curve
 from dashboard.ticker_map import ticker_to_city
 from dashboard.ercot_api import ercot_router
+from dashboard.pjm_api import pjm_router
+from dashboard.caiso_api import caiso_router
 
 from exchanges.kalshi import KalshiExchange
 _kalshi = KalshiExchange()
@@ -197,6 +199,8 @@ init_equity_db()
 
 app = FastAPI(title="Weather Edge Dashboard")
 app.include_router(ercot_router)
+app.include_router(pjm_router)
+app.include_router(caiso_router)
 
 # Serve static files and index.html
 STATIC_DIR = Path(__file__).parent / "static"
@@ -217,6 +221,14 @@ async def ercot_page():
     if ercot_file.exists():
         return FileResponse(str(ercot_file))
     return {"status": "ERCOT frontend not found"}
+
+
+@app.get("/power")
+async def power_page():
+    power_file = STATIC_DIR / "power.html"
+    if power_file.exists():
+        return FileResponse(str(power_file))
+    return {"status": "Power frontend not found"}
 
 
 @app.get("/api/portfolio")
