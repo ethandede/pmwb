@@ -125,10 +125,10 @@ def fetch_dam_prices(date_str: str) -> "dict[str, dict[int, float]] | None":
         result: dict[str, dict[int, float]] = {}
         for rec in records:
             if isinstance(rec, list):
-                # [deliveryDate, deliveryHour, settlementPoint, settlementPointType, settlementPointPrice]
+                # [deliveryDate, hourEnding, settlementPoint, settlementPointPrice, DSTFlag]
                 sp = rec[2]
                 hour = _parse_hour(rec[1])
-                price = float(rec[4])
+                price = float(rec[3])
             else:
                 sp = rec.get("settlementPoint", "")
                 hour = _parse_hour(rec.get("deliveryHour", 0))
@@ -248,6 +248,8 @@ def fetch_ercot_markets() -> list[dict]:
 
         hub_dam = dam_tomorrow.get(hub_name, {})
         for hour, dam_price in hub_dam.items():
+            if hour not in ERCOT_SOLAR_HOURS:
+                continue
             ticker = f"BOPT-ERCOT-{hub_name}-{date_compact}-{hour:02d}"
 
             markets.append({

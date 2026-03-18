@@ -112,12 +112,13 @@ class TestFetchDamPrices:
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.raise_for_status = lambda: None
+        # Real ERCOT DAM format: [date, hourEnding, settlementPoint, price, DSTFlag]
         mock_response.json.return_value = {"data": [
-            ["2026-03-18", 11, "HB_WEST", "Hub", 42.50],
-            ["2026-03-18", 12, "HB_WEST", "Hub", 38.00],
-            ["2026-03-18", 14, "HB_WEST", "Hub", 45.00],
-            ["2026-03-18", 11, "HB_NORTH", "Hub", 40.00],
-            ["2026-03-18", 12, "HB_NORTH", "Hub", 36.00],
+            ["2026-03-18", "11:00", "HB_WEST", 42.50, False],
+            ["2026-03-18", "12:00", "HB_WEST", 38.00, False],
+            ["2026-03-18", "14:00", "HB_WEST", 45.00, False],
+            ["2026-03-18", "11:00", "HB_NORTH", 40.00, False],
+            ["2026-03-18", "12:00", "HB_NORTH", 36.00, False],
         ]}
         with patch("ercot.hubs.requests.get", return_value=mock_response):
             result = fetch_dam_prices("2026-03-18")
@@ -140,7 +141,7 @@ class TestFetchDamPrices:
         mock_response.status_code = 200
         mock_response.raise_for_status = lambda: None
         mock_response.json.return_value = {"data": [
-            ["2026-03-18", 11, "HB_WEST", "Hub", 42.50],
+            ["2026-03-18", "11:00", "HB_WEST", 42.50, False],
         ]}
         with patch("ercot.hubs.requests.get", return_value=mock_response) as mock_get:
             fetch_dam_prices("2026-03-18")
