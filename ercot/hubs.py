@@ -11,6 +11,14 @@ from config import ERCOT_HUBS, ERCOT_SOLAR_HOURS
 from weather.multi_model import get_ercot_solar_signal
 from ercot.auth import get_ercot_headers
 
+def _parse_hour(val) -> int:
+    """Parse ERCOT delivery hour — handles both int (14) and time string ('14:00')."""
+    s = str(val).strip()
+    if ":" in s:
+        return int(s.split(":")[0])
+    return int(float(s))
+
+
 # Module-level cache for ERCOT market data (shared across all 5 hub scans)
 _ercot_cache: dict = {}
 _ercot_cache_time: float = 0.0
@@ -119,11 +127,11 @@ def fetch_dam_prices(date_str: str) -> "dict[str, dict[int, float]] | None":
             if isinstance(rec, list):
                 # [deliveryDate, deliveryHour, settlementPoint, settlementPointType, settlementPointPrice]
                 sp = rec[2]
-                hour = int(rec[1])
+                hour = _parse_hour(rec[1])
                 price = float(rec[4])
             else:
                 sp = rec.get("settlementPoint", "")
-                hour = int(rec.get("deliveryHour", 0))
+                hour = _parse_hour(rec.get("deliveryHour", 0))
                 price = float(rec.get("settlementPointPrice", 0))
 
             if not str(sp).startswith("HB_") or sp in ("HB_BUSAVG", "HB_HUBAVG"):
@@ -163,12 +171,12 @@ def fetch_rt_settlement(hub_name: str, hour: int, date_str: str) -> "float | Non
                 # [deliveryDate, deliveryHour, deliveryInterval, settlementPoint,
                 #  settlementPointType, settlementPointPrice, DSTFlag]
                 rec_date = str(rec[0])
-                rec_hour = int(rec[1])
+                rec_hour = _parse_hour(rec[1])
                 sp = str(rec[3])
                 price = float(rec[5])
             else:
                 rec_date = str(rec.get("deliveryDate", ""))
-                rec_hour = int(rec.get("deliveryHour", 0))
+                rec_hour = _parse_hour(rec.get("deliveryHour", 0))
                 sp = str(rec.get("settlementPoint", ""))
                 price = float(rec.get("settlementPointPrice", 0))
 
