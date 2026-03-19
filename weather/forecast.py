@@ -2,34 +2,22 @@ import requests
 import re
 import calendar
 from datetime import date
-from typing import List
+from typing import List, Optional
 from weather.http import get as http_get
 
-# Ensemble API: try self-hosted first, fall back to public
-_ENSEMBLE_LOCAL = "http://localhost:8080/v1/ensemble"
-_ENSEMBLE_PUBLIC = "https://ensemble-api.open-meteo.com/v1/ensemble"
+# Ensemble API: use public endpoint directly (localhost GEFS sync doesn't
+# provide daily aggregates, so localhost always returns nulls for ensemble)
+_ENSEMBLE_URL = "https://ensemble-api.open-meteo.com/v1/ensemble"
 
 
 def _ensemble_get(params: str, timeout: int = 15):
-    """Try localhost ensemble, fall back to public API. Returns (response, source)."""
-    for source, base in [("localhost", _ENSEMBLE_LOCAL), ("public", _ENSEMBLE_PUBLIC)]:
-        try:
-            r = http_get(f"{base}{params}", timeout=timeout)
-            r.raise_for_status()
-            data = r.json()
-            # Check for all-null daily data (sync not ready yet)
-            daily = data.get("daily", {})
-            if daily:
-                first_key = next((k for k in daily if k != "time"), None)
-                if first_key and all(v is None for v in daily[first_key]):
-                    print(f"  Ensemble {source}: all-null data, trying next")
-                    continue
-            print(f"  Ensemble source: {source}")
-            return r, source
-        except Exception as e:
-            print(f"  Ensemble {source} failed: {e}")
-            continue
-    raise ConnectionError("All ensemble sources failed")
+    """Fetch from public ensemble API. Returns (response, source)."""
+    try:
+        r = http_get(f"{_ENSEMBLE_URL}{params}", timeout=timeout)
+        r.raise_for_status()
+        return r, "public"
+    except Exception as e:
+        raise ConnectionError(f"Ensemble API failed: {e}")
 
 def get_ensemble_max_temps(lat: float, lon: float, days_ahead: int = 1, unit: str = "f") -> List[float]:
     """Open-Meteo Ensemble — returns daily max temps in the correct unit (F or C)."""
@@ -143,11 +131,13 @@ def calculate_remaining_month_days(market_close_date: date | None = None) -> int
 MM_TO_INCHES = 1.0 / 25.4
 
 
-def get_observed_mtd_precip(lat: float, lon: float) -> float:
+def get_observed_mtd_precip(lat: float, lon: float) -> Optional[float]:
     """Fetch observed month-to-date precipitation in inches from Open-Meteo archive.
 
-    Returns total precipitation from the 1st of the current month through yesterday.
-    Falls back to 0.0 on any error (conservative — treats as if nothing fell yet).
+    Returns total precipitation from the 1st of the current month through yesterday,
+    or None on failure. Returning None (not 0.0) is critical — a false zero makes
+    the bot think no rain has fallen, leading to catastrophic NO bets on thresholds
+    already exceeded.
     """
     today = date.today()
     month_start = today.replace(day=1)
@@ -178,7 +168,7 @@ def get_observed_mtd_precip(lat: float, lon: float) -> float:
         return round(total_inches, 3)
     except Exception as e:
         print(f"  MTD precip fetch error: {e}")
-        return 0.0
+        return None
 
 
 def get_ensemble_precip(lat: float, lon: float, forecast_days: int | None = None) -> list[float]:
@@ -221,11 +211,11 @@ def get_ensemble_precip(lat: float, lon: float, forecast_days: int | None = None
                 total = (raw[1] if len(raw) > 1 and raw[1] is not None else 0.0) * MM_TO_INCHES
             totals = [round(total, 4)]
 
-        return totals if totals else [0.0] * 30
+        return totals if totals else []
 
     except Exception as e:
         print(f"Open-Meteo Ensemble precip error: {e}")
-        return [0.0] * 30
+        return []
 
 
 def get_nws_precip_forecast(lat: float, lon: float) -> tuple[float, float]:
@@ -246,7 +236,7 @@ def get_nws_precip_forecast(lat: float, lon: float) -> tuple[float, float]:
         periods = r2.json()["properties"]["periods"]
 
         if not periods:
-            return (0.5, 0.0)
+            return (None, None)
 
         period = periods[0]
         pop_raw = period.get("probabilityOfPrecipitation", {}).get("value")
@@ -263,4 +253,4 @@ def get_nws_precip_forecast(lat: float, lon: float) -> tuple[float, float]:
 
     except Exception as e:
         print(f"NWS precip forecast error: {e}")
-        return (0.5, 0.0)
+        return (None, None)
