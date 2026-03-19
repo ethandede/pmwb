@@ -1,9 +1,11 @@
 """CAISO hub scanning — fetches solar irradiance per hub + shared CAISO market data.
 
 Caches CAISO API responses for 5 minutes to avoid redundant calls across hub scans.
-CAISO uses public (no-auth) endpoints; falls back to defaults on failure.
+CAISO uses public CSV endpoints (no auth); falls back to defaults on failure.
 """
 
+import csv
+import io
 import time
 import requests
 from config import CAISO_HUBS
@@ -14,12 +16,25 @@ _caiso_cache: dict = {}
 _caiso_cache_time: float = 0.0
 _CACHE_TTL = 300  # 5 minutes
 
+_FUELSOURCE_URL = "https://www.caiso.com/outlook/current/fuelsource.csv"
+_DEMAND_URL = "https://www.caiso.com/outlook/current/demand.csv"
+
+
+def _parse_latest_row(csv_text: str) -> dict:
+    """Parse a CAISO CSV and return the last non-empty row as a dict."""
+    reader = csv.DictReader(io.StringIO(csv_text))
+    last_row = None
+    for row in reader:
+        # Skip rows where all values are empty
+        if any(v.strip() for k, v in row.items() if k != "Time"):
+            last_row = row
+    return last_row or {}
+
 
 def _fetch_caiso_market_data() -> dict:
-    """Fetch CAISO price, solar generation, and load forecast.
+    """Fetch CAISO solar generation and load from public CSVs.
 
     Returns cached data if within TTL. Falls back to defaults on failure.
-    CAISO endpoints are public — no auth headers required.
     """
     global _caiso_cache, _caiso_cache_time
 
@@ -28,43 +43,28 @@ def _fetch_caiso_market_data() -> dict:
 
     result = {"price": 40.0, "solar_mw": 10000.0, "load_forecast": 27_000.0}
 
-    # Fuel / price data
+    # Fuel source CSV — extract current solar generation
     try:
-        r = requests.get(
-            "https://www.caiso.com/outlook/SP/fuels.json",
-            timeout=15,
-        )
+        r = requests.get(_FUELSOURCE_URL, timeout=15)
         r.raise_for_status()
-        data = r.json()
-        # Try to extract a price from the fuels data
-        if isinstance(data, dict):
-            # CAISO fuels.json structure varies; try common keys
-            for key in ("Solar", "solar"):
-                if key in data and isinstance(data[key], list) and data[key]:
-                    last_val = data[key][-1]
-                    if isinstance(last_val, (int, float)):
-                        result["solar_mw"] = float(last_val)
-                    elif isinstance(last_val, list) and len(last_val) > 1:
-                        result["solar_mw"] = float(last_val[-1])
+        row = _parse_latest_row(r.text)
+        solar_val = row.get("Solar", "").strip()
+        if solar_val and solar_val != "":
+            result["solar_mw"] = float(solar_val)
     except Exception as e:
         print(f"  CAISO fuels fetch error: {e}")
 
-    # Load forecast
+    # Demand CSV — extract current demand (or forecast fallback)
     try:
-        r = requests.get(
-            "https://www.caiso.com/outlook/SP/demand.json",
-            timeout=15,
-        )
+        r = requests.get(_DEMAND_URL, timeout=15)
         r.raise_for_status()
-        data = r.json()
-        if isinstance(data, dict):
-            for key in ("Current demand", "current_demand", "Demand"):
-                if key in data and isinstance(data[key], list) and data[key]:
-                    last_val = data[key][-1]
-                    if isinstance(last_val, (int, float)):
-                        result["load_forecast"] = float(last_val)
-                    elif isinstance(last_val, list) and len(last_val) > 1:
-                        result["load_forecast"] = float(last_val[-1])
+        row = _parse_latest_row(r.text)
+        # Prefer current demand, fall back to hour-ahead then day-ahead forecast
+        for col in ("Current demand", "Hour ahead forecast", "Day ahead forecast"):
+            val = row.get(col, "").strip()
+            if val:
+                result["load_forecast"] = float(val)
+                break
     except Exception as e:
         print(f"  CAISO demand fetch error: {e}")
 
