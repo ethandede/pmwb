@@ -258,6 +258,12 @@ def get_noaa_point_forecast(lat: float, lon: float, days_ahead: int = 1, unit: s
 _HRRR_LOCAL = "http://localhost:8080/v1/forecast"
 _HRRR_PUBLIC = "https://api.open-meteo.com/v1/forecast"
 
+# Shared localhost-first fallback for all Open-Meteo forecast calls
+_OM_FORECAST_URLS = [
+    ("localhost", "http://localhost:8080/v1/forecast"),
+    ("public", "https://api.open-meteo.com/v1/forecast"),
+]
+
 
 def get_hrrr_forecast(lat: float, lon: float, days_ahead: int = 1, unit: str = "f", temp_type: str = "max") -> Optional[float]:
     unit_param = "fahrenheit" if unit == "f" else "celsius"
@@ -292,20 +298,30 @@ def get_ecmwf_forecast(lat: float, lon: float, days_ahead: int = 1, unit: str = 
 
     The IFS is Europe's primary global model — architecturally independent
     from the American GFS. Adding it gives genuine model diversity.
+    Tries localhost first, falls back to public API.
     """
     try:
         unit_param = "fahrenheit" if unit == "f" else "celsius"
         daily_var = f"temperature_2m_{temp_type}"
-        url = (
-            f"https://api.open-meteo.com/v1/forecast"
-            f"?latitude={lat}&longitude={lon}"
-            f"&daily={daily_var}"
-            f"&models=ecmwf_ifs025"
-            f"&temperature_unit={unit_param}"
-            f"&timezone=auto"
-            f"&forecast_days={days_ahead + 2}"
-        )
-        r = http_get(url, timeout=10)
+        r = None
+        for _src, _base in _OM_FORECAST_URLS:
+            try:
+                url = (
+                    f"{_base}"
+                    f"?latitude={lat}&longitude={lon}"
+                    f"&daily={daily_var}"
+                    f"&models=ecmwf_ifs025"
+                    f"&temperature_unit={unit_param}"
+                    f"&timezone=auto"
+                    f"&forecast_days={days_ahead + 2}"
+                )
+                r = http_get(url, timeout=10)
+                r.raise_for_status()
+                break
+            except Exception:
+                continue
+        if r is None:
+            return None
         r.raise_for_status()
         data = r.json()
         temps = data.get("daily", {}).get(daily_var, [])
@@ -619,18 +635,28 @@ def get_ercot_solar_signal(
             print(f"  Visual Crossing solar error: {e}")
 
     # 2b. Open-Meteo solrad (cross-reference for confidence)
+    #     Try localhost first (self-hosted), fall back to public API
     om_solrad = None
+    _om_data = None
+    for _src, _base in _OM_FORECAST_URLS:
+        try:
+            url = (
+                f"{_base}"
+                f"?latitude={lat}&longitude={lon}"
+                f"&daily=shortwave_radiation_sum"
+                f"&forecast_days=3"
+                f"&timezone=auto"
+            )
+            r = http_get(url, timeout=10)
+            r.raise_for_status()
+            _om_data = r.json()
+            break
+        except Exception as e:
+            print(f"  Open-Meteo solar error ({_src}): {e}")
     try:
-        url = (
-            f"https://api.open-meteo.com/v1/forecast"
-            f"?latitude={lat}&longitude={lon}"
-            f"&daily=shortwave_radiation_sum"
-            f"&forecast_days=3"
-            f"&timezone=auto"
-        )
-        r = http_get(url, timeout=10)
-        r.raise_for_status()
-        data = r.json()
+        if _om_data is None:
+            raise ValueError("all sources failed")
+        data = _om_data
         radiation = data.get("daily", {}).get("shortwave_radiation_sum", [])
         target_idx = min(hours_ahead // 24, len(radiation) - 1)
         raw_om = radiation[target_idx] if radiation else None
@@ -793,18 +819,28 @@ def get_pjm_solar_signal(
             print(f"  Visual Crossing solar error: {e}")
 
     # 2b. Open-Meteo solrad (cross-reference for confidence)
+    #     Try localhost first (self-hosted), fall back to public API
     om_solrad = None
+    _om_data = None
+    for _src, _base in _OM_FORECAST_URLS:
+        try:
+            url = (
+                f"{_base}"
+                f"?latitude={lat}&longitude={lon}"
+                f"&daily=shortwave_radiation_sum"
+                f"&forecast_days=3"
+                f"&timezone=auto"
+            )
+            r = http_get(url, timeout=10)
+            r.raise_for_status()
+            _om_data = r.json()
+            break
+        except Exception as e:
+            print(f"  Open-Meteo solar error ({_src}): {e}")
     try:
-        url = (
-            f"https://api.open-meteo.com/v1/forecast"
-            f"?latitude={lat}&longitude={lon}"
-            f"&daily=shortwave_radiation_sum"
-            f"&forecast_days=3"
-            f"&timezone=auto"
-        )
-        r = http_get(url, timeout=10)
-        r.raise_for_status()
-        data = r.json()
+        if _om_data is None:
+            raise ValueError("all sources failed")
+        data = _om_data
         radiation = data.get("daily", {}).get("shortwave_radiation_sum", [])
         target_idx = min(hours_ahead // 24, len(radiation) - 1)
         raw_om = radiation[target_idx] if radiation else None
@@ -963,18 +999,28 @@ def get_caiso_solar_signal(
             print(f"  Visual Crossing solar error: {e}")
 
     # 2b. Open-Meteo solrad (cross-reference for confidence)
+    #     Try localhost first (self-hosted), fall back to public API
     om_solrad = None
+    _om_data = None
+    for _src, _base in _OM_FORECAST_URLS:
+        try:
+            url = (
+                f"{_base}"
+                f"?latitude={lat}&longitude={lon}"
+                f"&daily=shortwave_radiation_sum"
+                f"&forecast_days=3"
+                f"&timezone=auto"
+            )
+            r = http_get(url, timeout=10)
+            r.raise_for_status()
+            _om_data = r.json()
+            break
+        except Exception as e:
+            print(f"  Open-Meteo solar error ({_src}): {e}")
     try:
-        url = (
-            f"https://api.open-meteo.com/v1/forecast"
-            f"?latitude={lat}&longitude={lon}"
-            f"&daily=shortwave_radiation_sum"
-            f"&forecast_days=3"
-            f"&timezone=auto"
-        )
-        r = http_get(url, timeout=10)
-        r.raise_for_status()
-        data = r.json()
+        if _om_data is None:
+            raise ValueError("all sources failed")
+        data = _om_data
         radiation = data.get("daily", {}).get("shortwave_radiation_sum", [])
         target_idx = min(hours_ahead // 24, len(radiation) - 1)
         raw_om = radiation[target_idx] if radiation else None
