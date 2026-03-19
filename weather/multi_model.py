@@ -317,12 +317,15 @@ def get_ecmwf_forecast(lat: float, lon: float, days_ahead: int = 1, unit: str = 
                 )
                 r = http_get(url, timeout=10)
                 r.raise_for_status()
+                # Skip sources returning all-null data (model not synced)
+                vals = r.json().get("daily", {}).get(daily_var, [])
+                if vals and all(v is None for v in vals):
+                    continue
                 break
             except Exception:
                 continue
         if r is None:
             return None
-        r.raise_for_status()
         data = r.json()
         temps = data.get("daily", {}).get(daily_var, [])
         if len(temps) > days_ahead and temps[days_ahead] is not None:
@@ -650,6 +653,11 @@ def get_ercot_solar_signal(
             r = http_get(url, timeout=10)
             r.raise_for_status()
             _om_data = r.json()
+            # Skip sources returning all-null data (model not synced)
+            rad = _om_data.get("daily", {}).get("shortwave_radiation_sum", [])
+            if rad and all(v is None for v in rad):
+                _om_data = None
+                continue
             break
         except Exception as e:
             print(f"  Open-Meteo solar error ({_src}): {e}")
@@ -834,6 +842,11 @@ def get_pjm_solar_signal(
             r = http_get(url, timeout=10)
             r.raise_for_status()
             _om_data = r.json()
+            # Skip sources returning all-null data (model not synced)
+            rad = _om_data.get("daily", {}).get("shortwave_radiation_sum", [])
+            if rad and all(v is None for v in rad):
+                _om_data = None
+                continue
             break
         except Exception as e:
             print(f"  Open-Meteo solar error ({_src}): {e}")
@@ -1014,6 +1027,11 @@ def get_caiso_solar_signal(
             r = http_get(url, timeout=10)
             r.raise_for_status()
             _om_data = r.json()
+            # Skip sources returning all-null data (model not synced)
+            rad = _om_data.get("daily", {}).get("shortwave_radiation_sum", [])
+            if rad and all(v is None for v in rad):
+                _om_data = None
+                continue
             break
         except Exception as e:
             print(f"  Open-Meteo solar error ({_src}): {e}")
