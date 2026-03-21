@@ -28,6 +28,88 @@ LOOP_INTERVAL = 300  # 5 minutes
 _last_equity_date: str | None = None  # track date to record equity once per day
 
 
+def _write_dashboard_forecasts():
+    """Fetch forecast data and write to scan_cache.db for dashboard consumption.
+
+    Runs once per daemon cycle. If any individual city fails, it's skipped
+    and previous data stays in the table.
+    """
+    import requests as _req
+    from statistics import median
+    from datetime import date
+    import calendar
+    from kalshi.scanner import WEATHER_SERIES, PRECIP_SERIES
+    from weather.forecast import get_ensemble_precip, get_observed_mtd_precip
+    from dashboard.scan_cache import write_city_forecasts
+
+    rows = []
+
+    # Temperature cities — fetch from local Open-Meteo
+    for prefix, info in WEATHER_SERIES.items():
+        city_name = info["city"]
+        if any(r["city"] == city_name for r in rows):
+            continue
+        row = {"city": city_name, "unit": info.get("unit", "f"),
+               "forecast_high_today": None, "forecast_high_tomorrow": None,
+               "forecast_low_today": None, "forecast_low_tomorrow": None,
+               "current_temp": None, "mtd_precip_inches": None,
+               "forecast_precip_total": None}
+        try:
+            unit_param = "fahrenheit" if info.get("unit", "f") == "f" else "celsius"
+            r = _req.get(
+                f"http://localhost:8080/v1/forecast?latitude={info['lat']}&longitude={info['lon']}"
+                f"&daily=temperature_2m_max,temperature_2m_min"
+                f"&hourly=temperature_2m"
+                f"&models=gfs_seamless&temperature_unit={unit_param}&timezone=auto&forecast_days=3",
+                timeout=5,
+            )
+            d = r.json()
+            daily = d.get("daily", {})
+            highs = daily.get("temperature_2m_max", [])
+            lows = daily.get("temperature_2m_min", [])
+            hourly_temps = d.get("hourly", {}).get("temperature_2m", [])
+            row["forecast_high_today"] = highs[0] if len(highs) > 0 else None
+            row["forecast_high_tomorrow"] = highs[1] if len(highs) > 1 else None
+            row["forecast_low_today"] = lows[0] if len(lows) > 0 else None
+            row["forecast_low_tomorrow"] = lows[1] if len(lows) > 1 else None
+            row["current_temp"] = hourly_temps[-1] if hourly_temps else None
+        except Exception:
+            pass  # keep Nones — previous data stays in DB
+        rows.append(row)
+
+    # Precip cities — fetch MTD + ensemble
+    today = date.today()
+    days_left = calendar.monthrange(today.year, today.month)[1] - today.day + 1
+    for prefix, info in PRECIP_SERIES.items():
+        city_name = info["city"]
+        # Find existing row or create new one
+        existing = next((r for r in rows if r["city"] == city_name), None)
+        if existing is None:
+            existing = {"city": city_name, "unit": info.get("unit", "f"),
+                        "forecast_high_today": None, "forecast_high_tomorrow": None,
+                        "forecast_low_today": None, "forecast_low_tomorrow": None,
+                        "current_temp": None, "mtd_precip_inches": None,
+                        "forecast_precip_total": None}
+            rows.append(existing)
+        try:
+            mtd = get_observed_mtd_precip(info["lat"], info["lon"])
+            if mtd is not None:
+                existing["mtd_precip_inches"] = round(mtd, 2)
+        except Exception:
+            pass
+        try:
+            members = get_ensemble_precip(info["lat"], info["lon"], forecast_days=days_left)
+            if members:
+                remaining = median(members)
+                mtd_val = existing.get("mtd_precip_inches") or 0.0
+                existing["forecast_precip_total"] = round(mtd_val + remaining, 2)
+        except Exception:
+            pass
+
+    if rows:
+        write_city_forecasts(rows)
+
+
 def run_cycle(cycle_num: int, runner: PipelineRunner, exchanges: dict):
     """Run one scan + position management cycle."""
     now = datetime.now(timezone.utc)
@@ -75,6 +157,12 @@ def run_cycle(cycle_num: int, runner: PipelineRunner, exchanges: dict):
         console.print(f"[red]Pipeline error: {e}[/red]")
         traceback.print_exc()
         send_alert("Pipeline Scan Failed", str(e), dedup_key="pipeline_error")
+
+    # --- Phase 2.5: Cache forecast data for dashboard ---
+    try:
+        _write_dashboard_forecasts()
+    except Exception as e:
+        console.print(f"  [dim]Forecast cache write failed: {e}[/dim]")
 
     # --- Phase 3: Settle resolved markets ---
     console.print(f"\n[bold]Phase 3: Settlement[/bold]")
