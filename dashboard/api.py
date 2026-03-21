@@ -69,7 +69,7 @@ def _parse_contract(ticker: str, side: str = "YES") -> str:
     if is_precip:
         try:
             threshold_in = float(strike)
-            direction = ">" if side == "NO" else "<"
+            direction = ">" if side == "YES" else "<"
             return f"{direction} {threshold_in:.0f} in"
         except ValueError:
             return strike
@@ -96,9 +96,9 @@ def _predict_likely(ticker: str, side: str, forecast_high: float | None,
     if is_precip and forecast_precip is not None:
         try:
             threshold_in = float(strike)
-            # Kalshi precip: YES = "under threshold", NO = "above threshold"
-            under = forecast_precip < threshold_in
-            return ("WIN" if under else "LOSS") if side == "YES" else ("WIN" if not under else "LOSS")
+            # Kalshi precip: YES = "above threshold", NO = "under threshold"
+            above = forecast_precip >= threshold_in
+            return ("WIN" if above else "LOSS") if side == "YES" else ("WIN" if not above else "LOSS")
         except ValueError:
             return None
 
@@ -241,63 +241,33 @@ async def get_portfolio():
 
         cost_basis = _get_cost_basis()
 
-        # Fetch GFS forecasts per city (self-hosted, instant)
+        # Read pre-computed forecasts from scan_cache.db (written by daemon)
         from kalshi.scanner import WEATHER_SERIES, PRECIP_SERIES
-        import requests as _req
+        from dashboard.scan_cache import get_city_forecasts
+        city_fc = get_city_forecasts()
+
         _forecast_cache = {}
-        _precip_cache = {}  # city -> remaining month total in inches
+        _precip_cache = {}
         for prefix, info in WEATHER_SERIES.items():
             city_name = info["city"]
             if city_name in _forecast_cache:
                 continue
-            try:
-                unit_param = "fahrenheit" if info.get("unit", "f") == "f" else "celsius"
-                r = _req.get(
-                    f"http://localhost:8080/v1/forecast?latitude={info['lat']}&longitude={info['lon']}"
-                    f"&daily=temperature_2m_max,temperature_2m_min"
-                    f"&hourly=temperature_2m"
-                    f"&models=gfs_seamless&temperature_unit={unit_param}&timezone=auto&forecast_days=3",
-                    timeout=3,
-                )
-                d = r.json()
-                daily = d.get("daily", {})
-                hourly = d.get("hourly", {})
-                hourly_temps = hourly.get("temperature_2m", [])
-                current = hourly_temps[-1] if hourly_temps else None
-                _forecast_cache[city_name] = {
-                    "high": daily.get("temperature_2m_max", [None, None]),
-                    "low": daily.get("temperature_2m_min", [None, None]),
-                    "current": current,
-                }
-            except Exception:
-                _forecast_cache[city_name] = {"high": [None, None], "low": [None, None], "current": None}
-
-        # Fetch ensemble precip forecasts for precip cities
-        # Uses 30-member ensemble (same data as scoring model) instead of
-        # single GFS run, which inflates beyond ~7-day reliable window.
-        from datetime import date as _date_mod
-        from statistics import median
-        today = _date_mod.today()
-        import calendar
-        days_left = calendar.monthrange(today.year, today.month)[1] - today.day + 1
-        from weather.forecast import get_ensemble_precip, get_observed_mtd_precip
+            fc = city_fc.get(city_name, {})
+            _forecast_cache[city_name] = {
+                "high": [fc.get("forecast_high_today"), fc.get("forecast_high_tomorrow")],
+                "low": [fc.get("forecast_low_today"), fc.get("forecast_low_tomorrow")],
+                "current": fc.get("current_temp"),
+            }
         for prefix, info in PRECIP_SERIES.items():
             city_name = info["city"]
             if city_name in _precip_cache:
                 continue
-            try:
-                members = get_ensemble_precip(info["lat"], info["lon"], forecast_days=days_left)
-                remaining_median = median(members) if members else 0.0
-                mtd = get_observed_mtd_precip(info["lat"], info["lon"])
-                if mtd is None:
-                    mtd = 0.0  # dashboard display only — trading uses None to block
-                _precip_cache[city_name] = {
-                    "remaining_forecast": round(remaining_median, 2),
-                    "mtd_observed": round(mtd, 2),
-                    "month_total_forecast": round(mtd + remaining_median, 2),
-                }
-            except Exception:
-                _precip_cache[city_name] = {"remaining_forecast": None, "mtd_observed": None, "month_total_forecast": None}
+            fc = city_fc.get(city_name, {})
+            _precip_cache[city_name] = {
+                "remaining_forecast": None,
+                "mtd_observed": fc.get("mtd_precip_inches"),
+                "month_total_forecast": fc.get("forecast_precip_total"),
+            }
 
         from datetime import date as _date
         today_str = _date.today().isoformat()
