@@ -10,6 +10,8 @@ from dashboard.scan_cache import (
     write_model_outcome,
     get_model_outcomes,
     cleanup_old_scans,
+    write_city_forecasts,
+    get_city_forecasts,
 )
 
 
@@ -59,6 +61,65 @@ def test_write_model_outcome(tmp_path):
     outcomes = get_model_outcomes(db_path=db)
     assert len(outcomes) == 1
     assert outcomes[0]["actual"] == 1
+
+
+def test_write_and_read_city_forecasts(tmp_path):
+    db = str(tmp_path / "test.db")
+    init_scan_cache_db(db)
+
+    rows = [
+        {
+            "city": "nyc",
+            "forecast_high_today": 62.5,
+            "forecast_high_tomorrow": 65.0,
+            "forecast_low_today": 48.0,
+            "forecast_low_tomorrow": 50.0,
+            "current_temp": 58.3,
+            "mtd_precip_inches": None,
+            "forecast_precip_total": None,
+            "unit": "f",
+        },
+        {
+            "city": "miami",
+            "forecast_high_today": 82.0,
+            "forecast_high_tomorrow": 83.0,
+            "forecast_low_today": 70.0,
+            "forecast_low_tomorrow": 71.0,
+            "current_temp": 75.5,
+            "mtd_precip_inches": 3.61,
+            "forecast_precip_total": 4.25,
+            "unit": "f",
+        },
+    ]
+    write_city_forecasts(rows, db_path=db)
+
+    result = get_city_forecasts(db_path=db)
+    assert "nyc" in result
+    assert result["nyc"]["forecast_high_today"] == 62.5
+    assert result["nyc"]["current_temp"] == 58.3
+    assert result["nyc"]["mtd_precip_inches"] is None
+    assert "miami" in result
+    assert result["miami"]["mtd_precip_inches"] == 3.61
+    assert result["miami"]["forecast_precip_total"] == 4.25
+
+
+def test_city_forecasts_upsert(tmp_path):
+    db = str(tmp_path / "test.db")
+    init_scan_cache_db(db)
+
+    write_city_forecasts([{"city": "nyc", "forecast_high_today": 60.0,
+                           "forecast_high_tomorrow": None, "forecast_low_today": None,
+                           "forecast_low_tomorrow": None, "current_temp": None,
+                           "mtd_precip_inches": None, "forecast_precip_total": None,
+                           "unit": "f"}], db_path=db)
+    write_city_forecasts([{"city": "nyc", "forecast_high_today": 65.0,
+                           "forecast_high_tomorrow": None, "forecast_low_today": None,
+                           "forecast_low_tomorrow": None, "current_temp": None,
+                           "mtd_precip_inches": None, "forecast_precip_total": None,
+                           "unit": "f"}], db_path=db)
+
+    result = get_city_forecasts(db_path=db)
+    assert result["nyc"]["forecast_high_today"] == 65.0  # updated, not duplicated
 
 
 def test_cleanup_old_scans(tmp_path):

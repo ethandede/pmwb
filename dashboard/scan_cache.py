@@ -51,6 +51,19 @@ def init_scan_cache_db(db_path: str = SCAN_CACHE_DB):
             actual_outcome INTEGER NOT NULL,
             settled_time TEXT NOT NULL
         );
+
+        CREATE TABLE IF NOT EXISTS city_forecasts (
+            city TEXT PRIMARY KEY,
+            forecast_high_today REAL,
+            forecast_high_tomorrow REAL,
+            forecast_low_today REAL,
+            forecast_low_tomorrow REAL,
+            current_temp REAL,
+            mtd_precip_inches REAL,
+            forecast_precip_total REAL,
+            unit TEXT DEFAULT 'f',
+            updated_at TEXT NOT NULL
+        );
     """)
     conn.commit()
     conn.close()
@@ -153,3 +166,45 @@ def cleanup_old_scans(days: int = 30, db_path: str = SCAN_CACHE_DB):
     )
     conn.commit()
     conn.close()
+
+
+def write_city_forecasts(rows: list[dict], db_path: str = SCAN_CACHE_DB):
+    """Upsert per-city forecast data. Called by daemon every cycle."""
+    conn = _connect(db_path)
+    now = datetime.now(timezone.utc).isoformat()
+    for r in rows:
+        conn.execute(
+            """INSERT INTO city_forecasts
+               (city, forecast_high_today, forecast_high_tomorrow,
+                forecast_low_today, forecast_low_tomorrow, current_temp,
+                mtd_precip_inches, forecast_precip_total, unit, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(city) DO UPDATE SET
+                   forecast_high_today=excluded.forecast_high_today,
+                   forecast_high_tomorrow=excluded.forecast_high_tomorrow,
+                   forecast_low_today=excluded.forecast_low_today,
+                   forecast_low_tomorrow=excluded.forecast_low_tomorrow,
+                   current_temp=excluded.current_temp,
+                   mtd_precip_inches=excluded.mtd_precip_inches,
+                   forecast_precip_total=excluded.forecast_precip_total,
+                   unit=excluded.unit,
+                   updated_at=excluded.updated_at""",
+            (r["city"], r.get("forecast_high_today"), r.get("forecast_high_tomorrow"),
+             r.get("forecast_low_today"), r.get("forecast_low_tomorrow"),
+             r.get("current_temp"), r.get("mtd_precip_inches"),
+             r.get("forecast_precip_total"), r.get("unit", "f"), now),
+        )
+    conn.commit()
+    conn.close()
+
+
+def get_city_forecasts(db_path: str = SCAN_CACHE_DB) -> dict[str, dict]:
+    """Read all city forecasts. Returns {city: {field: value}}."""
+    conn = _connect(db_path)
+    try:
+        rows = conn.execute("SELECT * FROM city_forecasts").fetchall()
+    except sqlite3.OperationalError:
+        conn.close()
+        return {}  # table doesn't exist yet
+    conn.close()
+    return {r["city"]: dict(r) for r in rows}
