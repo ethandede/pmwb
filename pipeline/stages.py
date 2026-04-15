@@ -146,6 +146,38 @@ def score_signal(config, market: dict) -> Signal:
         f"edge={float(edge):+.3f} conf={int(confidence)}"
     )
 
+    # === DIAGNOSTIC LOGGING FOR T/B TYPE BUG ===
+    # Temporary: dumps raw market fields + extracted prices for every T/B
+    # contract so we can confirm whether T-type semantics are inverted.
+    # The subtitle / yes_sub_title / no_sub_title fields are the
+    # ground-truth answer: they contain Kalshi's human-readable contract
+    # text like "75° or above" vs "74° or below". Cross-reference them
+    # against strike_type to see whether our parser is interpreting
+    # `strike_type="greater"` correctly.
+    # Remove once the phantom-edge investigation is closed.
+    if "-T" in ticker or "-B" in ticker:
+        raw = market if isinstance(market, dict) else {}
+        price_info = (
+            f"yes_ask={raw.get('yes_ask')} no_ask={raw.get('no_ask')} "
+            f"yes_bid={raw.get('yes_bid')} no_bid={raw.get('no_bid')} "
+            f"price_cents={price_cents} market_prob={float(market_prob):.3f}"
+        )
+        semantics_info = (
+            f"strike_type={raw.get('strike_type')!r} "
+            f"floor_strike={raw.get('floor_strike')!r} "
+            f"cap_strike={raw.get('cap_strike')!r} "
+            f"yes_sub_title={raw.get('yes_sub_title')!r} "
+            f"no_sub_title={raw.get('no_sub_title')!r} "
+            f"subtitle={raw.get('subtitle')!r}"
+        )
+        tag = "T" if "-T" in ticker else "B"
+        print(
+            f"  [DEBUG-{tag}] {ticker} | model={float(model_prob):.3f} "
+            f"market={float(market_prob):.3f} edge={float(edge):+.3f} "
+            f"conf={int(confidence)} | {price_info} | {semantics_info}"
+        )
+    # ===========================================
+
     return Signal(
         ticker=ticker,
         city=city,
@@ -392,6 +424,18 @@ def filter_signals(config, signals: list[Signal], held_positions: list,
                 market_constraints[key]["lower"].append(new_lower)
             if new_upper is not None:
                 market_constraints[key]["upper"].append(new_upper)
+
+    # In-function funnel summary (mirrors the runner's per-config print so
+    # the funnel is visible even if a runner-level exception interrupts it).
+    # Uses len(results) because state.signals_filtered is set by the runner
+    # after this function returns.
+    if state is not None:
+        print(
+            f"  [Funnel] {config.name}: {state.signals_scored} scored "
+            f"→ {state.passed_edge_gate} passed edge "
+            f"→ {state.passed_confidence} passed conf "
+            f"→ {len(results)} filtered"
+        )
 
     return results
 
