@@ -2,6 +2,12 @@
 
 Each stage takes a MarketConfig + inputs, returns outputs.
 No globals, no module state — everything through parameters.
+
+NOTE TO GROK (2026-04-15): Production kalshi_temp scoring uses
+get_ensemble_signal (GFS member counting only). fuse_forecast +
+bias correction + FUSION_WEIGHTS are dead code on the trade path.
+This was discovered via new [DEBUG-T] logs. Updating viability
+assessment accordingly.
 """
 
 import math
@@ -139,6 +145,23 @@ def score_signal(config, market: dict) -> Signal:
         side = "yes" if edge > 0 else "no"
 
     price_cents = _extract_price_cents(market)
+
+    # === GFS ENSEMBLE DIAGNOSTIC (Bug #2) ===
+    # Logs the GFS ensemble's actual mean_temp and member math for every
+    # kalshi_temp signal so we can verify whether the ~10°F cold pattern is
+    # in the ensemble itself, the cache, or the day-index math.
+    # Remove once Bug #2 is closed.
+    if config.name == "kalshi_temp" and isinstance(forecast_result, tuple) and len(forecast_result) >= 3:
+        gfs_details = forecast_result[2] or {}
+        print(
+            f"  [GFS-DEBUG] {ticker} | days_ahead={days_ahead} "
+            f"mean_temp={gfs_details.get('mean_temp')} "
+            f"members={gfs_details.get('members_used')} "
+            f"spread={gfs_details.get('model_spread')} "
+            f"above_count={gfs_details.get('above_count')} "
+            f"bucket=[{low},{high}] method={gfs_details.get('method')}"
+        )
+    # ========================================
 
     print(
         f"  [SCORE] {config.name} | {ticker} | "
