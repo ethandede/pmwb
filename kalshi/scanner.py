@@ -142,9 +142,14 @@ def parse_kalshi_bucket(market: dict) -> Optional[Tuple[float, float | None]]:
     if strike_type == "between" and floor_strike is not None and cap_strike is not None:
         return float(floor_strike), float(cap_strike)
     elif strike_type == "greater" and floor_strike is not None:
-        # Kalshi "greater" contracts: YES = "below threshold"
-        # e.g. T93 → marketTitle "92° or below" → YES wins when temp < 93
-        return 0.0, float(floor_strike)
+        # Kalshi "greater" contracts: YES = "above threshold".
+        # Verified 2026-04-15 against live [DEBUG-T] logs:
+        #   T91 → strike_type='greater', floor_strike=91, subtitle "92° or above"
+        # The previous comment ("YES = below threshold") was the inversion bug
+        # that produced phantom +0.8 edges on every greater-type contract once
+        # the new edge gate dropped to 0.10. ensemble_signal._compute handles
+        # the (low, None) shape as P(temp >= low), which is what we want.
+        return float(floor_strike), None
     elif strike_type == "less" and cap_strike is not None:
         return 0.0, float(cap_strike)
 

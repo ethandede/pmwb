@@ -1028,9 +1028,15 @@ class TestBucketParsing:
 
     def test_parse_greater_bucket(self):
         from kalshi.scanner import parse_kalshi_bucket
-        # Kalshi "greater" YES = "below threshold" (e.g. T65 = "64° or below")
+        # Kalshi "greater" YES = "above threshold". Verified 2026-04-15 against
+        # live market data: strike_type='greater' floor_strike=91 has subtitle
+        # "92° or above", i.e. YES wins when temp >= floor_strike + 1.
+        # Parser returns (floor_strike, None) so the ensemble counter computes
+        # P(temp >= floor_strike). Previous assertion (0.0, 65.0) encoded the
+        # inversion bug that produced phantom +0.8 edges on every greater
+        # contract once the edge gate dropped to 0.10.
         market = {"strike_type": "greater", "floor_strike": 65.0}
-        assert parse_kalshi_bucket(market) == (0.0, 65.0)
+        assert parse_kalshi_bucket(market) == (65.0, None)
 
     def test_parse_less_bucket(self):
         from kalshi.scanner import parse_kalshi_bucket
