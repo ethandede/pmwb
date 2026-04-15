@@ -45,6 +45,8 @@ class CycleState:
 
     # Observability metrics
     signals_scored: int = 0
+    passed_edge_gate: int = 0
+    passed_confidence: int = 0
     signals_filtered: int = 0
     trades_executed: int = 0
     total_edge: float = 0.0

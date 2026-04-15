@@ -61,6 +61,7 @@ class PipelineRunner:
             rows = []
             for s in signals:
                 direction = "BUY YES" if s.side == "yes" else "BUY NO"
+                md = s.market or {}
                 rows.append({
                     "market_type": mt,
                     "ticker": s.ticker,
@@ -70,9 +71,12 @@ class PipelineRunner:
                     "edge": s.edge,
                     "direction": direction,
                     "confidence": s.confidence,
-                    "method": "pipeline",
+                    "method": "ensemble",
                     "threshold": None,
                     "days_left": s.days_ahead,
+                    "member_count": md.get("member_count"),
+                    "model_spread": md.get("model_spread"),
+                    "above_count": md.get("above_count"),
                 })
             write_scan_results(rows)
         except Exception as e:
@@ -173,7 +177,7 @@ class PipelineRunner:
                 self._write_scan_cache(config, signals)
 
                 filtered = filter_signals(config, signals, held_positions, resting_tickers,
-                                          held_sides=held_sides)
+                                          held_sides=held_sides, state=state)
                 state.signals_filtered = len(filtered)
 
                 for signal in filtered:
@@ -214,9 +218,14 @@ class PipelineRunner:
                     except Exception:
                         pass
 
-            # Log cycle stats
-            if state.trades_executed > 0 or state.errors:
-                print(f"  {config.display_name}: {state.signals_scored} scored, "
-                      f"{state.signals_filtered} filtered, {state.trades_executed} traded, "
-                      f"${state.scan_spent:.2f} spent"
-                      + (f", {len(state.errors)} errors" if state.errors else ""))
+            # Log cycle funnel (always, so silent pipelines are visible).
+            # Format: scored → passed edge gate → passed confidence → passed all → traded
+            print(
+                f"  {config.display_name}: {state.signals_scored} scored "
+                f"→ {state.passed_edge_gate} passed edge gate ({config.edge_gate:.2f}) "
+                f"→ {state.passed_confidence} passed confidence ({int(config.confidence_gate)}) "
+                f"→ {state.signals_filtered} passed all filters "
+                f"→ {state.trades_executed} traded "
+                f"(${state.scan_spent:.2f} spent)"
+                + (f" [{len(state.errors)} errors]" if state.errors else "")
+            )

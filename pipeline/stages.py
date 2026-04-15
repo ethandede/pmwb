@@ -4,11 +4,27 @@ Each stage takes a MarketConfig + inputs, returns outputs.
 No globals, no module state — everything through parameters.
 """
 
+import math
 import re
 from datetime import date
 
 from pipeline.types import Signal, CycleState, TradeResult
 from weather.metar import check_forecast_bust
+
+
+def _compress_edge_for_pricing(raw_edge: float) -> float:
+    """Compress edge for maker/taker pricing decision only.
+
+    Raw edge is preserved for Kelly sizing and filtering.
+    Applies a soft sigmoid that caps at ~0.45 so extremely
+    high-conviction trades can still be taker.
+    Below 12% edge passes through unchanged.
+    """
+    abs_e = abs(raw_edge)
+    if abs_e <= 0.12:
+        return abs_e
+    compressed = 0.45 * (1 - math.exp(-4.5 * (abs_e - 0.12)))
+    return compressed
 
 
 def fetch_markets(config, exchange) -> list[dict]:
@@ -124,6 +140,12 @@ def score_signal(config, market: dict) -> Signal:
 
     price_cents = _extract_price_cents(market)
 
+    print(
+        f"  [SCORE] {config.name} | {ticker} | "
+        f"model={float(model_prob):.3f} market={float(market_prob):.3f} "
+        f"edge={float(edge):+.3f} conf={int(confidence)}"
+    )
+
     return Signal(
         ticker=ticker,
         city=city,
@@ -190,7 +212,8 @@ def _parse_temp_constraint(ticker: str, side: str):
 
 def filter_signals(config, signals: list[Signal], held_positions: list,
                    resting_tickers: set[str],
-                   held_sides: dict[str, str] | None = None) -> list[Signal]:
+                   held_sides: dict[str, str] | None = None,
+                   state: "CycleState | None" = None) -> list[Signal]:
     """Stage 3: Apply edge gate, confidence gate, liquidity, dedup, cross-contract.
 
     Returns filtered and de-conflicted signal list, sorted by absolute edge descending.
@@ -198,8 +221,18 @@ def filter_signals(config, signals: list[Signal], held_positions: list,
     Args:
         held_sides: ticker → side ("yes"/"no") for existing positions.
                     Used for cross-contract consistency checking.
+        state:      Optional CycleState. If provided, funnel counters
+                    (passed_edge_gate, passed_confidence) are incremented as
+                    signals advance through the gates so the runner can print
+                    a per-config funnel summary.
     """
     results = []
+
+    def _log_filter(sig: "Signal", reason: str, liq_score: float = 0.0) -> None:
+        print(
+            f"  [FILTER] {config.name} | {sig.ticker} | {reason} | "
+            f"edge={abs(sig.edge):.3f} conf={int(sig.confidence)} liquidity={liq_score:.2f}"
+        )
 
     # Sort by absolute edge descending (strongest signals first)
     ranked = sorted(signals, key=lambda s: abs(s.edge), reverse=True)
@@ -223,6 +256,14 @@ def filter_signals(config, signals: list[Signal], held_positions: list,
                 market_constraints[key]["upper"].append(upper)
 
     for signal in ranked:
+        # Compute liquidity score up-front so every log line can include it.
+        # Score = min(volume, oi) / 500 — >=1.0 means passes the kalshi gate.
+        liq_score = 0.0
+        if signal.market and config.exchange == "kalshi":
+            volume = float(signal.market.get("volume_24h_fp", 0) or 0)
+            oi = float(signal.market.get("open_interest_fp", 0) or 0)
+            liq_score = min(volume, oi) / 500.0
+
         # Determine effective thresholds
         edge_gate = config.edge_gate
         conf_gate = config.confidence_gate
@@ -230,13 +271,26 @@ def filter_signals(config, signals: list[Signal], held_positions: list,
             edge_gate = config.sameday_overrides.get("edge", edge_gate)
             conf_gate = config.sameday_overrides.get("confidence", conf_gate)
 
-        # Edge gate
+        # Edge gate (also flag near-misses 0.07 ≤ |edge| < edge_gate)
         if abs(signal.edge) < edge_gate:
+            if 0.07 <= abs(signal.edge) < edge_gate:
+                print(
+                    f"  [NEAR-MISS] {config.name} | {signal.ticker} | "
+                    f"edge={abs(signal.edge):.3f} (gate={edge_gate:.3f}) "
+                    f"conf={int(signal.confidence)} liquidity={liq_score:.2f}"
+                )
+            else:
+                _log_filter(signal, "edge_too_low", liq_score)
             continue
+        if state is not None:
+            state.passed_edge_gate += 1
 
         # Confidence gate
         if signal.confidence < conf_gate:
+            _log_filter(signal, "confidence_too_low", liq_score)
             continue
+        if state is not None:
+            state.passed_confidence += 1
 
         # Reward-to-risk gate: never risk more than you can win.
         # For NO side, use yes_bid (not yes_ask) to compute actual cost,
@@ -249,7 +303,11 @@ def filter_signals(config, signals: list[Signal], held_positions: list,
                 else:
                     our_cost_cents = 100 - signal.price_cents
             if our_cost_cents > 50:
+                _log_filter(signal, "reward_risk_violation", liq_score)
                 continue  # reward < risk — skip
+            if our_cost_cents <= config.min_price_cents:
+                _log_filter(signal, "penny_bet", liq_score)
+                continue  # penny bet — fees exceed expected value
 
         # Forecast-proximity gate: don't bet NO on a bucket that contains
         # the forecast, or YES on a bucket far from the forecast.
@@ -257,19 +315,21 @@ def filter_signals(config, signals: list[Signal], held_positions: list,
         if config.exchange == "kalshi" and config.name == "kalshi_temp":
             bucket = config.bucket_parser(signal.market) if config.bucket_parser and signal.market else None
             if bucket and signal.side == "no":
-                low, high = bucket
                 # model_prob is P(YES) for this bucket. If it's above 25%,
                 # the model thinks there's a real chance the temp lands here
                 # — don't bet against it.
                 if signal.model_prob > 0.25:
+                    _log_filter(signal, "forecast_proximity", liq_score)
                     continue
 
         # Already holding this ticker
         if signal.ticker in held_tickers:
+            _log_filter(signal, "already_held", liq_score)
             continue
 
         # Resting order dedup
         if signal.ticker in resting_tickers:
+            _log_filter(signal, "resting_order", liq_score)
             continue
 
         # Cross-contract consistency: block signals that contradict
@@ -281,13 +341,43 @@ def filter_signals(config, signals: list[Signal], held_positions: list,
             test_lowers = existing["lower"] + ([new_lower] if new_lower is not None else [])
             test_uppers = existing["upper"] + ([new_upper] if new_upper is not None else [])
             if test_lowers and test_uppers and max(test_lowers) >= min(test_uppers):
+                _log_filter(signal, "cross_contract_conflict", liq_score)
                 continue  # contradictory — skip
+
+        # Anti-straddling filter: skip adjacent buckets same city/date (±2°F temp, 0.25in precip)
+        adjacent = False
+        if config.exchange == "kalshi" and config.name.startswith("kalshi_"):
+            parts = signal.ticker.split("-")
+            if len(parts) > 2:
+                market_key = "-".join(parts[:-1])
+                bucket_str = parts[-1]
+                if bucket_str and bucket_str[0] in ("B", "T"):
+                    try:
+                        this_thresh = float(bucket_str[1:])
+                        tol = 2.0 if "temp" in config.name.lower() else 0.25
+                        for pos in held_positions:
+                            pos_ticker = pos.get("ticker", "")
+                            if pos_ticker.startswith(market_key + "-") and pos_ticker != signal.ticker:
+                                pos_qty = abs(float(pos.get("position_fp", 0)))
+                                if pos_qty >= 0.0001:
+                                    pos_bucket_str = pos_ticker.rsplit("-", 1)[-1]
+                                    if len(pos_bucket_str) > 1 and pos_bucket_str[0] in ("B", "T"):
+                                        pos_thresh = float(pos_bucket_str[1:])
+                                        if abs(pos_thresh - this_thresh) <= tol:
+                                            adjacent = True
+                                            break
+                    except (ValueError, IndexError):
+                        pass
+        if adjacent:
+            _log_filter(signal, "adjacent_bucket", liq_score)
+            continue
 
         # Liquidity gate (for Kalshi markets)
         if signal.market and config.exchange == "kalshi":
             volume = float(signal.market.get("volume_24h_fp", 0) or 0)
             oi = float(signal.market.get("open_interest_fp", 0) or 0)
             if volume < 500 and oi < 500:
+                _log_filter(signal, "liquidity_low", liq_score)
                 continue
 
         results.append(signal)
@@ -343,9 +433,9 @@ def size_position(config, signal: Signal, bankroll,
         fractional_kelly=effective_kelly,
     )
 
-    # Hard 2% bankroll cap
+    # Per-trade bankroll cap (config-driven)
     current_bankroll = bankroll.effective_bankroll()
-    max_dollars = current_bankroll * 0.02
+    max_dollars = current_bankroll * config.max_bankroll_pct
     if result.dollar_amount > max_dollars and result.count > 0:
         result.count = max(1, int(max_dollars / (signal.price_cents / 100.0)))
         result.dollar_amount = result.count * signal.price_cents / 100.0
@@ -357,44 +447,21 @@ def execute_trade(config, signal: Signal, size, exchange,
                   paper_mode: bool) -> TradeResult:
     """Stage 6: Place order or log paper trade.
 
-    Determines price via config.pricing_fn, checks fee profitability,
-    then either logs (paper) or calls exchange adapter (live).
+    Uses maker-only pricing for Kalshi (zero fees, resting limit orders).
     """
-    from kalshi.pricing import kalshi_fee
     from datetime import datetime, timezone
 
-    # Determine price from our side's perspective
     side = size.side or signal.side
-    price_cents = signal.price_cents
-    if side == "no":
-        # signal.price_cents is YES ask — convert to NO cost
-        price_cents = 100 - signal.price_cents
+    strategy = "maker"
+    fee = 0.0
 
-    strategy = "taker"
-    if config.pricing_fn and signal.yes_bid is not None:
-        is_sameday = signal.days_ahead == 0
-        price_result = config.pricing_fn(
-            side=side,
-            yes_bid=signal.yes_bid,
-            yes_ask=signal.yes_ask,
-            edge=abs(signal.edge),
-            is_same_day=is_sameday,
-        )
-        if price_result and price_result[0] is not None:
-            price_cents = price_result[0]
-            strategy = price_result[1]
-
-    # Fee gate (Kalshi only)
     if config.exchange == "kalshi":
-        is_taker = strategy in ("taker", "legacy")
-        fee = kalshi_fee(price_cents, size.count, is_taker=is_taker)
-        expected_profit = abs(signal.edge) * size.count - fee
-        if expected_profit < 0.12:
-            return TradeResult(
-                ticker=signal.ticker, side=size.side or signal.side,
-                count=0, price_cents=price_cents, cost=0,
-                order_id="", status="fee_blocked", paper=paper_mode,
-            )
+        from kalshi.pricing import maker_price
+        price_cents = maker_price(side, signal.yes_bid, signal.yes_ask)
+    else:
+        price_cents = signal.price_cents
+        if side == "no":
+            price_cents = 100 - signal.price_cents
 
     cost = size.count * price_cents / 100.0
 
@@ -414,6 +481,8 @@ def execute_trade(config, signal: Signal, size, exchange,
                 city=signal.city,
                 strategy=strategy,
                 fee=fee if config.exchange == "kalshi" else 0.0,
+                edge=round(abs(signal.edge), 4),
+                confidence=round(signal.confidence, 1),
             )
         elif config.exchange == "ercot":
             from ercot.paper_trader import open_position
@@ -475,6 +544,8 @@ def execute_trade(config, signal: Signal, size, exchange,
         city=signal.city,
         strategy=strategy,
         fee=fee if config.exchange == "kalshi" else 0.0,
+        edge=round(abs(signal.edge), 4),
+        confidence=round(signal.confidence, 1),
     )
 
     return TradeResult(

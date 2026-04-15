@@ -17,14 +17,18 @@ CITIES = {
 }
 
 # HARD RISK RAILS — Super Heavy Grok (March 2026)
-MIN_TRADE_EDGE = 0.12                    # Only trade |edge| >= 12%
+# LEGACY: not read by the pipeline. Real edge gates live in pipeline/config.py
+# (kalshi_temp.edge_gate, kalshi_precip.edge_gate, etc.). Kept here for
+# documentation only. Lowered 0.18 → 0.10 (2026-04-15) to match the actual
+# kalshi_temp gate after we dropped it to gather more sample size.
+MIN_TRADE_EDGE = 0.10                    # legacy / documentation only
 MAX_POSITIONS_TOTAL = 50                 # Never exceed 50 open positions
 MAX_BANKROLL_PCT_PER_TRADE = 0.02        # Hard 2% bankroll cap per trade
 SKIP_RAIN_MARKETS = False                # Rain markets re-enabled
 
 DAILY_LOSS_BREAKER_PCT = 0.05            # -5% daily P&L stops new entries
 
-EDGE_THRESHOLD = 0.07
+EDGE_THRESHOLD = 0.08
 SHOW_THRESHOLD = 0.05
 DUTCH_BOOK_THRESHOLD = 0.975
 GAMMA_BASE = "https://gamma-api.polymarket.com"
@@ -38,30 +42,30 @@ _pk = os.getenv("PRIVATE_KEY", "")
 PRIVATE_KEY = _pk if _pk.startswith("0x") else f"0x{_pk}" if _pk else None
 FUNDER_ADDRESS = os.getenv("FUNDER_ADDRESS")
 PAPER_MODE = True  # Paper mode until fixes are verified (2026-03-15)
-MAX_POSITION_USD = 50.0
+MAX_POSITION_USD = 30.0
 MAX_SCAN_BUDGET = 60.0
-MAX_ORDER_USD = 20.0
+MAX_ORDER_USD = 100.0
 
 BIAS_DB_PATH = "data/bias.db"
-CONFIDENCE_THRESHOLD = 60
+CONFIDENCE_THRESHOLD = 75
 VISUAL_CROSSING_API_KEY = os.getenv("VISUAL_CROSSING_API_KEY", "")
-FUSION_WEIGHTS = {"ensemble": 0.15, "noaa": 0.10, "hrrr": 0.30, "visualcrossing": 0.20, "ecmwf": 0.25}
+FUSION_WEIGHTS = {"ensemble": 0.0, "noaa": 0.15, "hrrr": 0.35, "ecmwf": 0.30, "visualcrossing": 0.20}
 HIGH_CONFIDENCE_MULTIPLIER = 1.5
 
 HOST = "https://clob.polymarket.com"
 CHAIN_ID = 137
 SIGNATURE_TYPE = 0
 
-FRACTIONAL_KELLY = 0.25
+FRACTIONAL_KELLY = 0.15
 
 MIN_VOLUME_24H = 500
 MIN_OPEN_INTEREST = 500
-KELLY_MAX_FRACTION = 0.03
+KELLY_MAX_FRACTION = 0.015
 DRAWDOWN_THRESHOLD = 0.15
 CIRCUIT_BREAKER_COOLDOWN_HOURS = 48
 
-SAMEDAY_EDGE_THRESHOLD = 0.05
-SAMEDAY_CONFIDENCE_THRESHOLD = 45
+SAMEDAY_EDGE_THRESHOLD = 0.12
+SAMEDAY_CONFIDENCE_THRESHOLD = 80
 SAMEDAY_KELLY_FLOOR = 0.35
 
 PRECIP_FUSION_WEIGHTS = {"ensemble": 0.60, "noaa": 0.40}

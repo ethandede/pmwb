@@ -18,13 +18,13 @@ class MarketConfig:
     series: dict
     bucket_parser: Callable | None
 
-    # Stage 2: Forecast & signal
+    # Stage 2: Forecast & signal (weights live in config.FUSION_WEIGHTS)
     forecast_fn: Callable
-    fusion_weights: dict | None
 
     # Stage 3: Signal filtering
     edge_gate: float
     confidence_gate: float
+    min_price_cents: int
     sameday_overrides: dict | None
 
     # Stage 4: Sanity check
@@ -33,6 +33,7 @@ class MarketConfig:
     # Stage 5: Sizing
     scan_frac: float
     kelly_floor: float
+    max_bankroll_pct: float
     max_contracts_per_event: int
 
     # Stage 6: Execution
@@ -58,8 +59,9 @@ def _build_configs() -> tuple:
         parse_kalshi_bucket, WEATHER_SERIES, PRECIP_SERIES,
     )
     from kalshi.market_types import parse_precip_bucket
-    from weather.multi_model import fuse_forecast, fuse_precip_forecast, get_ercot_solar_signal, get_pjm_solar_signal, get_caiso_solar_signal
-    from kalshi.pricing import choose_price_strategy
+    from weather.ensemble_signal import get_ensemble_signal
+    from weather.multi_model import fuse_precip_forecast, get_ercot_solar_signal, get_pjm_solar_signal, get_caiso_solar_signal
+    from kalshi.pricing import maker_price
     from ercot.hubs import fetch_ercot_markets
     from pjm.hubs import fetch_pjm_markets
     from caiso.hubs import fetch_caiso_markets
@@ -127,17 +129,19 @@ def _build_configs() -> tuple:
         fetch_fn=get_kalshi_weather_markets,
         series=WEATHER_SERIES,
         bucket_parser=parse_kalshi_bucket,
-        forecast_fn=fuse_forecast,
-        fusion_weights={"ensemble": 0.40, "noaa": 0.35, "hrrr": 0.25},
-        edge_gate=0.12,
+        forecast_fn=get_ensemble_signal,
+
+        edge_gate=0.10,
         confidence_gate=60,
-        sameday_overrides={"edge": 0.05, "confidence": 45, "kelly_floor": 0.35},
+        min_price_cents=7,
+        sameday_overrides={"edge": 0.07, "confidence": 55, "kelly_floor": 0.35},
         sanity_fn=gfs_temp_sanity,
         scan_frac=0.10,
-        kelly_floor=0.25,
+        kelly_floor=0.10,
+        max_bankroll_pct=0.05,
         max_contracts_per_event=10,
         execute_fn=execute_trade,
-        pricing_fn=choose_price_strategy,
+        pricing_fn=maker_price,
         manage_fn=run_position_manager,
         exit_rules={"reversal_edge": -0.08, "sameday_reversal": -0.15,
                     "profit_take_pct": 0.88, "min_confidence": 70},
@@ -153,16 +157,18 @@ def _build_configs() -> tuple:
         series=PRECIP_SERIES,
         bucket_parser=parse_precip_bucket,
         forecast_fn=fuse_precip_forecast,
-        fusion_weights={"ensemble": 0.50, "noaa": 0.30},
+
         edge_gate=0.07,
         confidence_gate=60,
+        min_price_cents=12,
         sameday_overrides=None,
         sanity_fn=None,
         scan_frac=0.10,
         kelly_floor=0.25,
+        max_bankroll_pct=0.02,
         max_contracts_per_event=10,
         execute_fn=execute_trade,
-        pricing_fn=choose_price_strategy,
+        pricing_fn=maker_price,
         manage_fn=run_position_manager,
         exit_rules={"reversal_edge": -0.10, "profit_take_pct": 0.90,
                     "min_confidence": 60},
@@ -178,13 +184,15 @@ def _build_configs() -> tuple:
         series=ERCOT_HUBS,
         bucket_parser=None,
         forecast_fn=get_ercot_solar_signal,
-        fusion_weights=None,
+
         edge_gate=0.03,
         confidence_gate=50,
+        min_price_cents=12,
         sameday_overrides=None,
         sanity_fn=None,
         scan_frac=0.10,
         kelly_floor=0.25,
+        max_bankroll_pct=0.02,
         max_contracts_per_event=3,
         execute_fn=execute_trade,
         pricing_fn=None,
@@ -202,13 +210,15 @@ def _build_configs() -> tuple:
         series=PJM_HUBS,
         bucket_parser=None,
         forecast_fn=get_pjm_solar_signal,
-        fusion_weights=None,
+
         edge_gate=0.03,
         confidence_gate=50,
+        min_price_cents=12,
         sameday_overrides=None,
         sanity_fn=None,
         scan_frac=0.10,
         kelly_floor=0.25,
+        max_bankroll_pct=0.02,
         max_contracts_per_event=3,
         execute_fn=execute_trade,
         pricing_fn=None,
@@ -226,13 +236,15 @@ def _build_configs() -> tuple:
         series=CAISO_HUBS,
         bucket_parser=None,
         forecast_fn=get_caiso_solar_signal,
-        fusion_weights=None,
+
         edge_gate=0.03,
         confidence_gate=50,
+        min_price_cents=12,
         sameday_overrides=None,
         sanity_fn=None,
         scan_frac=0.10,
         kelly_floor=0.25,
+        max_bankroll_pct=0.02,
         max_contracts_per_event=3,
         execute_fn=execute_trade,
         pricing_fn=None,
