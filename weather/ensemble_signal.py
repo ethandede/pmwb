@@ -17,14 +17,32 @@ Architecture (post-2026-04-15 dedupe refactor):
 This is the production kalshi_temp scoring path (pipeline/config.py:132).
 """
 
+import os
 import time
 from typing import Tuple, Dict, List, Optional
+
+from dotenv import load_dotenv
 
 from weather import cache as fcache
 from weather.http import get as http_get
 
+# Load .env once at import so OPENMETEO_API_KEY is available even if this
+# module is imported before config.py in some test/REPL context.
+load_dotenv()
 
-ENSEMBLE_URL = "https://ensemble-api.open-meteo.com/v1/ensemble"
+# Open-Meteo has two separate hostnames for the ensemble endpoint:
+#   - public (free, heavily rate-limited): ensemble-api.open-meteo.com
+#   - paid (customer, Ensemble API Pro plan):
+#       customer-ensemble-api.open-meteo.com
+# We route to the paid host when OPENMETEO_API_KEY is set, and append
+# `&apikey=...` to every request. Without the key we fall back to public
+# so local development and tests still work.
+PUBLIC_ENSEMBLE_URL = "https://ensemble-api.open-meteo.com/v1/ensemble"
+CUSTOMER_ENSEMBLE_URL = "https://customer-ensemble-api.open-meteo.com/v1/ensemble"
+
+# Logged once per process so we can see in the daemon journal which
+# endpoint is actually being hit.
+_ENDPOINT_ANNOUNCED = False
 
 # In-process negative cache: prevents within-cycle retry storms when
 # Open-Meteo is rate-limiting us. Short TTL (2 min) so the next 5-min
@@ -80,8 +98,21 @@ def _fetch_ensemble_members(
         f"&forecast_days={days_ahead + 2}"
     )
 
+    api_key = os.getenv("OPENMETEO_API_KEY", "").strip()
+    base_url = CUSTOMER_ENSEMBLE_URL if api_key else PUBLIC_ENSEMBLE_URL
+    if api_key:
+        params += f"&apikey={api_key}"
+
+    global _ENDPOINT_ANNOUNCED
+    if not _ENDPOINT_ANNOUNCED:
+        print(
+            f"  [ENSEMBLE] Using {'customer (paid)' if api_key else 'public (free)'} "
+            f"endpoint: {base_url}"
+        )
+        _ENDPOINT_ANNOUNCED = True
+
     try:
-        r = http_get(f"{ENSEMBLE_URL}{params}", timeout=12)
+        r = http_get(f"{base_url}{params}", timeout=12)
         r.raise_for_status()
         data = r.json()
 
