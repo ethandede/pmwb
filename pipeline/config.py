@@ -134,7 +134,8 @@ def _build_configs() -> tuple:
         edge_gate=0.10,
         confidence_gate=60,
         min_price_cents=7,
-        sameday_overrides={"edge": 0.07, "confidence": 55, "kelly_floor": 0.35},
+        # confidence raised 55 → 60 so Open-Meteo fallback (conf=50) is always filtered
+        sameday_overrides={"edge": 0.07, "confidence": 60, "kelly_floor": 0.35},
         sanity_fn=gfs_temp_sanity,
         scan_frac=0.10,
         kelly_floor=0.10,
