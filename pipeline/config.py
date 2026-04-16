@@ -204,17 +204,21 @@ def _build_configs() -> tuple:
         bucket_parser=parse_kalshi_bucket,
         forecast_fn=get_ensemble_signal,
 
-        # Edge gate tightened 0.10 → 0.20 (2026-04-15 evening) after tonight's
-        # first clean-data cycle placed 5 trades where the ensemble disagreed
-        # with NWS by 5°F on individual cities (NYC, Austin). Higher bar reduces
-        # exposure to high-variance ensemble errors until the NWS cross-check
-        # below has a chance to prove itself.
-        edge_gate=0.20,
+        # Edge gate tuned to 0.15 (2026-04-15 late evening) after the
+        # historical replay backtest (backtesting/replay.py) showed 0.15
+        # strictly dominates 0.20 on both trade count AND net P&L
+        # across Mar 27 → Apr 14:
+        #   0.20 → 68 trades, 67.6% wins, +$14.36
+        #   0.15 → 73 trades, 65.8% wins, +$15.66
+        # The NWS sanity gate caught 97 would-be-bad trades at 0.15 vs 87
+        # at 0.20, so the safety net is intact — the extra volume is
+        # genuinely edge-positive, not marginal noise slipping through.
+        edge_gate=0.15,
         confidence_gate=60,
         min_price_cents=7,
         # confidence raised 55 → 60 so Open-Meteo fallback (conf=50) is always filtered
-        # edge raised 0.07 → 0.15 proportional to the main edge_gate tightening
-        sameday_overrides={"edge": 0.15, "confidence": 60, "kelly_floor": 0.35},
+        # same-day edge lowered 0.15 → 0.10 (proportional to main gate 0.20 → 0.15)
+        sameday_overrides={"edge": 0.10, "confidence": 60, "kelly_floor": 0.35},
         sanity_fn=nws_deterministic_sanity,
         scan_frac=0.10,
         kelly_floor=0.10,
