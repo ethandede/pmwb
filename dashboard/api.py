@@ -14,12 +14,8 @@ from fastapi.responses import FileResponse
 from dashboard.scan_cache import init_scan_cache_db, get_latest_scan, get_scan_history, cleanup_old_scans
 from dashboard.equity_db import init_equity_db, get_equity_curve
 from dashboard.ticker_map import ticker_to_city
-from dashboard.ercot_api import ercot_router
-from dashboard.pjm_api import pjm_router
-from dashboard.caiso_api import caiso_router
-
 from exchanges.kalshi import KalshiExchange
-_kalshi = KalshiExchange()
+_kalshi = KalshiExchange(timeout=3)
 from config import PAPER_MODE
 
 TRADES_DB = Path(__file__).resolve().parent.parent / "data" / "trades.db"
@@ -185,6 +181,7 @@ def _get_paper_positions() -> list:
              AND order_id LIKE 'paper-%'
              AND fill_qty > 0
              AND ticker NOT LIKE 'HB_%'
+             AND fill_time > datetime('now', '-10 days')
            GROUP BY ticker, side
            ORDER BY fill_time DESC"""
     ).fetchall()
@@ -198,9 +195,6 @@ cleanup_old_scans()
 init_equity_db()
 
 app = FastAPI(title="Weather Edge Dashboard")
-app.include_router(ercot_router)
-app.include_router(pjm_router)
-app.include_router(caiso_router)
 
 # Serve static files and index.html
 STATIC_DIR = Path(__file__).parent / "static"
@@ -232,7 +226,7 @@ async def power_page():
 
 
 @app.get("/api/portfolio")
-async def get_portfolio():
+def get_portfolio():
     try:
         bal = _kalshi.get_balance()
         cash = bal.get("balance", 0) / 100.0
@@ -320,12 +314,19 @@ async def get_portfolio():
 
                 likely = _predict_likely(ticker, side_str, forecast_high, forecast_precip)
 
+                # Flip side for T-type display: Kalshi asks "below X?" but
+                # users read "above X?", so YES↔NO keeps WIN/LOSS intuitive.
+                display_side = side_str
+                t_parts = ticker.split("-")
+                if len(t_parts) >= 3 and t_parts[2].startswith("T"):
+                    display_side = "NO" if side_str == "YES" else "YES"
+
                 market_type = "precip" if is_precip else "temp"
                 open_pos.append({
                     "ticker": ticker,
                     "city": ticker_to_city(ticker),
                     "market_type": market_type,
-                    "side": side_str,
+                    "side": display_side,
                     "contract": contract,
                     "qty": int(qty),
                     "entry": entry,
@@ -376,13 +377,19 @@ async def get_portfolio():
 
                 likely = _predict_likely(ticker, side_str, forecast_high, forecast_precip)
 
+                # Flip side for T-type display (see live positions comment)
+                display_side = side_str
+                t_parts = ticker.split("-")
+                if len(t_parts) >= 3 and t_parts[2].startswith("T"):
+                    display_side = "NO" if side_str == "YES" else "YES"
+
                 fill_cost = (r["fill_price"] or 0) * (r["fill_qty"] or 0) / 100.0
                 market_type = "precip" if is_precip else "temp"
                 paper_pos.append({
                     "ticker": ticker,
                     "city": ticker_to_city(ticker) or (r["city"] or "").replace("_", " ").title(),
                     "market_type": market_type,
-                    "side": side_str,
+                    "side": display_side,
                     "contract": contract,
                     "qty": r["fill_qty"] or 0,
                     "entry": round((r["fill_price"] or 0) / 100.0, 2),
@@ -411,7 +418,7 @@ async def get_portfolio():
 
 
 @app.get("/api/markets/{market_type}")
-async def get_markets(market_type: str, force: bool = Query(False)):
+def get_markets(market_type: str, force: bool = Query(False)):
     if market_type not in ("temp", "precip"):
         return {"error": "Invalid market_type"}
 
@@ -423,14 +430,14 @@ async def get_markets(market_type: str, force: bool = Query(False)):
 
 
 @app.get("/api/markets/{market_type}/history")
-async def market_history(market_type: str, days: int = Query(30)):
+def market_history(market_type: str, days: int = Query(30)):
     if market_type not in ("temp", "precip"):
         return {"error": "Invalid market_type"}
     return get_scan_history(market_type, days=days)
 
 
 @app.get("/api/performance")
-async def get_performance():
+def get_performance():
     return {
         "equity_curve": get_equity_curve(),
     }
@@ -452,7 +459,7 @@ async def get_config():
 
 
 @app.get("/api/activity")
-async def get_activity(limit: int = Query(50)):
+def get_activity(limit: int = Query(50)):
     if not TRADES_DB.exists():
         return []
     conn = sqlite3.connect(str(TRADES_DB))
@@ -508,7 +515,7 @@ async def get_activity(limit: int = Query(50)):
 
 
 @app.get("/api/resting")
-async def get_resting():
+def get_resting():
     try:
         resting = _kalshi.get_orders(status="resting")
     except Exception as e:
@@ -542,7 +549,7 @@ async def get_resting():
 
 
 @app.get("/api/settled")
-async def get_settled(limit: int = Query(50)):
+def get_settled(limit: int = Query(50)):
     if not TRADES_DB.exists():
         return {"summary": {}, "trades": []}
     conn = sqlite3.connect(str(TRADES_DB))
@@ -595,7 +602,7 @@ async def get_settled(limit: int = Query(50)):
 
 
 @app.get("/api/performance/fees")
-async def get_fee_chart():
+def get_fee_chart():
     """Cumulative P&L vs fees time series for chart."""
     from dashboard.equity_db import EQUITY_DB
     equity_path = Path(EQUITY_DB)
@@ -621,7 +628,7 @@ async def get_fee_chart():
 
 
 @app.get("/api/fees/summary")
-async def get_fee_summary():
+def get_fee_summary():
     """Fee summary: total fees, maker/taker counts, savings estimate."""
     from kalshi.pricing import kalshi_fee
     from dashboard.equity_db import EQUITY_DB
@@ -674,7 +681,7 @@ ANALYTICS_DB = Path(__file__).resolve().parent.parent / "data" / "analytics.db"
 
 
 @app.get("/api/analytics/scorecard")
-async def analytics_scorecard():
+def analytics_scorecard():
     if not ANALYTICS_DB.exists():
         return {"today": None, "yesterday": None, "rolling_7d": None}
     conn = sqlite3.connect(str(ANALYTICS_DB))
@@ -700,7 +707,7 @@ async def analytics_scorecard():
 
 
 @app.get("/api/analytics/trends")
-async def analytics_trends():
+def analytics_trends():
     if not ANALYTICS_DB.exists():
         return {"daily": []}
     conn = sqlite3.connect(str(ANALYTICS_DB))
@@ -714,7 +721,7 @@ async def analytics_trends():
 
 
 @app.get("/api/analytics/actions")
-async def analytics_actions():
+def analytics_actions():
     if not ANALYTICS_DB.exists():
         return {"summary": {}, "recent": []}
     conn = sqlite3.connect(str(ANALYTICS_DB))
@@ -750,7 +757,7 @@ async def analytics_actions():
 
 
 @app.get("/api/analytics/recommendations")
-async def analytics_recommendations():
+def analytics_recommendations():
     if not ANALYTICS_DB.exists():
         return []
     conn = sqlite3.connect(str(ANALYTICS_DB))
