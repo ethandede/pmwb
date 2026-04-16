@@ -133,11 +133,15 @@ def _build_configs() -> tuple:
             if nws_temp is None:
                 return True  # NWS unavailable — advisory only
 
-            # Rule 1: ensemble-vs-NWS disagreement gate
+            # Rule 1: ensemble-vs-NWS disagreement gate.
+            # Threshold tuned by grid sweep on 2026-04-15 (backtesting/replay.py):
+            #   3.0°F → 73 trades, +$15.66    (too tight, kills profitable trades)
+            #   5.0°F → 81 trades, +$18.26    (optimal — blocks outliers, keeps edge)
+            #   OFF   → 83 trades, +$16.83    (sanity still adds $1.43 vs disabled)
             bot_mean = signal.model_mean_temp
             if bot_mean is not None:
                 disagree = abs(bot_mean - nws_temp)
-                if disagree > 3.0:
+                if disagree > 5.0:
                     print(
                         f"  [NWS-SANITY] {ticker} BLOCK ensemble_vs_nws — "
                         f"ensemble={bot_mean:.1f}°F vs NWS={nws_temp:.1f}°F "
