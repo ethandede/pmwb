@@ -1,14 +1,24 @@
 """
 Multi-Model Fusion + Bias Correction + Nowcasting
 
-Blends 3 independent forecast sources for sharper probability estimates.
-UPDATED (Mar 2026): Uses proper Normal distribution for deterministic buckets.
-No more negatives possible. Built with Super Heavy Grok.
+Blends 4-5 independent forecast sources (NOAA, HRRR, ECMWF, VisualCrossing,
+optionally GFS ensemble) for sharper probability estimates.
+
+Data-source safety (added 2026-04-16):
+  - Failures are NEVER cached in fcache. A short-lived in-process negative
+    cache (2 min TTL) prevents within-cycle retry storms without poisoning
+    the 30-min forecast cache with stale None values.
+  - HTTP 429 rate-limit responses are logged at the transport layer
+    (weather/http.py) so they're visible regardless of how the caller
+    handles the error.
+  - Per-source consecutive-failure tracking logs escalation alerts after
+    3+ failures so sustained outages are impossible to miss.
 """
 
 import math
 import os
 import sqlite3
+import time as _time
 import requests
 from datetime import datetime, timezone
 from weather.http import get as http_get
@@ -18,6 +28,44 @@ from weather.forecast import get_ensemble_precip, get_nws_precip_forecast
 from weather import cache as fcache
 from weather.precip_model import gamma_precip_prob
 from config import BIAS_DB_PATH, FUSION_WEIGHTS, PRECIP_FUSION_WEIGHTS
+
+
+# ---------------------------------------------------------------------------
+# Negative cache: prevents within-cycle retry storms on failing sources.
+# Short TTL (2 min) so the next 5-minute daemon cycle gets a fresh attempt.
+# Process-local; resets on daemon restart (intentional).
+# ---------------------------------------------------------------------------
+
+_NEGATIVE_CACHE: Dict[str, float] = {}
+_NEGATIVE_TTL = 120  # seconds
+
+_SOURCE_FAIL_COUNTS: Dict[str, int] = {}
+
+
+def _neg_cached(cache_type: str, *parts) -> bool:
+    key = f"{cache_type}|{'|'.join(str(p) for p in parts)}"
+    ts = _NEGATIVE_CACHE.get(key)
+    if ts and _time.time() - ts < _NEGATIVE_TTL:
+        return True
+    if ts:
+        del _NEGATIVE_CACHE[key]
+    return False
+
+
+def _neg_mark(cache_type: str, *parts, city: str = ""):
+    key = f"{cache_type}|{'|'.join(str(p) for p in parts)}"
+    _NEGATIVE_CACHE[key] = _time.time()
+    count = _SOURCE_FAIL_COUNTS.get(cache_type, 0) + 1
+    _SOURCE_FAIL_COUNTS[cache_type] = count
+    if count == 3:
+        print(
+            f"  [SOURCE-DOWN] {cache_type} — 3 consecutive failures "
+            f"({city}). Model will be excluded from fusion until it recovers."
+        )
+
+
+def _neg_reset(cache_type: str):
+    _SOURCE_FAIL_COUNTS[cache_type] = 0
 
 # --- Forecast source health tracking ---
 _model_fail_counts: dict[str, int] = {}
@@ -395,18 +443,21 @@ def fuse_forecast(
         temp_spread = 8.0  # conservative fallback
     details["temp_spread"] = temp_spread
 
-    # --- Model 1: Open-Meteo Ensemble (unchanged) ---
+    # --- Model 1: Open-Meteo Ensemble ---
     cache_key_ens = (round(lat, 2), round(lon, 2), temp_type, days_ahead, unit)
     ensemble_temps = fcache.get("ensemble", *cache_key_ens)
-    if ensemble_temps is None:
+    if ensemble_temps is None and not _neg_cached("ensemble", *cache_key_ens):
         if temp_type == "min":
             ensemble_temps = get_ensemble_min_temps(lat, lon, days_ahead=days_ahead, unit=unit)
         else:
             ensemble_temps = get_ensemble_max_temps(lat, lon, days_ahead=days_ahead, unit=unit)
         if ensemble_temps:
             fcache.put("ensemble", *cache_key_ens, value=ensemble_temps)
+            _neg_reset("ensemble")
+        else:
+            _neg_mark("ensemble", *cache_key_ens, city=city)
     bias_ens, n_ens = get_bias(city, month, "ensemble")
-    if bias_ens and n_ens >= 30:
+    if bias_ens and n_ens >= 5:
         ensemble_temps = [round(t - bias_ens, 1) for t in ensemble_temps]
     if ensemble_temps:
         ensemble_prob = get_bucket_prob(ensemble_temps, low, high)
@@ -426,14 +477,17 @@ def fuse_forecast(
     # --- Model 2: NOAA NWS (now uses safe bucket prob) ---
     cache_key_noaa = (round(lat, 2), round(lon, 2), temp_type, days_ahead, unit)
     noaa_temp = fcache.get("noaa", *cache_key_noaa)
-    if noaa_temp is None:
+    if noaa_temp is None and not _neg_cached("noaa", *cache_key_noaa):
         noaa_temp = get_noaa_point_forecast(lat, lon, days_ahead=days_ahead, unit=unit, temp_type=temp_type)
         if noaa_temp is not None:
             fcache.put("noaa", *cache_key_noaa, value=noaa_temp)
+            _neg_reset("noaa")
+        else:
+            _neg_mark("noaa", *cache_key_noaa, city=city)
     noaa_prob = None
     if noaa_temp is not None:
         bias_noaa, n_noaa = get_bias(city, month, "noaa")
-        if bias_noaa and n_noaa >= 30:
+        if bias_noaa and n_noaa >= 5:
             noaa_temp = round(noaa_temp - bias_noaa, 1)
         noaa_prob = _deterministic_bucket_prob(noaa_temp, low, high, spread=temp_spread)
         details["noaa"] = {"prob": noaa_prob, "temp": noaa_temp, "bias": round(bias_noaa, 1), "n": n_noaa}
@@ -443,14 +497,17 @@ def fuse_forecast(
     # --- Model 3: GFS+HRRR (now uses safe bucket prob) ---
     cache_key_hrrr = (round(lat, 2), round(lon, 2), temp_type, days_ahead, unit)
     hrrr_temp = fcache.get("hrrr", *cache_key_hrrr)
-    if hrrr_temp is None:
+    if hrrr_temp is None and not _neg_cached("hrrr", *cache_key_hrrr):
         hrrr_temp = get_hrrr_forecast(lat, lon, days_ahead=days_ahead, unit=unit, temp_type=temp_type)
         if hrrr_temp is not None:
             fcache.put("hrrr", *cache_key_hrrr, value=hrrr_temp)
+            _neg_reset("hrrr")
+        else:
+            _neg_mark("hrrr", *cache_key_hrrr, city=city)
     hrrr_prob = None
     if hrrr_temp is not None:
         bias_hrrr, n_hrrr = get_bias(city, month, "hrrr")
-        if bias_hrrr and n_hrrr >= 30:
+        if bias_hrrr and n_hrrr >= 5:
             hrrr_temp = round(hrrr_temp - bias_hrrr, 1)
         hrrr_prob = _deterministic_bucket_prob(hrrr_temp, low, high, spread=temp_spread)
         details["hrrr"] = {"prob": hrrr_prob, "temp": hrrr_temp, "bias": round(bias_hrrr, 1), "n": n_hrrr}
@@ -460,14 +517,17 @@ def fuse_forecast(
     # --- Model 4: ECMWF IFS (European model) ---
     cache_key_ecmwf = (round(lat, 2), round(lon, 2), temp_type, days_ahead, unit)
     ecmwf_temp = fcache.get("ecmwf", *cache_key_ecmwf)
-    if ecmwf_temp is None and not fcache.has("ecmwf", *cache_key_ecmwf):
+    if ecmwf_temp is None and not _neg_cached("ecmwf", *cache_key_ecmwf):
         ecmwf_temp = get_ecmwf_forecast(lat, lon, days_ahead=days_ahead, unit=unit, temp_type=temp_type)
-        # Cache both successes and failures
-        fcache.put("ecmwf", *cache_key_ecmwf, value=ecmwf_temp)
+        if ecmwf_temp is not None:
+            fcache.put("ecmwf", *cache_key_ecmwf, value=ecmwf_temp)
+            _neg_reset("ecmwf")
+        else:
+            _neg_mark("ecmwf", *cache_key_ecmwf, city=city)
     ecmwf_prob = None
     if ecmwf_temp is not None:
         bias_ecmwf, n_ecmwf = get_bias(city, month, "ecmwf")
-        if bias_ecmwf and n_ecmwf >= 30:
+        if bias_ecmwf and n_ecmwf >= 5:
             ecmwf_temp = round(ecmwf_temp - bias_ecmwf, 1)
         ecmwf_prob = _deterministic_bucket_prob(ecmwf_temp, low, high, spread=temp_spread)
         details["ecmwf"] = {"prob": ecmwf_prob, "temp": ecmwf_temp, "bias": round(bias_ecmwf, 1), "n": n_ecmwf}
@@ -477,14 +537,17 @@ def fuse_forecast(
     # --- Model 5: Visual Crossing (Weather Underground) ---
     cache_key_vc = (round(lat, 2), round(lon, 2), temp_type, days_ahead, unit)
     vc_temp = fcache.get("visualcrossing", *cache_key_vc)
-    if vc_temp is None and not fcache.has("visualcrossing", *cache_key_vc):
+    if vc_temp is None and not _neg_cached("visualcrossing", *cache_key_vc):
         vc_temp = get_visualcrossing_forecast(lat, lon, days_ahead=days_ahead, unit=unit, temp_type=temp_type)
-        # Cache both successes and failures — prevents 429 retry storms
-        fcache.put("visualcrossing", *cache_key_vc, value=vc_temp)
+        if vc_temp is not None:
+            fcache.put("visualcrossing", *cache_key_vc, value=vc_temp)
+            _neg_reset("visualcrossing")
+        else:
+            _neg_mark("visualcrossing", *cache_key_vc, city=city)
     vc_prob = None
     if vc_temp is not None:
         bias_vc, n_vc = get_bias(city, month, "visualcrossing")
-        if bias_vc and n_vc >= 30:
+        if bias_vc and n_vc >= 5:
             vc_temp = round(vc_temp - bias_vc, 1)
         vc_prob = _deterministic_bucket_prob(vc_temp, low, high, spread=temp_spread)
         details["visualcrossing"] = {"prob": vc_prob, "temp": vc_temp, "bias": round(bias_vc, 1), "n": n_vc}
@@ -507,6 +570,13 @@ def fuse_forecast(
     if not active:
         # All models failed — refuse to trade (confidence 0 blocks all gates)
         details["all_models_down"] = True
+        return 0.50, 0.0, details
+
+    if len(active) < 4:
+        # Partial model coverage (cold cache, slow APIs) — refuse to trade.
+        # 3-model fusion is dominated by whichever models loaded first,
+        # producing unstable edges that flip when remaining models arrive.
+        details["partial_coverage"] = sorted(all_models - set(active.keys()))
         return 0.50, 0.0, details
 
     # Alert on degraded model coverage
@@ -534,6 +604,8 @@ def fuse_forecast(
         point_temps.append(vc_temp)
     if len(point_temps) >= 2:
         temp_range = max(point_temps) - min(point_temps)
+        if temp_range > 15.0:
+            print(f"  [SANITY] {city} model spread {temp_range:.1f}F — temps: {[round(t,1) for t in point_temps]}")
         agreement = max(0.0, min(1.0, 1.0 - temp_range / 10.0))
     else:
         agreement = 0.5
@@ -549,7 +621,7 @@ def fuse_forecast(
 
     bias_counts = [get_bias(city, month, m)[1] for m in ["ensemble", "noaa", "hrrr", "ecmwf", "visualcrossing"]]
     best_bias_n = max(bias_counts) if bias_counts else 0
-    bias_available = min(1.0, best_bias_n / 30.0)
+    bias_available = min(1.0, best_bias_n / 5.0)
 
     csgd_success = 1.0
 
@@ -1271,7 +1343,7 @@ def fuse_precip_forecast(
 
     bias_counts = [get_bias(city, month, m)[1] for m in ["ensemble_precip", "noaa_precip"]]
     best_bias_n = max(bias_counts) if bias_counts else 0
-    bias_available = min(1.0, best_bias_n / 30.0)
+    bias_available = min(1.0, best_bias_n / 5.0)
 
     csgd_success = 1.0 if csgd_result.method == "csgd" else 0.3
 

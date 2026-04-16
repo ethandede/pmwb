@@ -28,5 +28,14 @@ def get_session() -> requests.Session:
 
 
 def get(url: str, timeout: int = 15, **kwargs) -> requests.Response:
-    """GET with retry. Drop-in replacement for requests.get."""
-    return get_session().get(url, timeout=timeout, **kwargs)
+    """GET with retry. Drop-in replacement for requests.get.
+
+    Automatically logs 429 rate-limit responses so they're visible in
+    the daemon journal regardless of how the caller handles the error.
+    """
+    r = get_session().get(url, timeout=timeout, **kwargs)
+    if r.status_code == 429:
+        from urllib.parse import urlparse
+        domain = urlparse(url).netloc
+        print(f"  [429-RATE-LIMIT] {domain} → 429 Too Many Requests")
+    return r
