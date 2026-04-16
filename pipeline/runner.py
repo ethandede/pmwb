@@ -30,28 +30,6 @@ class PipelineRunner:
         """Write scored signals to scan_cache.db for dashboard consumption."""
         if not signals:
             return
-        if config.exchange == "ercot":
-            try:
-                from ercot.paper_trader import write_scan_cache
-                ercot_signals = []
-                for s in signals:
-                    ercot_signals.append({
-                        "hub": s.city or s.ticker,
-                        "hub_name": s.market.get("hub_name", s.ticker) if s.market else s.ticker,
-                        "signal": "SHORT" if s.side == "no" else "LONG",
-                        "edge": abs(s.edge),
-                        "contract_date": s.market.get("contract_date", "") if s.market else "",
-                        "contract_hour": s.market.get("contract_hour", 0) if s.market else 0,
-                        "side": s.side,
-                        "dam_price": s.market.get("dam_price", 0) if s.market else 0,
-                        "model_prob": s.model_prob,
-                        "expected_solrad_mjm2": s.market.get("expected_solrad_mjm2", 0) if s.market else 0,
-                        "confidence": int(s.confidence),
-                    })
-                write_scan_cache(ercot_signals)
-            except Exception as e:
-                print(f"  ERCOT scan cache write failed: {e}")
-            return
         try:
             from dashboard.scan_cache import write_scan_results
             # Map config.name to dashboard market_type
@@ -139,14 +117,6 @@ class PipelineRunner:
                 held_sides[ticker] = pos_side
         except Exception as e:
             print(f"  Paper dedup query failed: {e}")
-
-        # Settle expired ERCOT binary option positions
-        try:
-            from ercot.paper_trader import settle_expired_hours
-            from ercot.hubs import fetch_rt_settlement
-            settle_expired_hours(fetch_rt_fn=fetch_rt_settlement)
-        except Exception as e:
-            print(f"  ERCOT settlement check failed: {e}")
 
         # Process each config
         for config in self.configs:

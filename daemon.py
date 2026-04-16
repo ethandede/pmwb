@@ -18,7 +18,6 @@ from weather import cache as fcache
 from dashboard.equity_db import init_equity_db, record_equity_snapshot
 from config import PAPER_MODE
 from exchanges.kalshi import KalshiExchange
-from exchanges.ercot import ErcotExchange
 from pipeline.config import ALL_CONFIGS
 from pipeline.runner import PipelineRunner
 
@@ -118,8 +117,18 @@ def run_cycle(cycle_num: int, runner: PipelineRunner, exchanges: dict):
     cache_info = fcache.stats()
     console.print(f"[dim]Forecast cache: {cache_info['active']} active entries[/dim]")
 
-    # --- Phase 1: Position management (exits) ---
+    # --- Phase 0: Sanity checks ---
     from alerts.telegram_alert import send_alert
+    try:
+        from weather.sanity import run_bias_check
+        bias_warnings = run_bias_check()
+        for w in bias_warnings:
+            console.print(f"  [bold red]{w}[/bold red]")
+            send_alert("Bias Sanity Failed", w, dedup_key="bias_sanity")
+    except Exception as e:
+        console.print(f"  [dim]Sanity check error: {e}[/dim]")
+
+    # --- Phase 1: Position management (exits) ---
 
     console.print(f"\n[bold]Phase 1: Position Management[/bold]")
     try:
@@ -129,14 +138,6 @@ def run_cycle(cycle_num: int, runner: PipelineRunner, exchanges: dict):
         console.print(f"[red]Position manager error: {e}[/red]")
         traceback.print_exc()
         send_alert("Position Manager Failed", str(e), dedup_key="pos_mgr_error")
-
-    try:
-        from ercot.position_manager import run_ercot_manager
-        run_ercot_manager()
-    except Exception as e:
-        console.print(f"[red]ERCOT manager error: {e}[/red]")
-        traceback.print_exc()
-        send_alert("ERCOT Manager Failed", str(e), dedup_key="ercot_mgr_error")
 
     # --- Phase 1.5: Stale order cleanup ---
     kalshi = exchanges.get("kalshi")
@@ -233,7 +234,6 @@ def main():
     # Create exchange adapters and pipeline runner once
     exchanges = {
         "kalshi": KalshiExchange(),
-        "ercot": ErcotExchange(),
     }
     runner = PipelineRunner(configs=ALL_CONFIGS, exchanges=exchanges)
     console.print(f"Pipeline: {len(ALL_CONFIGS)} configs, {len(exchanges)} exchanges\n")

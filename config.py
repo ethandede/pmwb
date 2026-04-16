@@ -3,8 +3,13 @@ from dotenv import load_dotenv
 load_dotenv()
 
 CITIES = {
-    "nyc": {"lat": 40.7931, "lon": -73.8720, "keywords": ["nyc", "new york", "laguardia"], "unit": "f"},
-    "chicago": {"lat": 41.9742, "lon": -87.9073, "keywords": ["chicago", "o'hare"], "unit": "f"},
+    # NYC: Kalshi settles against Central Park (NWS CLI), NOT LaGuardia.
+    # Central Park reads ~2°F warmer than LGA due to urban heat island.
+    # Old coords (LGA): 40.7931, -73.8720
+    "nyc": {"lat": 40.7829, "lon": -73.9654, "keywords": ["nyc", "new york", "central park"], "unit": "f"},
+    # Chicago: Kalshi settles against Midway, NOT O'Hare.
+    # Midway reads ~1°F warmer. Old coords (ORD): 41.9742, -87.9073
+    "chicago": {"lat": 41.7868, "lon": -87.7522, "keywords": ["chicago", "midway"], "unit": "f"},
     "miami": {"lat": 25.7617, "lon": -80.1918, "keywords": ["miami"], "unit": "f"},
     "seattle": {"lat": 47.4502, "lon": -122.3088, "keywords": ["seattle"], "unit": "f"},
     "dallas": {"lat": 32.8968, "lon": -97.0380, "keywords": ["dallas"], "unit": "f"},

@@ -71,26 +71,29 @@ HIST_FORECAST_URL = "https://customer-historical-forecast-api.open-meteo.com/v1/
 ARCHIVE_URL = "https://customer-archive-api.open-meteo.com/v1/archive"
 KALSHI_URL = "https://api.elections.kalshi.com/trade-api/v2/markets"
 
-# City lookup: short-code used in Kalshi tickers → (lat, lon, unit, scan_cache_city)
-# The "scan_cache_city" column doesn't always match Kalshi's ticker code,
-# so we carry both.
+# City lookup: short-code used in Kalshi tickers → (lat, lon, unit, scan_cache_city, acis_sid)
+# Coords and ACIS station IDs matched to Kalshi's actual settlement stations
+# (NWS Climatological Report Daily), verified 2026-04-16.
+# Key mismatches found: NYC = Central Park (not LGA), CHI = Midway (not ORD).
 CITY_INFO = {
-    # Ticker code  : (lat,    lon,     unit, scan_cache_city)
-    "NY":           (40.7931,  -73.8720, "f",  "nyc"),
-    "CHI":          (41.9742,  -87.9073, "f",  "chicago"),
-    "MIA":          (25.7617,  -80.1918, "f",  "miami"),
-    "AUS":          (30.1900,  -97.6700, "f",  "austin"),
-    "LAX":          (33.9425, -118.4081, "f",  "los_angeles"),
-    "SEA":          (47.4502, -122.3088, "f",  "seattle"),
-    "HOU":          (29.7600,  -95.3700, "f",  "houston"),
-    "SFO":          (37.6200, -122.3700, "f",  "san_francisco"),
-    "ATL":          (33.6407,  -84.4277, "f",  "atlanta"),
-    "DC":           (38.8500,  -77.0400, "f",  "washington_dc"),
-    "BOS":          (42.3700,  -71.0100, "f",  "boston"),
-    "PHX":          (33.4300, -112.0100, "f",  "phoenix"),
-    "SATX":         (29.5300,  -98.4700, "f",  "san_antonio"),
-    "LV":           (36.0800, -115.1500, "f",  "las_vegas"),
+    # Ticker code  : (lat,    lon,     unit, scan_cache_city, acis_station_id)
+    "NY":           (40.7829,  -73.9654, "f",  "nyc",          "USW00094728"),  # Central Park
+    "CHI":          (41.7868,  -87.7522, "f",  "chicago",      "USW00014819"),  # Midway
+    "MIA":          (25.7617,  -80.1918, "f",  "miami",        "USW00012839"),  # MIA airport
+    "AUS":          (30.1900,  -97.6700, "f",  "austin",       "USW00013904"),  # AUS airport
+    "LAX":          (33.9425, -118.4081, "f",  "los_angeles",  "USW00023174"),  # LAX airport
+    "SEA":          (47.4502, -122.3088, "f",  "seattle",      "USW00024233"),  # SEA airport
+    "HOU":          (29.7600,  -95.3700, "f",  "houston",      "USW00012960"),  # IAH airport
+    "SFO":          (37.6200, -122.3700, "f",  "san_francisco","USW00023234"),  # SFO airport
+    "ATL":          (33.6407,  -84.4277, "f",  "atlanta",      "USW00013874"),  # ATL airport
+    "DC":           (38.8500,  -77.0400, "f",  "washington_dc","USW00013743"),  # DCA airport
+    "BOS":          (42.3700,  -71.0100, "f",  "boston",        "USW00014739"),  # BOS airport
+    "PHX":          (33.4300, -112.0100, "f",  "phoenix",      "USW00023183"),  # PHX airport
+    "SATX":         (29.5300,  -98.4700, "f",  "san_antonio",  "USW00012921"),  # SAT airport
+    "LV":           (36.0800, -115.1500, "f",  "las_vegas",    "USW00023169"),  # LAS airport
 }
+
+ACIS_URL = "https://data.rcc-acis.org/StnData"
 
 # Filter thresholds — MATCH pipeline/config.py KALSHI_TEMP (post-2026-04-15)
 EDGE_GATE = 0.20
@@ -224,7 +227,10 @@ def fetch_historical_forecasts(lat: float, lon: float, start: str, end: str) -> 
 
 
 def fetch_archive_max(lat: float, lon: float, target: str) -> Optional[float]:
-    """Actual observed max temp for the target date (from Open-Meteo archive)."""
+    """Actual observed max temp from Open-Meteo archive. DEPRECATED for
+    settlement evaluation — use fetch_acis_max instead, which queries
+    the same NWS cooperative observer network that Kalshi's CLI product
+    draws from."""
     key = ("archive", round(lat, 3), round(lon, 3), target)
     if key in _fcache:
         return _fcache[key]
@@ -247,6 +253,48 @@ def fetch_archive_max(lat: float, lon: float, target: str) -> Optional[float]:
     temp = arr[0] if arr else None
     _fcache[key] = temp
     return temp
+
+
+def fetch_acis_max(acis_sid: str, target: str) -> Optional[float]:
+    """Actual observed max temp from ACIS (NWS cooperative observer network).
+
+    This is the authoritative settlement source — ACIS provides the same
+    data that the NWS Climatological Report (Daily) uses, which is what
+    Kalshi settles against per their contract rules.
+
+    Returns integer °F (ACIS reports whole degrees) or None.
+    """
+    key = ("acis", acis_sid, target)
+    if key in _fcache:
+        return _fcache[key]
+    try:
+        payload = json.dumps({
+            "sid": acis_sid,
+            "sdate": target,
+            "edate": target,
+            "elems": [{"name": "maxt"}],
+        }).encode()
+        req = urllib.request.Request(
+            ACIS_URL,
+            data=payload,
+            headers={"Content-Type": "application/json",
+                     "User-Agent": "polymarket-weather-bot-replay"},
+        )
+        with urllib.request.urlopen(req, timeout=15) as r:
+            d = json.loads(r.read())
+        data = d.get("data", [[]])
+        if data and len(data[0]) >= 2:
+            val = data[0][1]
+            if val in ("M", "T", "", None):
+                _fcache[key] = None
+                return None
+            temp = float(val)
+            _fcache[key] = temp
+            return temp
+    except Exception as e:
+        print(f"  ACIS fetch error ({acis_sid}, {target}): {e}", file=sys.stderr)
+    _fcache[key] = None
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -524,7 +572,7 @@ def replay(start: str, end: str, db_path: str, csv_out: Optional[str]) -> None:
     actuals: dict = {}     # (city_code, settlement) → actual high
     for i, (key, ds) in enumerate(by_city_settle.items(), 1):
         city_code, settlement = key
-        lat, lon, _unit, _scc = CITY_INFO[city_code]
+        lat, lon, _unit, _scc, _acis = CITY_INFO[city_code]
         s = settlement.isoformat()
         # Historical forecast: ask for the settlement date itself. Open-Meteo
         # returns the forecast that was valid for that day (issued the day
@@ -537,7 +585,13 @@ def replay(start: str, end: str, db_path: str, csv_out: Optional[str]) -> None:
             forecasts[key] = (gfs, nbm, ecmwf)
         else:
             forecasts[key] = (None, None, None)
-        actuals[key] = fetch_archive_max(lat, lon, s)
+        # Use ACIS (NWS cooperative observer) as settlement source — matches
+        # Kalshi's NWS Climatological Report (Daily) exactly.
+        acis_sid = CITY_INFO[city_code][4] if len(CITY_INFO[city_code]) > 4 else None
+        if acis_sid:
+            actuals[key] = fetch_acis_max(acis_sid, s)
+        else:
+            actuals[key] = fetch_archive_max(lat, lon, s)
         if i % 20 == 0:
             print(f"  [{i}/{len(by_city_settle)}]")
 

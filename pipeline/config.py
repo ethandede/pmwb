@@ -53,26 +53,25 @@ class MarketConfig:
 # Imports are deferred inside _build_configs to avoid circular imports at module load.
 
 def _build_configs() -> tuple:
-    """Build all 5 configs. Called once at import time."""
+    """Build Kalshi temperature + precipitation configs.
+
+    Power markets (ERCOT, PJM, CAISO) removed 2026-04-16 — dead code
+    with broken API auth and no viable edge. Ensemble-only path
+    (get_ensemble_signal) replaced with full multi-model fusion
+    (fuse_forecast) which uses NOAA + HRRR + ECMWF + VisualCrossing
+    with per-city bias correction from bias.db.
+    """
     from kalshi.scanner import (
         get_kalshi_weather_markets, get_kalshi_precip_markets,
         parse_kalshi_bucket, WEATHER_SERIES, PRECIP_SERIES,
     )
     from kalshi.market_types import parse_precip_bucket
-    from weather.ensemble_signal import get_ensemble_signal
-    from weather.multi_model import fuse_precip_forecast, get_ercot_solar_signal, get_pjm_solar_signal, get_caiso_solar_signal
+    from weather.multi_model import fuse_forecast, fuse_precip_forecast
     from kalshi.pricing import maker_price
-    from ercot.hubs import fetch_ercot_markets
-    from pjm.hubs import fetch_pjm_markets
-    from caiso.hubs import fetch_caiso_markets
-    from config import ERCOT_HUBS, PJM_HUBS, CAISO_HUBS
 
     from pipeline.stages import execute_trade
     from kalshi.position_manager import run_position_manager
     from kalshi.settler import run_settler
-    from ercot.position_manager import run_ercot_manager
-    from pjm.position_manager import run_pjm_manager
-    from caiso.position_manager import run_caiso_manager
 
     # NWS deterministic sanity-check cache: prevents repeated calls for
     # the same (lat, lon, days_ahead) within a scan cycle. Short TTL so
@@ -206,7 +205,7 @@ def _build_configs() -> tuple:
         fetch_fn=get_kalshi_weather_markets,
         series=WEATHER_SERIES,
         bucket_parser=parse_kalshi_bucket,
-        forecast_fn=get_ensemble_signal,
+        forecast_fn=fuse_forecast,
 
         # Edge gate tuned to 0.15 (2026-04-15 late evening) after the
         # historical replay backtest (backtesting/replay.py) showed 0.15
@@ -264,86 +263,8 @@ def _build_configs() -> tuple:
         settle_fn=run_settler,
     )
 
-    ercot = MarketConfig(
-        name="ercot",
-        display_name="ERCOT Solar",
-        exchange="ercot",
-        fetch_fn=fetch_ercot_markets,
-        series=ERCOT_HUBS,
-        bucket_parser=None,
-        forecast_fn=get_ercot_solar_signal,
-
-        edge_gate=0.03,
-        confidence_gate=50,
-        min_price_cents=12,
-        sameday_overrides=None,
-        sanity_fn=None,
-        scan_frac=0.10,
-        kelly_floor=0.25,
-        max_bankroll_pct=0.02,
-        max_contracts_per_event=3,
-        execute_fn=execute_trade,
-        pricing_fn=None,
-        manage_fn=run_ercot_manager,
-        exit_rules={},
-        settlement_timeline="hourly_binary",
-        settle_fn=run_ercot_manager,
-    )
-
-    pjm = MarketConfig(
-        name="pjm",
-        display_name="PJM Solar",
-        exchange="pjm",
-        fetch_fn=fetch_pjm_markets,
-        series=PJM_HUBS,
-        bucket_parser=None,
-        forecast_fn=get_pjm_solar_signal,
-
-        edge_gate=0.03,
-        confidence_gate=50,
-        min_price_cents=12,
-        sameday_overrides=None,
-        sanity_fn=None,
-        scan_frac=0.10,
-        kelly_floor=0.25,
-        max_bankroll_pct=0.02,
-        max_contracts_per_event=3,
-        execute_fn=execute_trade,
-        pricing_fn=None,
-        manage_fn=run_pjm_manager,
-        exit_rules={"edge_decay_pct": 0.30, "signal_flip": True, "ttl_hours": 24},
-        settlement_timeline="hourly",
-        settle_fn=run_pjm_manager,
-    )
-
-    caiso = MarketConfig(
-        name="caiso",
-        display_name="CAISO Solar",
-        exchange="caiso",
-        fetch_fn=fetch_caiso_markets,
-        series=CAISO_HUBS,
-        bucket_parser=None,
-        forecast_fn=get_caiso_solar_signal,
-
-        edge_gate=0.03,
-        confidence_gate=50,
-        min_price_cents=12,
-        sameday_overrides=None,
-        sanity_fn=None,
-        scan_frac=0.10,
-        kelly_floor=0.25,
-        max_bankroll_pct=0.02,
-        max_contracts_per_event=3,
-        execute_fn=execute_trade,
-        pricing_fn=None,
-        manage_fn=run_caiso_manager,
-        exit_rules={"edge_decay_pct": 0.30, "signal_flip": True, "ttl_hours": 24},
-        settlement_timeline="hourly",
-        settle_fn=run_caiso_manager,
-    )
-
-    return kalshi_temp, kalshi_precip, ercot, pjm, caiso
+    return kalshi_temp, kalshi_precip
 
 
-KALSHI_TEMP, KALSHI_PRECIP, ERCOT, PJM, CAISO = _build_configs()
-ALL_CONFIGS = [KALSHI_TEMP, KALSHI_PRECIP, ERCOT, PJM, CAISO]
+KALSHI_TEMP, KALSHI_PRECIP = _build_configs()
+ALL_CONFIGS = [KALSHI_TEMP, KALSHI_PRECIP]

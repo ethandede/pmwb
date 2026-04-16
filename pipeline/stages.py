@@ -34,12 +34,7 @@ def _compress_edge_for_pricing(raw_edge: float) -> float:
 
 
 def fetch_markets(config, exchange) -> list[dict]:
-    """Stage 1: Call config's fetch function to discover markets.
-
-    Existing Kalshi fetch functions use the public API directly (no exchange needed).
-    ERCOT fetch_ercot_markets also needs no exchange param.
-    The exchange adapter is available for future use.
-    """
+    """Stage 1: Call config's fetch function to discover markets."""
     return config.fetch_fn()
 
 
@@ -55,161 +50,98 @@ def score_signal(config, market: dict) -> Signal:
     # Get market price
     market_prob = _extract_market_prob(market)
 
-    # Call forecast function (different signature per market type)
-    if config.name == "ercot":
+    # Call forecast function — Kalshi temp uses fuse_forecast (multi-model
+    # fusion with bias correction), precip uses fuse_precip_forecast.
+    bucket = config.bucket_parser(market) if config.bucket_parser else None
+    low = bucket[0] if bucket else 0
+    high = bucket[1] if bucket else None
+
+    lat = market.get("_lat", 0)
+    lon = market.get("_lon", 0)
+    unit = market.get("_unit", "f")
+    temp_type = market.get("_temp_type", "max")
+    days_ahead = _compute_days_ahead(ticker)
+
+    if config.name == "kalshi_precip":
+        threshold = market.get("_threshold", low)
+        forecast_days = _compute_forecast_days(ticker)
         forecast_result = config.forecast_fn(
-            market.get("lat", 0), market.get("lon", 0),
-            hub_key=market.get("hub_key", ""),
-            solar_sensitivity=market.get("solar_sensitivity", 0.15),
-            hours_ahead=24,
-            ercot_data=market.get("_ercot_data"),
-            contract_hour=market.get("contract_hour", 0),
-            dam_price=market.get("dam_price", 0),
+            lat=lat, lon=lon, city=city,
+            month=_extract_month(ticker),
+            threshold=threshold,
+            forecast_days=forecast_days,
         )
-        edge = forecast_result.get("edge", 0)
-        if "model_prob" in forecast_result:
-            model_prob = forecast_result["model_prob"]
-        else:
-            model_prob = max(0.01, min(0.99, 0.5 + edge))
-        confidence = forecast_result.get("confidence", 50)
-        ercot_signal = forecast_result.get("signal", "NEUTRAL")
-        side = "no" if ercot_signal == "SHORT" else "yes"
-        days_ahead = 0
     else:
-        # Kalshi temp/precip: parse bucket, call forecast fusion
-        bucket = config.bucket_parser(market) if config.bucket_parser else None
-        low = bucket[0] if bucket else 0
-        high = bucket[1] if bucket else None
+        forecast_result = config.forecast_fn(
+            lat=lat, lon=lon, city=city,
+            month=_extract_month(ticker),
+            low=low, high=high,
+            days_ahead=days_ahead,
+            unit=unit, temp_type=temp_type,
+        )
 
-        # Extract forecast parameters from market metadata
-        lat = market.get("_lat", 0)
-        lon = market.get("_lon", 0)
-        unit = market.get("_unit", "f")
-        temp_type = market.get("_temp_type", "max")
-        days_ahead = _compute_days_ahead(ticker)
+    if isinstance(forecast_result, tuple) and len(forecast_result) >= 2:
+        model_prob = forecast_result[0]
+        confidence = forecast_result[1]
+    elif hasattr(forecast_result, 'prob'):
+        model_prob = forecast_result.prob
+        confidence = forecast_result.confidence
+    else:
+        model_prob = float(forecast_result)
+        confidence = 50.0
 
-        if config.name == "kalshi_precip":
-            threshold = market.get("_threshold", low)
-            forecast_days = _compute_forecast_days(ticker)
-            forecast_result = config.forecast_fn(
-                lat=lat, lon=lon, city=city,
-                month=_extract_month(ticker),
-                threshold=threshold,
-                forecast_days=forecast_days,
-            )
-        else:
-            forecast_result = config.forecast_fn(
-                lat=lat, lon=lon, city=city,
-                month=_extract_month(ticker),
-                low=low, high=high,
-                days_ahead=days_ahead,
-                unit=unit, temp_type=temp_type,
-            )
+    # METAR reality check (same-day temp only)
+    if config.name == "kalshi_temp" and days_ahead == 0 and temp_type == "max":
+        details = forecast_result[2] if isinstance(forecast_result, tuple) and len(forecast_result) >= 3 else {}
+        forecast_temps = [d.get("temp") for d in details.values()
+                          if isinstance(d, dict) and d.get("temp") is not None]
+        forecast_high = sum(forecast_temps) / len(forecast_temps) if forecast_temps else None
+        if forecast_high is not None:
+            bust = check_forecast_bust(city, forecast_high, days_ahead, temp_type)
+            if bust.get("active"):
+                floor = bust.get("floor")
+                if floor and high is not None and high < floor:
+                    model_prob = max(0.01, model_prob * 0.1)
+                penalty = bust.get("confidence_penalty", 0)
+                if penalty > 0:
+                    confidence = confidence - (penalty * 100)
+                if isinstance(details, dict):
+                    details["metar"] = bust
 
-        # Extract model_prob and confidence from forecast result
-        if isinstance(forecast_result, tuple) and len(forecast_result) >= 2:
-            model_prob = forecast_result[0]
-            confidence = forecast_result[1]
-        elif hasattr(forecast_result, 'prob'):
-            model_prob = forecast_result.prob
-            confidence = forecast_result.confidence
-        else:
-            model_prob = float(forecast_result)
-            confidence = 50.0
+    edge = model_prob - market_prob
+    side = "yes" if edge > 0 else "no"
 
-        # --- METAR reality check (same-day temp only) ---
-        if config.name == "kalshi_temp" and days_ahead == 0 and temp_type == "max":
-            # Extract forecast high from fusion details (avg of model temps)
-            details = forecast_result[2] if isinstance(forecast_result, tuple) and len(forecast_result) >= 3 else {}
-            forecast_temps = [d.get("temp") for d in details.values()
-                              if isinstance(d, dict) and d.get("temp") is not None]
-            forecast_high = sum(forecast_temps) / len(forecast_temps) if forecast_temps else None
-            if forecast_high is not None:
-                bust = check_forecast_bust(city, forecast_high, days_ahead, temp_type)
-                if bust.get("active"):
-                    # Floor clamp: if obs already exceeds bucket upper bound,
-                    # the "below X" probability should collapse
-                    floor = bust.get("floor")
-                    if floor and high is not None and high < floor:
-                        model_prob = max(0.01, model_prob * 0.1)
-                    # Confidence penalty for busted forecasts
-                    # penalty is 0-0.3 fraction; confidence is 0-100 scale
-                    penalty = bust.get("confidence_penalty", 0)
-                    if penalty > 0:
-                        confidence = confidence - (penalty * 100)
-                    # Log bust data for dashboard visibility
-                    if isinstance(details, dict):
-                        details["metar"] = bust
-
-        edge = model_prob - market_prob
-        side = "yes" if edge > 0 else "no"
-
-    # Promote the ensemble mean temperature onto the Signal so the NWS
-    # sanity check downstream can detect ensemble-vs-NWS disagreements.
+    # Promote the fused mean temperature onto the Signal for the NWS sanity gate.
+    # fuse_forecast stores per-model temps as details["noaa"]["temp"], etc.
     model_mean_temp: float | None = None
     if isinstance(forecast_result, tuple) and len(forecast_result) >= 3:
         _fdetails = forecast_result[2] or {}
         if isinstance(_fdetails, dict):
-            mt = _fdetails.get("mean_temp")
-            if isinstance(mt, (int, float)):
-                model_mean_temp = float(mt)
+            _temps = [d.get("temp") for d in _fdetails.values()
+                      if isinstance(d, dict) and d.get("temp") is not None]
+            if _temps:
+                model_mean_temp = sum(_temps) / len(_temps)
 
     price_cents = _extract_price_cents(market)
 
-    # === GFS ENSEMBLE DIAGNOSTIC (Bug #2) ===
-    # Logs the GFS ensemble's actual mean_temp and member math for every
-    # kalshi_temp signal so we can verify whether the ~10°F cold pattern is
-    # in the ensemble itself, the cache, or the day-index math.
-    # Remove once Bug #2 is closed.
+    # Fusion diagnostic — shows which models contributed and their temps
     if config.name == "kalshi_temp" and isinstance(forecast_result, tuple) and len(forecast_result) >= 3:
-        gfs_details = forecast_result[2] or {}
-        print(
-            f"  [GFS-DEBUG] {ticker} | days_ahead={days_ahead} "
-            f"mean_temp={gfs_details.get('mean_temp')} "
-            f"members={gfs_details.get('members_used')} "
-            f"spread={gfs_details.get('model_spread')} "
-            f"above_count={gfs_details.get('above_count')} "
-            f"bucket=[{low},{high}] method={gfs_details.get('method')}"
+        _fd = forecast_result[2] or {}
+        _model_temps = " ".join(
+            f"{k}={d.get('temp')}°F" for k, d in _fd.items()
+            if isinstance(d, dict) and d.get("temp") is not None
         )
-    # ========================================
+        print(
+            f"  [FUSION] {ticker} | days_ahead={days_ahead} "
+            f"fused_prob={float(model_prob):.3f} conf={int(confidence)} "
+            f"mean={model_mean_temp:.1f}°F | {_model_temps}"
+        )
 
     print(
         f"  [SCORE] {config.name} | {ticker} | "
         f"model={float(model_prob):.3f} market={float(market_prob):.3f} "
         f"edge={float(edge):+.3f} conf={int(confidence)}"
     )
-
-    # === DIAGNOSTIC LOGGING FOR T/B TYPE BUG ===
-    # Temporary: dumps raw market fields + extracted prices for every T/B
-    # contract so we can confirm whether T-type semantics are inverted.
-    # The subtitle / yes_sub_title / no_sub_title fields are the
-    # ground-truth answer: they contain Kalshi's human-readable contract
-    # text like "75° or above" vs "74° or below". Cross-reference them
-    # against strike_type to see whether our parser is interpreting
-    # `strike_type="greater"` correctly.
-    # Remove once the phantom-edge investigation is closed.
-    if "-T" in ticker or "-B" in ticker:
-        raw = market if isinstance(market, dict) else {}
-        price_info = (
-            f"yes_ask={raw.get('yes_ask')} no_ask={raw.get('no_ask')} "
-            f"yes_bid={raw.get('yes_bid')} no_bid={raw.get('no_bid')} "
-            f"price_cents={price_cents} market_prob={float(market_prob):.3f}"
-        )
-        semantics_info = (
-            f"strike_type={raw.get('strike_type')!r} "
-            f"floor_strike={raw.get('floor_strike')!r} "
-            f"cap_strike={raw.get('cap_strike')!r} "
-            f"yes_sub_title={raw.get('yes_sub_title')!r} "
-            f"no_sub_title={raw.get('no_sub_title')!r} "
-            f"subtitle={raw.get('subtitle')!r}"
-        )
-        tag = "T" if "-T" in ticker else "B"
-        print(
-            f"  [DEBUG-{tag}] {ticker} | model={float(model_prob):.3f} "
-            f"market={float(market_prob):.3f} edge={float(edge):+.3f} "
-            f"conf={int(confidence)} | {price_info} | {semantics_info}"
-        )
-    # ===========================================
 
     return Signal(
         ticker=ticker,
@@ -544,46 +476,23 @@ def execute_trade(config, signal: Signal, size, exchange,
     cost = size.count * price_cents / 100.0
 
     if paper_mode:
-        if config.exchange == "kalshi":
-            from kalshi.fill_tracker import init_trades_db, record_fill
-            init_trades_db("data/trades.db")
-            record_fill(
-                db_path="data/trades.db",
-                order_id=f"paper-{signal.ticker}-{int(datetime.now(timezone.utc).timestamp())}",
-                ticker=signal.ticker,
-                side=f"buy_{size.side or signal.side}",
-                limit_price=price_cents,
-                fill_price=price_cents,
-                fill_qty=size.count,
-                fill_time=datetime.now(timezone.utc).isoformat(),
-                city=signal.city,
-                strategy=strategy,
-                fee=fee if config.exchange == "kalshi" else 0.0,
-                edge=round(abs(signal.edge), 4),
-                confidence=round(signal.confidence, 1),
-            )
-        elif config.exchange == "ercot":
-            from ercot.paper_trader import open_position
-            from config import ERCOT_PAPER_BANKROLL
-            hub_signal = {
-                "hub": signal.market.get("hub_key", signal.city) if signal.market else signal.city,
-                "hub_name": signal.market.get("hub_name", signal.ticker) if signal.market else signal.ticker,
-                "contract_date": signal.market.get("contract_date", "") if signal.market else "",
-                "contract_hour": signal.market.get("contract_hour", 0) if signal.market else 0,
-                "side": size.side or signal.side,
-                "dam_price": signal.market.get("dam_price", 0) if signal.market else 0,
-                "entry_price": 0.50,
-                "model_prob": signal.model_prob,
-                "edge": abs(signal.edge),
-                "confidence": int(signal.confidence),
-            }
-            pos = open_position(hub_signal, bankroll=ERCOT_PAPER_BANKROLL)
-            if pos is None:
-                return TradeResult(
-                    ticker=signal.ticker, side=signal.side,
-                    count=0, price_cents=price_cents, cost=0,
-                    order_id="", status="ercot_blocked", paper=True,
-                )
+        from kalshi.fill_tracker import init_trades_db, record_fill
+        init_trades_db("data/trades.db")
+        record_fill(
+            db_path="data/trades.db",
+            order_id=f"paper-{signal.ticker}-{int(datetime.now(timezone.utc).timestamp())}",
+            ticker=signal.ticker,
+            side=f"buy_{size.side or signal.side}",
+            limit_price=price_cents,
+            fill_price=price_cents,
+            fill_qty=size.count,
+            fill_time=datetime.now(timezone.utc).isoformat(),
+            city=signal.city,
+            strategy=strategy,
+            fee=0.0,
+            edge=round(abs(signal.edge), 4),
+            confidence=round(signal.confidence, 1),
+        )
         return TradeResult(
             ticker=signal.ticker, side=size.side or signal.side,
             count=size.count, price_cents=price_cents, cost=cost,
