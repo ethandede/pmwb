@@ -74,53 +74,126 @@ def _build_configs() -> tuple:
     from pjm.position_manager import run_pjm_manager
     from caiso.position_manager import run_caiso_manager
 
-    def gfs_temp_sanity(signal) -> bool:
-        """GFS cross-reference sanity check for temperature signals.
+    # NWS deterministic sanity-check cache: prevents repeated calls for
+    # the same (lat, lon, days_ahead) within a scan cycle. Short TTL so
+    # stale entries don't linger between daemon cycles.
+    import time as _time
+    _NWS_SANITY_CACHE: dict[tuple, tuple[float | None, float]] = {}
+    _NWS_SANITY_TTL = 240  # 4 minutes — shorter than the 5-min daemon cycle
 
-        Fetches GFS forecast from self-hosted server and blocks trades where
-        the forecast strongly contradicts the signal direction.
+    def nws_deterministic_sanity(signal) -> bool:
+        """NWS deterministic cross-check sanity gate for kalshi_temp.
+
+        Rejects trades in two failure modes that tonight's cycle revealed:
+          1. Ensemble-vs-NWS disagreement: our ensemble mean_temp differs
+             from the NWS point forecast by more than 3°F. When this
+             happens the ensemble is the outlier — the market prices
+             near the NWS consensus and our bets against it systematically
+             lose. Dominant failure tonight on NYC (82.8 vs 87.8) and
+             Austin (80.8 vs 86.0).
+          2. Bucket proximity: we are betting NO on a between-bucket
+             [low, high] but the NWS forecast lands within ±1°F of that
+             bucket, meaning NWS thinks the temp will be right where we
+             are betting it will NOT be. Dominant failure mode for
+             Apr 16 Miami B82.5 NO and Atlanta B86.5 NO.
+
+        The check is advisory: if NWS is unavailable, the signal passes
+        (we don't want to silently block all trading on an NWS outage).
+        All rejects log a [NWS-SANITY] line so the daemon journal shows
+        exactly what was blocked and why.
         """
+        from weather.multi_model import get_noaa_point_forecast
+        from kalshi.scanner import parse_kalshi_bucket
+
         try:
-            import requests as _req
-            bucket = signal.market
             ticker = signal.ticker
-            lat = signal.lat or 0
-            lon = signal.lon or 0
-            unit = signal.market.get("_unit", "f") if signal.market else "f"
-            temp_type = signal.market.get("_temp_type", "max") if signal.market else "max"
-            unit_param = "fahrenheit" if unit == "f" else "celsius"
-            daily_var = f"temperature_2m_{temp_type}"
+            lat = signal.lat
+            lon = signal.lon
+            if lat is None or lon is None:
+                return True  # no coordinates — can't check
 
-            r = _req.get(
-                f"http://localhost:8080/v1/forecast?latitude={lat}&longitude={lon}"
-                f"&daily={daily_var}&models=gfs_seamless"
-                f"&temperature_unit={unit_param}&timezone=auto&forecast_days=2",
-                timeout=5,
-            )
-            gfs_temp = r.json().get("daily", {}).get(daily_var, [None])[0]
-            if gfs_temp is None:
-                return True
+            unit = (signal.market or {}).get("_unit", "f")
+            temp_type = (signal.market or {}).get("_temp_type", "max")
 
-            # Parse bucket from market data
-            from kalshi.scanner import parse_kalshi_bucket
+            # Cached NWS lookup
+            cache_key = (round(lat, 3), round(lon, 3), signal.days_ahead, unit, temp_type)
+            now = _time.time()
+            cached = _NWS_SANITY_CACHE.get(cache_key)
+            if cached and now - cached[1] < _NWS_SANITY_TTL:
+                nws_temp = cached[0]
+            else:
+                nws_temp = get_noaa_point_forecast(
+                    lat, lon,
+                    days_ahead=signal.days_ahead,
+                    unit=unit,
+                    temp_type=temp_type,
+                )
+                _NWS_SANITY_CACHE[cache_key] = (nws_temp, now)
+
+            if nws_temp is None:
+                return True  # NWS unavailable — advisory only
+
+            # Rule 1: ensemble-vs-NWS disagreement gate
+            bot_mean = signal.model_mean_temp
+            if bot_mean is not None:
+                disagree = abs(bot_mean - nws_temp)
+                if disagree > 3.0:
+                    print(
+                        f"  [NWS-SANITY] {ticker} BLOCK ensemble_vs_nws — "
+                        f"ensemble={bot_mean:.1f}°F vs NWS={nws_temp:.1f}°F "
+                        f"(|diff|={disagree:.1f}°F > 3°F)"
+                    )
+                    return False
+
+            # Rule 2: bucket proximity gate (uses parse_kalshi_bucket to get
+            # [low, high) for the contract we're scoring)
             parsed = parse_kalshi_bucket(signal.market) if signal.market else None
             if not parsed:
                 return True
             low, high = parsed
 
-            if high is None and low is not None:
-                # "above X" contract
-                if signal.side == "yes" and gfs_temp < low - 3:
-                    return False
-                if signal.side == "no" and gfs_temp > low + 3:
-                    return False
-            elif low is not None and high is not None:
-                mid = (low + high) / 2
-                if signal.side == "yes" and abs(gfs_temp - mid) > 15:
-                    return False
+            if high is not None:
+                # Between-bucket [low, high]
+                if signal.side == "no":
+                    # Betting NO = "temp will NOT land in [low, high]". If NWS
+                    # thinks it will land in or within ±1°F of the bucket,
+                    # the bet is reckless.
+                    if (low - 1) <= nws_temp <= (high + 1):
+                        print(
+                            f"  [NWS-SANITY] {ticker} BLOCK no_side_near_bucket — "
+                            f"NWS={nws_temp:.1f}°F within ±1°F of bucket [{low},{high}]"
+                        )
+                        return False
+                elif signal.side == "yes":
+                    # Betting YES = "temp WILL land in [low, high]". If NWS
+                    # says the temp will be far outside the bucket, block.
+                    if nws_temp < low - 3 or nws_temp > high + 3:
+                        print(
+                            f"  [NWS-SANITY] {ticker} BLOCK yes_side_far_from_bucket — "
+                            f"NWS={nws_temp:.1f}°F outside [{low},{high}]±3°F"
+                        )
+                        return False
+            else:
+                # Greater-type contract: YES wins when temp >= low
+                if signal.side == "yes":
+                    if nws_temp < low - 2:
+                        print(
+                            f"  [NWS-SANITY] {ticker} BLOCK yes_greater_below_floor — "
+                            f"NWS={nws_temp:.1f}°F well below floor {low}"
+                        )
+                        return False
+                elif signal.side == "no":
+                    if nws_temp > low + 1:
+                        print(
+                            f"  [NWS-SANITY] {ticker} BLOCK no_greater_above_floor — "
+                            f"NWS={nws_temp:.1f}°F above floor {low}"
+                        )
+                        return False
+
             return True
-        except Exception:
-            return True  # sanity check is advisory
+        except Exception as e:
+            print(f"  [NWS-SANITY] error for {getattr(signal, 'ticker', '?')}: {e}")
+            return True  # advisory — don't block on error
 
     kalshi_temp = MarketConfig(
         name="kalshi_temp",
@@ -131,12 +204,18 @@ def _build_configs() -> tuple:
         bucket_parser=parse_kalshi_bucket,
         forecast_fn=get_ensemble_signal,
 
-        edge_gate=0.10,
+        # Edge gate tightened 0.10 → 0.20 (2026-04-15 evening) after tonight's
+        # first clean-data cycle placed 5 trades where the ensemble disagreed
+        # with NWS by 5°F on individual cities (NYC, Austin). Higher bar reduces
+        # exposure to high-variance ensemble errors until the NWS cross-check
+        # below has a chance to prove itself.
+        edge_gate=0.20,
         confidence_gate=60,
         min_price_cents=7,
         # confidence raised 55 → 60 so Open-Meteo fallback (conf=50) is always filtered
-        sameday_overrides={"edge": 0.07, "confidence": 60, "kelly_floor": 0.35},
-        sanity_fn=gfs_temp_sanity,
+        # edge raised 0.07 → 0.15 proportional to the main edge_gate tightening
+        sameday_overrides={"edge": 0.15, "confidence": 60, "kelly_floor": 0.35},
+        sanity_fn=nws_deterministic_sanity,
         scan_frac=0.10,
         kelly_floor=0.10,
         max_bankroll_pct=0.05,

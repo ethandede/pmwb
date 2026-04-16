@@ -144,6 +144,16 @@ def score_signal(config, market: dict) -> Signal:
         edge = model_prob - market_prob
         side = "yes" if edge > 0 else "no"
 
+    # Promote the ensemble mean temperature onto the Signal so the NWS
+    # sanity check downstream can detect ensemble-vs-NWS disagreements.
+    model_mean_temp: float | None = None
+    if isinstance(forecast_result, tuple) and len(forecast_result) >= 3:
+        _fdetails = forecast_result[2] or {}
+        if isinstance(_fdetails, dict):
+            mt = _fdetails.get("mean_temp")
+            if isinstance(mt, (int, float)):
+                model_mean_temp = float(mt)
+
     price_cents = _extract_price_cents(market)
 
     # === GFS ENSEMBLE DIAGNOSTIC (Bug #2) ===
@@ -216,6 +226,7 @@ def score_signal(config, market: dict) -> Signal:
         yes_ask=market.get("yes_ask") or _dollars_to_cents(market.get("yes_ask_dollars")),
         lat=market.get("_lat") or market.get("lat"),
         lon=market.get("_lon") or market.get("lon"),
+        model_mean_temp=model_mean_temp,
         market=market,
     )
 

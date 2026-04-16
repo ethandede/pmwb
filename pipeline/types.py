@@ -27,6 +27,11 @@ class Signal:
     lat: float | None = None
     lon: float | None = None
 
+    # Ensemble mean temperature from the fusion step, used by the
+    # NWS deterministic sanity check in filter_signals() to detect
+    # cases where our ensemble is an outlier vs the NWS point forecast.
+    model_mean_temp: float | None = None
+
     # Raw exchange data (fallback for exchange-specific fields)
     market: dict = field(default_factory=dict)
 
